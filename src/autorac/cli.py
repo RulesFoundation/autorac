@@ -21,8 +21,13 @@ from .harness.experiment_db import (
     Iteration,
     IterationError,
     FinalScores,
+    Session,
+    SessionEvent,
 )
 from .harness.validator_pipeline import ValidatorPipeline
+
+# Default DB path - can be overridden with --db
+DEFAULT_DB = Path.home() / "CosilicoAI" / "autorac" / "experiments.db"
 
 
 def main():
@@ -66,8 +71,65 @@ def main():
         "runs",
         help="List recent encoding runs"
     )
-    runs_parser.add_argument("--db", type=Path, default=Path("experiments.db"))
+    runs_parser.add_argument("--db", type=Path, default=DEFAULT_DB)
     runs_parser.add_argument("--limit", type=int, default=20)
+
+    # =========================================================================
+    # Session logging commands (for hooks)
+    # =========================================================================
+
+    # session-start command
+    session_start_parser = subparsers.add_parser(
+        "session-start",
+        help="Start a new session (called by SessionStart hook)"
+    )
+    session_start_parser.add_argument("--model", default="", help="Model name")
+    session_start_parser.add_argument("--cwd", default="", help="Working directory")
+    session_start_parser.add_argument("--db", type=Path, default=DEFAULT_DB)
+
+    # session-end command
+    session_end_parser = subparsers.add_parser(
+        "session-end",
+        help="End a session (called by SessionEnd hook)"
+    )
+    session_end_parser.add_argument("--session", required=True, help="Session ID")
+    session_end_parser.add_argument("--db", type=Path, default=DEFAULT_DB)
+
+    # log-event command
+    log_event_parser = subparsers.add_parser(
+        "log-event",
+        help="Log an event to a session (called by hooks)"
+    )
+    log_event_parser.add_argument("--session", required=True, help="Session ID")
+    log_event_parser.add_argument("--type", required=True, help="Event type")
+    log_event_parser.add_argument("--tool", default=None, help="Tool name (for tool events)")
+    log_event_parser.add_argument("--content", default="", help="Event content")
+    log_event_parser.add_argument("--metadata", default="{}", help="Metadata as JSON")
+    log_event_parser.add_argument("--db", type=Path, default=DEFAULT_DB)
+
+    # sessions command
+    sessions_parser = subparsers.add_parser(
+        "sessions",
+        help="List recent sessions"
+    )
+    sessions_parser.add_argument("--db", type=Path, default=DEFAULT_DB)
+    sessions_parser.add_argument("--limit", type=int, default=20)
+
+    # session-show command
+    session_show_parser = subparsers.add_parser(
+        "session-show",
+        help="Show a session transcript"
+    )
+    session_show_parser.add_argument("session_id", help="Session ID")
+    session_show_parser.add_argument("--db", type=Path, default=DEFAULT_DB)
+    session_show_parser.add_argument("--json", action="store_true", help="Output as JSON")
+
+    # session-stats command
+    session_stats_parser = subparsers.add_parser(
+        "session-stats",
+        help="Show session statistics"
+    )
+    session_stats_parser.add_argument("--db", type=Path, default=DEFAULT_DB)
 
     args = parser.parse_args()
 
@@ -79,6 +141,18 @@ def main():
         cmd_stats(args)
     elif args.command == "runs":
         cmd_runs(args)
+    elif args.command == "session-start":
+        cmd_session_start(args)
+    elif args.command == "session-end":
+        cmd_session_end(args)
+    elif args.command == "log-event":
+        cmd_log_event(args)
+    elif args.command == "sessions":
+        cmd_sessions(args)
+    elif args.command == "session-show":
+        cmd_session_show(args)
+    elif args.command == "session-stats":
+        cmd_session_stats(args)
     else:
         parser.print_help()
         sys.exit(1)
@@ -271,6 +345,141 @@ def cmd_runs(args):
         result = "✓" if run.success else "✗"
         time_s = run.total_duration_ms / 1000
         print(f"{run.id:<10} {run.citation:<30} {run.iterations_needed:<5} {time_s:>6.1f}s {result}")
+
+
+# =========================================================================
+# Session Commands
+# =========================================================================
+
+def cmd_session_start(args):
+    """Start a new session."""
+    db = ExperimentDB(args.db)
+    session = db.start_session(model=args.model, cwd=args.cwd or str(Path.cwd()))
+
+    # Output just the session ID for hooks to capture
+    print(session.id)
+
+
+def cmd_session_end(args):
+    """End a session."""
+    db = ExperimentDB(args.db)
+    db.end_session(args.session)
+    print(f"Session {args.session} ended")
+
+
+def cmd_log_event(args):
+    """Log an event to a session."""
+    db = ExperimentDB(args.db)
+
+    metadata = {}
+    if args.metadata:
+        try:
+            metadata = json.loads(args.metadata)
+        except json.JSONDecodeError:
+            pass
+
+    event = db.log_event(
+        session_id=args.session,
+        event_type=args.type,
+        tool_name=args.tool,
+        content=args.content,
+        metadata=metadata,
+    )
+
+    print(f"Event {event.sequence}: {event.event_type}")
+
+
+def cmd_sessions(args):
+    """List recent sessions."""
+    db = ExperimentDB(args.db)
+    sessions = db.get_recent_sessions(limit=args.limit)
+
+    if not sessions:
+        print("No sessions found.")
+        return
+
+    print(f"{'ID':<10} {'Started':<20} {'Events':<8} {'Model':<15} {'Status'}")
+    print("-" * 70)
+
+    for s in sessions:
+        started = s.started_at.strftime("%Y-%m-%d %H:%M") if s.started_at else "?"
+        status = "ended" if s.ended_at else "active"
+        model = s.model[:15] if s.model else "-"
+        print(f"{s.id:<10} {started:<20} {s.event_count:<8} {model:<15} {status}")
+
+
+def cmd_session_show(args):
+    """Show a session transcript."""
+    db = ExperimentDB(args.db)
+
+    session = db.get_session(args.session_id)
+    if not session:
+        print(f"Session not found: {args.session_id}")
+        sys.exit(1)
+
+    events = db.get_session_events(args.session_id)
+
+    if args.json:
+        output = {
+            "session": {
+                "id": session.id,
+                "started_at": session.started_at.isoformat() if session.started_at else None,
+                "ended_at": session.ended_at.isoformat() if session.ended_at else None,
+                "model": session.model,
+                "cwd": session.cwd,
+                "event_count": session.event_count,
+            },
+            "events": [
+                {
+                    "sequence": e.sequence,
+                    "timestamp": e.timestamp.isoformat() if e.timestamp else None,
+                    "type": e.event_type,
+                    "tool": e.tool_name,
+                    "content": e.content[:500] if e.content else "",  # Truncate long content
+                    "metadata": e.metadata,
+                }
+                for e in events
+            ]
+        }
+        print(json.dumps(output, indent=2))
+    else:
+        print(f"Session: {session.id}")
+        print(f"Model: {session.model}")
+        print(f"Started: {session.started_at}")
+        print(f"Ended: {session.ended_at or 'active'}")
+        print(f"Events: {session.event_count}")
+        print("-" * 60)
+
+        for e in events:
+            time_str = e.timestamp.strftime("%H:%M:%S") if e.timestamp else "?"
+            tool_str = f" [{e.tool_name}]" if e.tool_name else ""
+            content_preview = (e.content[:80] + "...") if e.content and len(e.content) > 80 else (e.content or "")
+
+            print(f"{e.sequence:3}. [{time_str}] {e.event_type}{tool_str}")
+            if content_preview:
+                print(f"     {content_preview}")
+
+
+def cmd_session_stats(args):
+    """Show session statistics."""
+    db = ExperimentDB(args.db)
+    stats = db.get_session_stats()
+
+    print("=== Session Statistics ===")
+    print(f"Total sessions: {stats['total_sessions']}")
+    print(f"Avg events/session: {stats['avg_events_per_session']}")
+    print()
+
+    if stats['event_type_counts']:
+        print("Event types:")
+        for event_type, count in sorted(stats['event_type_counts'].items(), key=lambda x: -x[1]):
+            print(f"  {event_type}: {count}")
+        print()
+
+    if stats['tool_usage']:
+        print("Top tools:")
+        for tool, count in list(stats['tool_usage'].items())[:10]:
+            print(f"  {tool}: {count}")
 
 
 if __name__ == "__main__":

@@ -3,15 +3,57 @@ Experiment Database - tracks encoding runs for continuous improvement.
 
 Key insight: We learn from the JOURNEY (errors, fixes, iterations),
 not from comparing predictions to actuals.
+
+Now also tracks full session transcripts for replay and analysis.
 """
 
 import sqlite3
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Literal
 import uuid
+
+
+# Session event types
+EventType = Literal[
+    "session_start",
+    "session_end",
+    "user_prompt",
+    "assistant_response",
+    "tool_call",
+    "tool_result",
+    "subagent_start",
+    "subagent_end",
+]
+
+
+@dataclass
+class SessionEvent:
+    """A single event in a session transcript."""
+    id: str = field(default_factory=lambda: str(uuid.uuid4())[:12])
+    session_id: str = ""
+    sequence: int = 0
+    timestamp: datetime = field(default_factory=datetime.now)
+    event_type: str = ""  # EventType
+    tool_name: Optional[str] = None
+    content: str = ""  # Main content (prompt, response, tool input/output)
+    metadata: dict = field(default_factory=dict)  # Extra data (tokens, duration, etc.)
+
+
+@dataclass
+class Session:
+    """A full Claude Code session transcript."""
+    id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    run_id: Optional[str] = None  # FK to EncodingRun if this is an encoding session
+    started_at: datetime = field(default_factory=datetime.now)
+    ended_at: Optional[datetime] = None
+    model: str = ""
+    cwd: str = ""
+    event_count: int = 0
+    total_tokens: int = 0
 
 
 @dataclass
@@ -108,6 +150,7 @@ class ExperimentDB:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
+        # Encoding runs table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS runs (
                 id TEXT PRIMARY KEY,
@@ -129,6 +172,50 @@ class ExperimentDB:
         """)
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_timestamp ON runs(timestamp)
+        """)
+
+        # Sessions table - full Claude Code session transcripts
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                run_id TEXT,
+                started_at TEXT,
+                ended_at TEXT,
+                model TEXT,
+                cwd TEXT,
+                event_count INTEGER DEFAULT 0,
+                total_tokens INTEGER DEFAULT 0,
+                FOREIGN KEY (run_id) REFERENCES runs(id)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_session_run ON sessions(run_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_session_started ON sessions(started_at)
+        """)
+
+        # Session events table - individual events within a session
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS session_events (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                sequence INTEGER,
+                timestamp TEXT,
+                event_type TEXT,
+                tool_name TEXT,
+                content TEXT,
+                metadata_json TEXT,
+                FOREIGN KEY (session_id) REFERENCES sessions(id)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_event_session ON session_events(session_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_event_type ON session_events(event_type)
         """)
 
         conn.commit()
@@ -326,3 +413,213 @@ class ExperimentDB:
             agent_model=agent_model or "",
             rac_content=rac_content or "",
         )
+
+    # =========================================================================
+    # Session Logging Methods
+    # =========================================================================
+
+    def start_session(self, model: str = "", cwd: str = "") -> Session:
+        """Start a new session and return it."""
+        session = Session(
+            model=model,
+            cwd=cwd or os.getcwd(),
+        )
+
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            INSERT INTO sessions (id, started_at, model, cwd, event_count, total_tokens)
+            VALUES (?, ?, ?, ?, 0, 0)
+        """, (session.id, session.started_at.isoformat(), session.model, session.cwd))
+
+        conn.commit()
+        conn.close()
+
+        return session
+
+    def end_session(self, session_id: str) -> None:
+        """Mark a session as ended."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            UPDATE sessions SET ended_at = ? WHERE id = ?
+        """, (datetime.now().isoformat(), session_id))
+
+        conn.commit()
+        conn.close()
+
+    def log_event(
+        self,
+        session_id: str,
+        event_type: str,
+        content: str = "",
+        tool_name: Optional[str] = None,
+        metadata: Optional[dict] = None,
+    ) -> SessionEvent:
+        """Log an event to a session."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        # Get next sequence number
+        cursor.execute(
+            "SELECT COALESCE(MAX(sequence), 0) + 1 FROM session_events WHERE session_id = ?",
+            (session_id,)
+        )
+        sequence = cursor.fetchone()[0]
+
+        event = SessionEvent(
+            session_id=session_id,
+            sequence=sequence,
+            event_type=event_type,
+            tool_name=tool_name,
+            content=content,
+            metadata=metadata or {},
+        )
+
+        cursor.execute("""
+            INSERT INTO session_events (id, session_id, sequence, timestamp, event_type, tool_name, content, metadata_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            event.id,
+            event.session_id,
+            event.sequence,
+            event.timestamp.isoformat(),
+            event.event_type,
+            event.tool_name,
+            event.content,
+            json.dumps(event.metadata),
+        ))
+
+        # Update event count
+        cursor.execute("""
+            UPDATE sessions SET event_count = event_count + 1 WHERE id = ?
+        """, (session_id,))
+
+        conn.commit()
+        conn.close()
+
+        return event
+
+    def get_session(self, session_id: str) -> Optional[Session]:
+        """Get a session by ID."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT * FROM sessions WHERE id = ?", (session_id,))
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row:
+            return None
+
+        return Session(
+            id=row[0],
+            run_id=row[1],
+            started_at=datetime.fromisoformat(row[2]) if row[2] else datetime.now(),
+            ended_at=datetime.fromisoformat(row[3]) if row[3] else None,
+            model=row[4] or "",
+            cwd=row[5] or "",
+            event_count=row[6] or 0,
+            total_tokens=row[7] or 0,
+        )
+
+    def get_session_events(self, session_id: str) -> list[SessionEvent]:
+        """Get all events for a session, ordered by sequence."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT id, session_id, sequence, timestamp, event_type, tool_name, content, metadata_json
+            FROM session_events
+            WHERE session_id = ?
+            ORDER BY sequence
+        """, (session_id,))
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        events = []
+        for row in rows:
+            events.append(SessionEvent(
+                id=row[0],
+                session_id=row[1],
+                sequence=row[2],
+                timestamp=datetime.fromisoformat(row[3]) if row[3] else datetime.now(),
+                event_type=row[4] or "",
+                tool_name=row[5],
+                content=row[6] or "",
+                metadata=json.loads(row[7]) if row[7] else {},
+            ))
+
+        return events
+
+    def get_recent_sessions(self, limit: int = 20) -> list[Session]:
+        """Get recent sessions."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT * FROM sessions ORDER BY started_at DESC LIMIT ?
+        """, (limit,))
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        sessions = []
+        for row in rows:
+            sessions.append(Session(
+                id=row[0],
+                run_id=row[1],
+                started_at=datetime.fromisoformat(row[2]) if row[2] else datetime.now(),
+                ended_at=datetime.fromisoformat(row[3]) if row[3] else None,
+                model=row[4] or "",
+                cwd=row[5] or "",
+                event_count=row[6] or 0,
+                total_tokens=row[7] or 0,
+            ))
+
+        return sessions
+
+    def get_session_stats(self) -> dict:
+        """Get session statistics."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        # Total sessions
+        cursor.execute("SELECT COUNT(*) FROM sessions")
+        total = cursor.fetchone()[0]
+
+        # Event type distribution
+        cursor.execute("""
+            SELECT event_type, COUNT(*) as count
+            FROM session_events
+            GROUP BY event_type
+            ORDER BY count DESC
+        """)
+        event_counts = {row[0]: row[1] for row in cursor.fetchall()}
+
+        # Tool usage
+        cursor.execute("""
+            SELECT tool_name, COUNT(*) as count
+            FROM session_events
+            WHERE tool_name IS NOT NULL
+            GROUP BY tool_name
+            ORDER BY count DESC
+            LIMIT 20
+        """)
+        tool_counts = {row[0]: row[1] for row in cursor.fetchall()}
+
+        # Average events per session
+        cursor.execute("SELECT AVG(event_count) FROM sessions")
+        avg_events = cursor.fetchone()[0] or 0
+
+        conn.close()
+
+        return {
+            "total_sessions": total,
+            "event_type_counts": event_counts,
+            "tool_usage": tool_counts,
+            "avg_events_per_session": round(avg_events, 1),
+        }
