@@ -2,16 +2,74 @@
 
 AI-assisted RAC encoding infrastructure. Provides the feedback loop for automated statute encoding.
 
+## Two Encoding Approaches
+
+AutoRAC supports two ways to encode statutes:
+
+### 1. Interactive (Claude Code Plugin) - Recommended
+
+Uses Claude Code with Max subscription. No API billing.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Claude Code Session (Max subscription)                      │
+│    └── /encode "26 USC 32"                                  │
+│          └── Task(cosilico:RAC Encoder)                     │
+│                └── Write, Edit, Grep tools                  │
+│                      └── rac-us/statute/26/32.rac           │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**How to use:**
+1. Install cosilico-claude plugin
+2. Run `/encode "26 USC 32"` in Claude Code
+3. Agent encodes, validates, logs journey
+
+### 2. Programmatic (Agent SDK) - For Batch/Parallel
+
+Uses Claude Agent SDK with API key. Pay per token, but enables massive parallelization.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Python Script / CI Pipeline                                 │
+│    └── AgentSDKBackend(api_key=...)                         │
+│          └── encode_batch(requests, max_concurrent=10)      │
+│                └── 10 parallel encoding agents              │
+│                      └── 10x faster for batch jobs          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**How to use:**
+```python
+from autorac import AgentSDKBackend, EncoderRequest
+from pathlib import Path
+
+backend = AgentSDKBackend()  # Requires ANTHROPIC_API_KEY
+
+# Encode 50 statutes in parallel
+requests = [
+    EncoderRequest(
+        citation=f"26 USC {section}",
+        statute_text=texts[section],
+        output_path=Path(f"rac-us/statute/26/{section}.rac"),
+    )
+    for section in sections
+]
+
+responses = await backend.encode_batch(requests, max_concurrent=10)
+```
+
+**Install:** `pip install autorac[sdk]`
+
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                          AutoRAC                                 │
 ├─────────────────────────────────────────────────────────────────┤
-│  Encoder Harness                                                │
-│    ├── encode() → .rac file                                     │
-│    ├── predict_scores() → {rac: 8, formula: 7, param: 9}        │
-│    └── suggest_improvements() → "add nesting pattern to docs"   │
+│  Encoder Backends                                                │
+│    ├── ClaudeCodeBackend (subprocess, Max subscription)         │
+│    └── AgentSDKBackend (API, parallelization)                   │
 ├─────────────────────────────────────────────────────────────────┤
 │  Validator Pipeline (parallel)                                   │
 │    ├── CI (parse, lint, inline tests)                           │
@@ -20,9 +78,8 @@ AI-assisted RAC encoding infrastructure. Provides the feedback loop for automate
 ├─────────────────────────────────────────────────────────────────┤
 │  Experiment DB                                                   │
 │    ├── encoding_id, file, timestamp                             │
-│    ├── predicted_scores, actual_scores                          │
-│    ├── prediction_error (for calibration)                       │
-│    └── agent_suggestions                                        │
+│    ├── iterations, errors, fixes                                │
+│    └── final_scores, session_transcript                         │
 ├─────────────────────────────────────────────────────────────────┤
 │  Calibration Metrics                                             │
 │    ├── MSE, MAE, bias per metric                                │
@@ -33,33 +90,11 @@ AI-assisted RAC encoding infrastructure. Provides the feedback loop for automate
 
 ## Components
 
+- `src/harness/backends.py` - Encoder backends (ClaudeCode, AgentSDK)
 - `src/harness/experiment_db.py` - SQLite experiment logging
 - `src/harness/validator_pipeline.py` - Parallel validator execution
-- `src/harness/encoder_harness.py` - Wraps encoder agent with prediction
+- `src/harness/encoder_harness.py` - Wraps encoder with prediction
 - `src/harness/metrics.py` - Calibration computation
-
-## Usage
-
-```python
-from autorac import EncoderHarness, EncoderConfig
-from pathlib import Path
-
-config = EncoderConfig(
-    rac_us_path=Path("../rac-us"),
-    rac_path=Path("../rac"),
-)
-
-harness = EncoderHarness(config)
-run, result = harness.encode_with_feedback(
-    citation="26 USC 1(h)(1)(E)",
-    statute_text="...",
-    output_path=Path("rac-us/statute/26/1/h/1/E.rac"),
-)
-
-print(f"Predicted: {run.predicted.rac_reviewer}")
-print(f"Actual: {run.actual.rac_reviewer}")
-print(f"All passed: {result.all_passed}")
-```
 
 ## Commands
 
@@ -67,7 +102,8 @@ print(f"All passed: {result.all_passed}")
 # Setup
 python -m venv .venv
 source .venv/bin/activate
-pip install -e .
+pip install -e .          # CLI backend only
+pip install -e ".[sdk]"   # With Agent SDK for parallel encoding
 
 # Run tests
 pytest tests/ -v
@@ -81,3 +117,4 @@ python -m autorac.metrics --db experiments.db
 - **rac** - DSL parser, executor, runtime
 - **rac-us** - US statute encodings
 - **rac-validators** - External calculator validation (PolicyEngine, TAXSIM)
+- **cosilico-claude** - Claude Code plugin with /encode command
