@@ -97,6 +97,20 @@ class FinalScores:
 
 
 @dataclass
+class PredictedScores:
+    """Upfront predictions for calibration tracking."""
+    # Dimension scores (0-10)
+    rac: float = 0.0
+    formula: float = 0.0
+    param: float = 0.0
+    integration: float = 0.0
+    # Effort predictions
+    iterations: int = 1
+    time_minutes: float = 0.0
+    confidence: float = 0.5  # 0-1 confidence in predictions
+
+
+@dataclass
 class EncodingRun:
     """A complete encoding run from start to finish."""
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
@@ -110,6 +124,9 @@ class EncodingRun:
     # Upfront analysis
     complexity: ComplexityFactors = field(default_factory=ComplexityFactors)
 
+    # Predictions (for calibration)
+    predicted_scores: Optional[PredictedScores] = None
+
     # The journey
     iterations: list[Iteration] = field(default_factory=list)
 
@@ -121,6 +138,9 @@ class EncodingRun:
     # Agent info
     agent_type: str = "encoder"
     agent_model: str = "claude-opus-4-5-20251101"
+
+    # Session linkage
+    session_id: Optional[str] = None
 
     @property
     def iterations_needed(self) -> int:
@@ -163,9 +183,21 @@ class ExperimentDB:
                 final_scores_json TEXT,
                 agent_type TEXT,
                 agent_model TEXT,
-                rac_content TEXT
+                rac_content TEXT,
+                predicted_scores_json TEXT,
+                session_id TEXT
             )
         """)
+
+        # Add columns if they don't exist (for migration)
+        try:
+            cursor.execute("ALTER TABLE runs ADD COLUMN predicted_scores_json TEXT")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+        try:
+            cursor.execute("ALTER TABLE runs ADD COLUMN session_id TEXT")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
 
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_citation ON runs(citation)
@@ -265,11 +297,24 @@ class ExperimentDB:
                 "taxsim_match": run.final_scores.taxsim_match,
             })
 
+        predicted_scores_json = None
+        if run.predicted_scores:
+            predicted_scores_json = json.dumps({
+                "rac": run.predicted_scores.rac,
+                "formula": run.predicted_scores.formula,
+                "param": run.predicted_scores.param,
+                "integration": run.predicted_scores.integration,
+                "iterations": run.predicted_scores.iterations,
+                "time_minutes": run.predicted_scores.time_minutes,
+                "confidence": run.predicted_scores.confidence,
+            })
+
         cursor.execute("""
             INSERT OR REPLACE INTO runs
             (id, timestamp, citation, file_path, complexity_json, iterations_json,
-             total_duration_ms, final_scores_json, agent_type, agent_model, rac_content)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             total_duration_ms, final_scores_json, agent_type, agent_model, rac_content,
+             predicted_scores_json, session_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             run.id,
             run.timestamp.isoformat(),
@@ -282,6 +327,8 @@ class ExperimentDB:
             run.agent_type,
             run.agent_model,
             run.rac_content,
+            predicted_scores_json,
+            run.session_id,
         ))
 
         conn.commit()
@@ -353,8 +400,16 @@ class ExperimentDB:
 
     def _row_to_run(self, row) -> EncodingRun:
         """Convert database row to EncodingRun."""
-        (id, timestamp, citation, file_path, complexity_json, iterations_json,
-         total_duration_ms, final_scores_json, agent_type, agent_model, rac_content) = row
+        # Handle both old (11 columns) and new (13 columns) schema
+        if len(row) == 11:
+            (id, timestamp, citation, file_path, complexity_json, iterations_json,
+             total_duration_ms, final_scores_json, agent_type, agent_model, rac_content) = row
+            predicted_scores_json = None
+            session_id = None
+        else:
+            (id, timestamp, citation, file_path, complexity_json, iterations_json,
+             total_duration_ms, final_scores_json, agent_type, agent_model, rac_content,
+             predicted_scores_json, session_id) = row
 
         # Parse complexity
         c = json.loads(complexity_json) if complexity_json else {}
@@ -400,18 +455,34 @@ class ExperimentDB:
                 taxsim_match=f.get("taxsim_match"),
             )
 
+        # Parse predicted scores
+        predicted_scores = None
+        if predicted_scores_json:
+            p = json.loads(predicted_scores_json)
+            predicted_scores = PredictedScores(
+                rac=p.get("rac", 0),
+                formula=p.get("formula", 0),
+                param=p.get("param", 0),
+                integration=p.get("integration", 0),
+                iterations=p.get("iterations", 1),
+                time_minutes=p.get("time_minutes", 0),
+                confidence=p.get("confidence", 0.5),
+            )
+
         return EncodingRun(
             id=id,
             timestamp=datetime.fromisoformat(timestamp),
             citation=citation,
             file_path=file_path,
             complexity=complexity,
+            predicted_scores=predicted_scores,
             iterations=iterations,
             total_duration_ms=total_duration_ms or 0,
             final_scores=final_scores,
             agent_type=agent_type or "encoder",
             agent_model=agent_model or "",
             rac_content=rac_content or "",
+            session_id=session_id,
         )
 
     # =========================================================================

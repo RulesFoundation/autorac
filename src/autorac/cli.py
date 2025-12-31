@@ -21,6 +21,7 @@ from .harness.experiment_db import (
     Iteration,
     IterationError,
     FinalScores,
+    PredictedScores,
     Session,
     SessionEvent,
 )
@@ -56,7 +57,9 @@ def main():
     log_parser.add_argument("--iterations", type=int, default=1, help="Number of iterations")
     log_parser.add_argument("--errors", type=str, default="[]", help="Errors as JSON array")
     log_parser.add_argument("--duration", type=int, default=0, help="Total duration in ms")
-    log_parser.add_argument("--scores", type=str, help="Final scores as JSON")
+    log_parser.add_argument("--scores", type=str, help="Actual scores as JSON {rac,formula,param,integration}")
+    log_parser.add_argument("--predicted", type=str, help="Predicted scores as JSON {rac,formula,param,integration,iterations,time}")
+    log_parser.add_argument("--session", type=str, help="Session ID to link this run to")
     log_parser.add_argument("--db", type=Path, default=Path("experiments.db"))
 
     # stats command
@@ -65,6 +68,14 @@ def main():
         help="Show encoding statistics"
     )
     stats_parser.add_argument("--db", type=Path, default=Path("experiments.db"))
+
+    # calibration command
+    calibration_parser = subparsers.add_parser(
+        "calibration",
+        help="Show calibration metrics (predicted vs actual)"
+    )
+    calibration_parser.add_argument("--db", type=Path, default=DEFAULT_DB)
+    calibration_parser.add_argument("--limit", type=int, default=50)
 
     # runs command
     runs_parser = subparsers.add_parser(
@@ -139,6 +150,8 @@ def main():
         cmd_log(args)
     elif args.command == "stats":
         cmd_stats(args)
+    elif args.command == "calibration":
+        cmd_calibration(args)
     elif args.command == "runs":
         cmd_runs(args)
     elif args.command == "session-start":
@@ -246,7 +259,7 @@ def cmd_log(args):
             success=is_last,
         ))
 
-    # Parse scores
+    # Parse actual scores
     final_scores = None
     if args.scores:
         s = json.loads(args.scores)
@@ -257,6 +270,20 @@ def cmd_log(args):
             integration_reviewer=s.get("integration", 0),
         )
 
+    # Parse predicted scores (for calibration)
+    predicted_scores = None
+    if args.predicted:
+        p = json.loads(args.predicted)
+        predicted_scores = PredictedScores(
+            rac=p.get("rac", 0),
+            formula=p.get("formula", 0),
+            param=p.get("param", 0),
+            integration=p.get("integration", 0),
+            iterations=p.get("iterations", 1),
+            time_minutes=p.get("time", 0),
+            confidence=p.get("confidence", 0.5),
+        )
+
     # Read RAC content
     rac_content = ""
     if args.file.exists():
@@ -265,10 +292,12 @@ def cmd_log(args):
     run = EncodingRun(
         citation=args.citation,
         file_path=str(args.file),
+        predicted_scores=predicted_scores,
         iterations=iterations,
         total_duration_ms=args.duration,
         final_scores=final_scores,
         rac_content=rac_content,
+        session_id=args.session,
     )
 
     db.log_run(run)
@@ -277,8 +306,12 @@ def cmd_log(args):
     print(f"  Citation: {args.citation}")
     print(f"  Iterations: {args.iterations}")
     print(f"  Duration: {args.duration}ms")
+    if args.session:
+        print(f"  Session: {args.session}")
+    if predicted_scores:
+        print(f"  Predicted: RAC {predicted_scores.rac}/10 | Formula {predicted_scores.formula}/10 | Param {predicted_scores.param}/10 | Iter {predicted_scores.iterations}")
     if final_scores:
-        print(f"  Scores: RAC {final_scores.rac_reviewer}/10")
+        print(f"  Actual: RAC {final_scores.rac_reviewer}/10 | Formula {final_scores.formula_reviewer}/10 | Param {final_scores.parameter_reviewer}/10")
 
 
 def cmd_stats(args):
@@ -323,6 +356,94 @@ def cmd_stats(args):
             print("  → Document import patterns better")
     else:
         print("Not enough data yet. Run more encodings.")
+
+
+def cmd_calibration(args):
+    """Show calibration metrics - predicted vs actual scores."""
+    if not args.db.exists():
+        print(f"Database not found: {args.db}")
+        sys.exit(1)
+
+    db = ExperimentDB(args.db)
+    runs = db.get_recent_runs(limit=args.limit)
+
+    # Filter to runs with predictions
+    runs_with_pred = [r for r in runs if r.predicted_scores and r.final_scores]
+
+    if not runs_with_pred:
+        print("No runs with both predictions and actual scores yet.")
+        print("Use --predicted flag when logging runs to enable calibration.")
+        return
+
+    print("=== Calibration Report ===\n")
+    print(f"Runs with predictions: {len(runs_with_pred)}")
+    print()
+
+    # Calculate per-dimension errors
+    errors = {"rac": [], "formula": [], "param": [], "integration": []}
+    iter_errors = []
+    time_errors = []
+
+    for run in runs_with_pred:
+        p = run.predicted_scores
+        a = run.final_scores
+
+        errors["rac"].append(p.rac - a.rac_reviewer)
+        errors["formula"].append(p.formula - a.formula_reviewer)
+        errors["param"].append(p.param - a.parameter_reviewer)
+        errors["integration"].append(p.integration - a.integration_reviewer)
+
+        # Iteration prediction error
+        iter_errors.append(p.iterations - run.iterations_needed)
+
+        # Time prediction error (in minutes)
+        actual_time = run.total_duration_ms / 60000
+        if p.time_minutes > 0:
+            time_errors.append(p.time_minutes - actual_time)
+
+    # Print dimension calibration
+    print("Dimension Calibration (predicted - actual):")
+    print("-" * 50)
+    print(f"{'Dimension':<15} {'Mean Err':>10} {'Bias':>10} {'MAE':>10}")
+    print("-" * 50)
+
+    for dim, errs in errors.items():
+        if errs:
+            mean_err = sum(errs) / len(errs)
+            bias = "over" if mean_err > 0.5 else "under" if mean_err < -0.5 else "good"
+            mae = sum(abs(e) for e in errs) / len(errs)
+            print(f"{dim:<15} {mean_err:>+10.1f} {bias:>10} {mae:>10.1f}")
+
+    print()
+
+    # Print iteration calibration
+    if iter_errors:
+        mean_iter_err = sum(iter_errors) / len(iter_errors)
+        iter_bias = "over" if mean_iter_err > 0.3 else "under" if mean_iter_err < -0.3 else "good"
+        print(f"Iteration prediction: mean error {mean_iter_err:+.1f} ({iter_bias})")
+
+    # Print time calibration
+    if time_errors:
+        mean_time_err = sum(time_errors) / len(time_errors)
+        time_bias = "over" if mean_time_err > 2 else "under" if mean_time_err < -2 else "good"
+        print(f"Time prediction: mean error {mean_time_err:+.1f} min ({time_bias})")
+
+    print()
+
+    # Per-run breakdown
+    print("Per-Run Breakdown:")
+    print("-" * 70)
+    print(f"{'Citation':<25} {'Pred':>8} {'Act':>8} {'Err':>8} {'Iter':>6}")
+    print("-" * 70)
+
+    for run in runs_with_pred[-10:]:  # Last 10
+        p = run.predicted_scores
+        a = run.final_scores
+        pred_avg = (p.rac + p.formula + p.param + p.integration) / 4
+        act_avg = (a.rac_reviewer + a.formula_reviewer + a.parameter_reviewer + a.integration_reviewer) / 4
+        err = pred_avg - act_avg
+        citation = run.citation[:25]
+        print(f"{citation:<25} {pred_avg:>8.1f} {act_avg:>8.1f} {err:>+8.1f} {run.iterations_needed:>6}")
 
 
 def cmd_runs(args):
