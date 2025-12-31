@@ -236,8 +236,8 @@ class ValidatorPipeline:
                 ["python", "-c", f"""
 import sys
 sys.path.insert(0, '{self.rac_path}/src')
-from rac.parser import parse_rac
-parse_rac(open('{rac_file}').read())
+from rac.dsl_parser import parse_file
+parse_file('{rac_file}')
 print('PARSE_OK')
 """],
                 capture_output=True,
@@ -257,13 +257,9 @@ print('PARSE_OK')
                 ["python", "-c", f"""
 import sys
 sys.path.insert(0, '{self.rac_path}/src')
-from rac.parser import parse_rac
-from rac.executor import execute_tests
-rac = parse_rac(open('{rac_file}').read())
-results = execute_tests(rac)
-passed = sum(1 for r in results if r.passed)
-total = len(results)
-print(f'TESTS:{{passed}}/{{total}}')
+from rac.test_runner import run_tests_for_file
+report = run_tests_for_file('{rac_file}')
+print(f'TESTS:{{report.passed}}/{{report.total}}')
 """],
                 capture_output=True,
                 text=True,
