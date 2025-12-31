@@ -20,27 +20,48 @@ import uuid
 @dataclass
 class PredictedScores:
     """Agent's predicted scores before validation."""
-    rac_reviewer: float  # 0-10
-    formula_reviewer: float
-    parameter_reviewer: float
-    integration_reviewer: float
-    ci_pass: bool
+    # Iteration predictions (key calibration metrics)
+    iterations_to_pass: int = 1  # How many attempts until CI passes
+    expected_errors: list[str] = field(default_factory=list)  # ["parse", "test", "import"]
+    time_minutes: float = 5.0  # Estimated time to complete
+
+    # Reviewer score predictions (after CI passes)
+    rac_reviewer: float = 7.0  # 0-10
+    formula_reviewer: float = 7.0
+    parameter_reviewer: float = 7.0
+    integration_reviewer: float = 7.0
+
+    # Oracle predictions
     policyengine_match: Optional[float] = None  # 0-1, None if no oracle
     taxsim_match: Optional[float] = None
+
+    # Meta
     confidence: float = 0.5  # Agent's confidence in predictions
 
 
 @dataclass
 class ActualScores:
     """Actual scores from validators."""
+    # Iteration actuals
+    iterations_needed: int = 1
+    errors_encountered: list[str] = field(default_factory=list)
+    time_minutes: float = 0.0
+
+    # Reviewer scores
     rac_reviewer: Optional[float] = None
     formula_reviewer: Optional[float] = None
     parameter_reviewer: Optional[float] = None
     integration_reviewer: Optional[float] = None
+
+    # CI details
     ci_pass: Optional[bool] = None
+    ci_error: Optional[str] = None
+
+    # Oracle results
     policyengine_match: Optional[float] = None
     taxsim_match: Optional[float] = None
-    ci_error: Optional[str] = None
+
+    # Issues found
     reviewer_issues: list[str] = field(default_factory=list)
 
 
