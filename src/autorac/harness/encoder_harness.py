@@ -34,20 +34,22 @@ from .validator_pipeline import ValidatorPipeline, PipelineResult
 
 def run_claude_code(
     prompt: str,
-    agent_type: Optional[str] = None,
+    agent: Optional[str] = None,
     model: str = "sonnet",
     timeout: int = 300,
     cwd: Optional[Path] = None,
+    plugin_dir: Optional[Path] = None,
 ) -> tuple[str, int]:
     """
     Run Claude Code CLI as subprocess.
 
     Args:
         prompt: The prompt to send
-        agent_type: Optional agent type (e.g., "cosilico:RAC Encoder")
+        agent: Optional agent type (e.g., "cosilico:RAC Encoder")
         model: Model to use (sonnet, opus, haiku)
         timeout: Timeout in seconds
         cwd: Working directory
+        plugin_dir: Directory containing Claude Code plugins
 
     Returns:
         Tuple of (output text, return code)
@@ -56,6 +58,12 @@ def run_claude_code(
 
     if model:
         cmd.extend(["--model", model])
+
+    if plugin_dir and plugin_dir.exists():
+        cmd.extend(["--plugin-dir", str(plugin_dir)])
+
+    if agent:
+        cmd.extend(["--agent", agent])
 
     # Add the prompt
     cmd.extend(["-p", prompt])
@@ -83,9 +91,24 @@ class EncoderConfig:
     rac_us_path: Path
     rac_path: Path
     db_path: Path = Path("experiments.db")
+    cosilico_plugin_path: Optional[Path] = None  # Path to cosilico-claude plugin
     enable_oracles: bool = True
     max_iterations: int = 3
     score_threshold: float = 7.0  # Minimum score to accept
+
+    def __post_init__(self):
+        # Auto-detect cosilico plugin if not specified
+        if self.cosilico_plugin_path is None:
+            # Try common locations
+            candidates = [
+                self.rac_us_path.parent / "cosilico-claude",
+                Path.home() / "CosilicoAI" / "cosilico-claude",
+                Path.home() / ".claude" / "plugins" / "cosilico-claude",
+            ]
+            for candidate in candidates:
+                if candidate.exists() and (candidate / "plugin.json").exists():
+                    self.cosilico_plugin_path = candidate
+                    break
 
 
 class EncoderHarness:
@@ -232,7 +255,7 @@ Score each dimension from 1-10. Output ONLY valid JSON:
         try:
             output, returncode = run_claude_code(
                 prompt,
-                model="haiku",  # Use haiku for predictions (cheap)
+                model="opus",
                 timeout=60,
                 cwd=self.config.rac_us_path,
             )
@@ -274,32 +297,31 @@ Score each dimension from 1-10. Output ONLY valid JSON:
         """
         Invoke Claude Code to encode the statute to RAC format.
 
-        Uses Claude Code CLI with the cosilico:RAC Encoder agent.
+        Uses the cosilico:RAC Encoder agent from the plugin.
         """
         # Derive variable name from citation for fallback
         var_name = citation.replace("USC", "").replace("(", "_").replace(")", "").replace(" ", "_").lower()
         var_name = re.sub(r'_+', '_', var_name).strip('_')
 
-        prompt = f"""Encode 26 USC {citation} into RAC format.
+        # Use the cosilico plugin's encoder agent
+        prompt = f"""Encode {citation} into RAC format.
 
-Output to: {output_path}
+Write the output to: {output_path}
 
 Statute Text:
 {statute_text}
 
-Write the .rac file directly. Include:
-1. The statute text in `text:` block
-2. Variable definitions with proper entity/period/dtype
-3. At least 3 test cases
-4. No hardcoded numbers except -1, 0, 1, 2, 3
+Use the Write tool to create the .rac file at the specified path.
 """
 
         try:
             output, returncode = run_claude_code(
                 prompt,
-                model="sonnet",  # Use sonnet for encoding (balanced)
+                agent="cosilico:RAC Encoder",
+                model="opus",
                 timeout=300,
                 cwd=self.config.rac_us_path,
+                plugin_dir=self.config.cosilico_plugin_path,
             )
 
             # Check if file was created
@@ -397,7 +419,7 @@ Output ONLY valid JSON array:
         try:
             output, returncode = run_claude_code(
                 prompt,
-                model="haiku",  # Use haiku for suggestions (cheap)
+                model="opus",
                 timeout=60,
                 cwd=self.config.rac_us_path,
             )

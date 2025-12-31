@@ -343,7 +343,7 @@ Output ONLY valid JSON:
         try:
             output, returncode = run_claude_code(
                 prompt,
-                model="haiku",  # Use haiku for reviews (cheap)
+                model="opus",
                 timeout=120,
                 cwd=self.rac_us_path,
             )
