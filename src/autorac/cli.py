@@ -1,18 +1,24 @@
 """
 AutoRAC CLI - Command line interface for encoding experiments.
+
+Primary workflow:
+  1. /encode (slash command) invokes RAC Encoder agent to write .rac file
+  2. autorac validate <file.rac> runs CI + reviewers, outputs JSON scores
+  3. autorac log records predictions vs actuals to experiment DB
+  4. autorac calibration shows prediction accuracy over time
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 from . import (
     ExperimentDB,
-    EncoderHarness,
-    EncoderConfig,
     compute_calibration,
     print_calibration_report,
 )
+from .harness.validator_pipeline import ValidatorPipeline
 
 
 def main():
@@ -21,6 +27,60 @@ def main():
         description="AutoRAC - AI-assisted RAC encoding infrastructure"
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # validate command - run CI + reviewers on a .rac file
+    validate_parser = subparsers.add_parser(
+        "validate",
+        help="Validate a .rac file (CI + reviewer agents)"
+    )
+    validate_parser.add_argument(
+        "file",
+        type=Path,
+        help="Path to .rac file to validate"
+    )
+    validate_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results as JSON"
+    )
+    validate_parser.add_argument(
+        "--skip-reviewers",
+        action="store_true",
+        help="Skip reviewer agents (CI only)"
+    )
+
+    # log command - record an encoding run to the experiment DB
+    log_parser = subparsers.add_parser(
+        "log",
+        help="Log an encoding run to experiment DB"
+    )
+    log_parser.add_argument(
+        "--citation",
+        required=True,
+        help="Legal citation (e.g., '26 USC 32(c)(2)(A)')"
+    )
+    log_parser.add_argument(
+        "--file",
+        type=Path,
+        required=True,
+        help="Path to .rac file"
+    )
+    log_parser.add_argument(
+        "--predicted",
+        type=str,
+        help="Predicted scores as JSON (e.g., '{\"rac\":8,\"formula\":7}')"
+    )
+    log_parser.add_argument(
+        "--actual",
+        type=str,
+        help="Actual scores as JSON (e.g., '{\"rac\":7,\"formula\":8}')"
+    )
+    log_parser.add_argument(
+        "--db",
+        type=Path,
+        default=Path("experiments.db"),
+        help="Path to experiments database"
+    )
 
     # calibration command
     cal_parser = subparsers.add_parser(
@@ -38,33 +98,6 @@ def main():
         type=int,
         default=10,
         help="Minimum samples required per metric"
-    )
-
-    # encode command
-    encode_parser = subparsers.add_parser(
-        "encode",
-        help="Run encoding experiment"
-    )
-    encode_parser.add_argument(
-        "citation",
-        help="Legal citation (e.g., '26 USC 32(a)(1)')"
-    )
-    encode_parser.add_argument(
-        "--statute-file",
-        type=Path,
-        help="Path to statute text file"
-    )
-    encode_parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=Path("."),
-        help="Output directory for RAC file"
-    )
-    encode_parser.add_argument(
-        "--db",
-        type=Path,
-        default=Path("experiments.db"),
-        help="Path to experiments database"
     )
 
     # runs command
@@ -87,15 +120,135 @@ def main():
 
     args = parser.parse_args()
 
-    if args.command == "calibration":
+    if args.command == "validate":
+        cmd_validate(args)
+    elif args.command == "log":
+        cmd_log(args)
+    elif args.command == "calibration":
         cmd_calibration(args)
-    elif args.command == "encode":
-        cmd_encode(args)
     elif args.command == "runs":
         cmd_runs(args)
     else:
         parser.print_help()
         sys.exit(1)
+
+
+def cmd_validate(args):
+    """Validate a .rac file with CI and reviewer agents."""
+    if not args.file.exists():
+        print(f"File not found: {args.file}")
+        sys.exit(1)
+
+    # Find rac repo for CI validation
+    rac_file = args.file.resolve()
+    rac_us = rac_file
+    while rac_us.name != "rac-us" and rac_us.parent != rac_us:
+        rac_us = rac_us.parent
+
+    if rac_us.name != "rac-us":
+        print("Warning: Could not find rac-us directory, CI validation may fail")
+        rac_path = Path.home() / "CosilicoAI" / "rac"
+    else:
+        rac_path = rac_us.parent / "rac"
+
+    # Find rac-us path
+    rac_us = rac_file.parent
+    while rac_us.name != "rac-us" and rac_us.parent != rac_us:
+        rac_us = rac_us.parent
+    if rac_us.name != "rac-us":
+        rac_us = Path.home() / "CosilicoAI" / "rac-us"
+
+    pipeline = ValidatorPipeline(
+        rac_us_path=rac_us,
+        rac_path=rac_path,
+        enable_oracles=False,  # Skip PolicyEngine/TAXSIM for now
+    )
+
+    result = pipeline.validate(rac_file)
+    scores = result.to_actual_scores()
+
+    # Collect errors from all validators
+    errors = []
+    for name, vr in result.results.items():
+        if vr.error:
+            errors.append(f"{name}: {vr.error}")
+
+    if args.json:
+        output = {
+            "file": str(rac_file),
+            "ci_pass": scores.ci_pass,
+            "scores": {
+                "rac_reviewer": scores.rac_reviewer,
+                "formula_reviewer": scores.formula_reviewer,
+                "param_reviewer": scores.parameter_reviewer,
+                "integration_reviewer": scores.integration_reviewer,
+            },
+            "all_passed": result.all_passed,
+            "errors": errors,
+            "duration_ms": result.total_duration_ms,
+        }
+        print(json.dumps(output, indent=2))
+    else:
+        print(f"File: {rac_file}")
+        print(f"CI Pass: {'✓' if scores.ci_pass else '✗'}")
+        if not args.skip_reviewers:
+            print(f"RAC Reviewer: {scores.rac_reviewer}/10")
+            print(f"Formula Reviewer: {scores.formula_reviewer}/10")
+            print(f"Param Reviewer: {scores.parameter_reviewer}/10")
+            print(f"Integration Reviewer: {scores.integration_reviewer}/10")
+        print(f"All Passed: {'✓' if result.all_passed else '✗'}")
+        print(f"Duration: {result.total_duration_ms}ms")
+        if errors:
+            print("Errors:")
+            for err in errors:
+                print(f"  - {err}")
+
+    sys.exit(0 if result.all_passed else 1)
+
+
+def cmd_log(args):
+    """Log an encoding run to the experiment database."""
+    from .harness.experiment_db import EncodingRun, Scores
+
+    db = ExperimentDB(args.db)
+
+    predicted = None
+    if args.predicted:
+        p = json.loads(args.predicted)
+        predicted = Scores(
+            rac_reviewer=p.get("rac", 0),
+            formula_reviewer=p.get("formula", 0),
+            param_reviewer=p.get("param", 0),
+            integration_reviewer=p.get("integration", 0),
+            ci_pass=p.get("ci_pass", False),
+        )
+
+    actual = None
+    if args.actual:
+        a = json.loads(args.actual)
+        actual = Scores(
+            rac_reviewer=a.get("rac", 0),
+            formula_reviewer=a.get("formula", 0),
+            param_reviewer=a.get("param", 0),
+            integration_reviewer=a.get("integration", 0),
+            ci_pass=a.get("ci_pass", False),
+        )
+
+    run = EncodingRun(
+        citation=args.citation,
+        rac_file=args.file,
+        predicted=predicted,
+        actual=actual,
+    )
+
+    db.log_run(run)
+    print(f"Logged run: {run.id}")
+    print(f"  Citation: {args.citation}")
+    print(f"  File: {args.file}")
+    if predicted:
+        print(f"  Predicted RAC: {predicted.rac_reviewer}")
+    if actual:
+        print(f"  Actual RAC: {actual.rac_reviewer}")
 
 
 def cmd_calibration(args):
@@ -108,54 +261,6 @@ def cmd_calibration(args):
     snapshot = compute_calibration(db, min_samples=args.min_samples)
     report = print_calibration_report(snapshot)
     print(report)
-
-
-def cmd_encode(args):
-    """Run an encoding experiment."""
-    statute_text = ""
-    if args.statute_file:
-        statute_text = args.statute_file.read_text()
-
-    # Auto-detect rac paths
-    output_dir = args.output_dir.resolve()
-    rac_us = output_dir
-    while rac_us.name != "rac-us" and rac_us.parent != rac_us:
-        rac_us = rac_us.parent
-
-    if rac_us.name != "rac-us":
-        print("Error: Could not find rac-us directory")
-        sys.exit(1)
-
-    config = EncoderConfig(
-        rac_us_path=rac_us,
-        rac_path=rac_us.parent / "rac",
-        db_path=args.db,
-    )
-
-    harness = EncoderHarness(config)
-
-    # Derive output path from citation
-    parts = args.citation.replace("USC", "").replace("(", "/").replace(")", "").split()
-    title = parts[0]
-    rest = "".join(parts[1:])
-    output_path = output_dir / f"statute/{title}/{rest}.rac"
-
-    print(f"Encoding: {args.citation}")
-    print(f"Output: {output_path}")
-
-    iterations = harness.iterate_until_pass(
-        citation=args.citation,
-        statute_text=statute_text,
-        output_path=output_path,
-    )
-
-    for i, (run, result) in enumerate(iterations, 1):
-        print(f"\nIteration {i}:")
-        print(f"  All passed: {result.all_passed}")
-        if run.predicted:
-            print(f"  Predicted RAC score: {run.predicted.rac_reviewer}")
-        if run.actual:
-            print(f"  Actual RAC score: {run.actual.rac_reviewer}")
 
 
 def cmd_runs(args):
