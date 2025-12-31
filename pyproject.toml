@@ -22,12 +22,14 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "anthropic",
     "pydantic",
     "pyyaml",
     "requests",
     "sqlite-utils",
 ]
+
+# Note: Uses Claude Code CLI (subprocess) for agent calls - no anthropic SDK needed.
+# Claude Code must be installed: npm install -g @anthropic-ai/claude-code
 
 [project.optional-dependencies]
 dev = [

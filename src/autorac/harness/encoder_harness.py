@@ -7,6 +7,8 @@ The harness orchestrates:
 3. Agent suggests framework improvements
 4. Validators run in parallel
 5. Everything is logged for calibration
+
+Uses Claude Code CLI (subprocess) for agent calls - cheaper than direct API.
 """
 
 import subprocess
@@ -19,8 +21,6 @@ from pathlib import Path
 from typing import Optional, Callable
 from datetime import datetime
 
-from anthropic import Anthropic
-
 from .experiment_db import (
     ExperimentDB,
     EncodingRun,
@@ -32,122 +32,49 @@ from .experiment_db import (
 from .validator_pipeline import ValidatorPipeline, PipelineResult
 
 
-# Initialize Anthropic client (uses ANTHROPIC_API_KEY env var)
-_client: Optional[Anthropic] = None
+def run_claude_code(
+    prompt: str,
+    agent_type: Optional[str] = None,
+    model: str = "sonnet",
+    timeout: int = 300,
+    cwd: Optional[Path] = None,
+) -> tuple[str, int]:
+    """
+    Run Claude Code CLI as subprocess.
 
+    Args:
+        prompt: The prompt to send
+        agent_type: Optional agent type (e.g., "cosilico:RAC Encoder")
+        model: Model to use (sonnet, opus, haiku)
+        timeout: Timeout in seconds
+        cwd: Working directory
 
-def get_anthropic_client() -> Anthropic:
-    """Get or create Anthropic client."""
-    global _client
-    if _client is None:
-        _client = Anthropic()
-    return _client
+    Returns:
+        Tuple of (output text, return code)
+    """
+    cmd = ["claude", "--print"]
 
+    if model:
+        cmd.extend(["--model", model])
 
-# DSL specification for RAC format
-RAC_DSL_SPEC = """
-# RAC DSL Format
+    # Add the prompt
+    cmd.extend(["-p", prompt])
 
-Each .rac file defines variables using this structure:
-
-```yaml
-text: \"\"\"
-Original statute text quoted verbatim
-\"\"\"
-
-variable variable_name:
-  imports:
-    - path/to/dependency#variable_name
-    - path/to/other#other_variable as alias
-  entity: TaxUnit | Person | Household
-  period: Year | Month
-  dtype: Money | Rate | Boolean | Integer
-  unit: USD  # optional
-  label: "Human readable name"
-  description: "Detailed description"
-  syntax: python
-  formula: |
-    # Python-like formula
-    if condition:
-        return value
-    return other_value
-  default: 0
-  tests:
-    - name: "Test case name"
-      period: 2024-01
-      inputs:
-        input_var: value
-      expect: expected_output
-```
-
-## Key Rules:
-
-1. **Imports**: Use `path#variable` syntax, e.g., `26/32/c/2/A#earned_income`
-2. **Entity hierarchy**: Person < TaxUnit < Household
-3. **dtypes**: Money, Rate, Boolean, Integer
-4. **No hardcoded values**: Only -1, 0, 1, 2, 3 allowed as literals. All other values must be parameters.
-5. **Tests**: Include at least 3-5 test cases covering edge cases
-6. **Formulas**: Python-style with `return` statements
-7. **Filepath = Citation**: `statute/26/32/a/1.rac` encodes 26 USC 32(a)(1)
-"""
-
-
-PREDICTION_SYSTEM_PROMPT = """You are an expert at predicting code quality scores for tax/benefit statute encodings.
-
-Given a legal citation and statute text, predict how well an encoder would perform on various quality dimensions.
-
-Score each dimension from 1-10 where:
-- 10: Perfect implementation
-- 7-9: Good with minor issues
-- 4-6: Acceptable but needs improvement
-- 1-3: Significant problems
-
-Output ONLY valid JSON with this structure:
-{
-  "rac_reviewer": <float 1-10>,
-  "formula_reviewer": <float 1-10>,
-  "parameter_reviewer": <float 1-10>,
-  "integration_reviewer": <float 1-10>,
-  "ci_pass": <boolean>,
-  "policyengine_match": <float 0-1>,
-  "taxsim_match": <float 0-1>,
-  "confidence": <float 0-1>,
-  "reasoning": "<brief explanation>"
-}
-"""
-
-
-ENCODER_SYSTEM_PROMPT = """You are an expert encoder for the Cosilico RAC DSL (Rules as Code).
-
-Your task is to encode tax and benefit statutes into executable .rac files.
-
-""" + RAC_DSL_SPEC + """
-
-## Output Format
-
-Output ONLY the .rac file content. No markdown code blocks, no explanations.
-Start directly with `text:` and the quoted statute text.
-"""
-
-
-SUGGESTIONS_SYSTEM_PROMPT = """You are an expert at improving tax/benefit encoding frameworks.
-
-Given validation results from encoding attempts, suggest improvements to:
-1. Documentation - clearer DSL documentation
-2. Agent prompts - better encoding instructions
-3. Validators - more accurate validation checks
-4. DSL enhancements - language features to add
-
-Output ONLY valid JSON array with this structure:
-[
-  {
-    "category": "documentation" | "agent_prompt" | "validator" | "dsl",
-    "description": "<what to improve>",
-    "predicted_impact": "high" | "medium" | "low",
-    "specific_change": "<exact change to make, or null>"
-  }
-]
-"""
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=cwd,
+        )
+        return result.stdout + result.stderr, result.returncode
+    except subprocess.TimeoutExpired:
+        return f"Timeout after {timeout}s", 1
+    except FileNotFoundError:
+        return "Claude CLI not found - install with: npm install -g @anthropic-ai/claude-code", 1
+    except Exception as e:
+        return f"Error running Claude CLI: {e}", 1
 
 
 @dataclass
@@ -277,44 +204,45 @@ class EncoderHarness:
         self, citation: str, statute_text: str
     ) -> PredictedScores:
         """
-        Ask Claude to predict scores before encoding.
+        Ask Claude Code to predict scores before encoding.
 
-        Calls the Claude API with a prediction prompt and parses
-        the JSON response to extract predicted scores.
+        Uses Claude Code CLI subprocess for cheaper execution.
         """
-        client = get_anthropic_client()
-
-        user_prompt = f"""Predict quality scores for encoding the following statute:
+        prompt = f"""Predict quality scores for encoding the following statute into RAC DSL.
 
 Citation: {citation}
 
 Statute Text:
-{statute_text}
+{statute_text[:2000]}{'...' if len(statute_text) > 2000 else ''}
 
-Based on the complexity of this statute and typical encoding challenges,
-predict the scores that reviewers would assign to an encoding attempt.
+Score each dimension from 1-10. Output ONLY valid JSON:
+{{
+  "rac_reviewer": <float 1-10>,
+  "formula_reviewer": <float 1-10>,
+  "parameter_reviewer": <float 1-10>,
+  "integration_reviewer": <float 1-10>,
+  "ci_pass": <boolean>,
+  "policyengine_match": <float 0-1>,
+  "taxsim_match": <float 0-1>,
+  "confidence": <float 0-1>,
+  "reasoning": "<brief explanation>"
+}}
 """
 
         try:
-            response = client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=1024,
-                system=PREDICTION_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_prompt}],
+            output, returncode = run_claude_code(
+                prompt,
+                model="haiku",  # Use haiku for predictions (cheap)
+                timeout=60,
+                cwd=self.config.rac_us_path,
             )
 
-            # Extract text content from response
-            response_text = response.content[0].text
-
-            # Parse JSON from response
-            # Try to extract JSON if wrapped in other text
-            json_match = re.search(r'\{[^{}]*\}', response_text, re.DOTALL)
+            # Parse JSON from output
+            json_match = re.search(r'\{[^{}]*\}', output, re.DOTALL)
             if json_match:
-                json_str = json_match.group()
+                data = json.loads(json_match.group())
             else:
-                json_str = response_text
-
-            data = json.loads(json_str)
+                raise ValueError("No JSON found in output")
 
             return PredictedScores(
                 rac_reviewer=float(data.get("rac_reviewer", 7.0)),
@@ -328,8 +256,7 @@ predict the scores that reviewers would assign to an encoding attempt.
             )
 
         except Exception as e:
-            # Log error and return conservative defaults
-            print(f"Warning: Failed to get predictions from Claude: {e}")
+            print(f"Warning: Failed to get predictions: {e}")
             return PredictedScores(
                 rac_reviewer=6.0,
                 formula_reviewer=6.0,
@@ -345,61 +272,56 @@ predict the scores that reviewers would assign to an encoding attempt.
         self, citation: str, statute_text: str, output_path: Path
     ) -> str:
         """
-        Invoke Claude to encode the statute to RAC format.
+        Invoke Claude Code to encode the statute to RAC format.
 
-        Calls the Claude API to generate a .rac file, then writes
-        it to the output path and returns the content.
+        Uses Claude Code CLI with the cosilico:RAC Encoder agent.
         """
-        client = get_anthropic_client()
-
-        # Derive variable name from citation
-        # "26 USC 32(a)(1)" -> "eitc_credit" or similar
+        # Derive variable name from citation for fallback
         var_name = citation.replace("USC", "").replace("(", "_").replace(")", "").replace(" ", "_").lower()
         var_name = re.sub(r'_+', '_', var_name).strip('_')
 
-        user_prompt = f"""Encode the following statute into RAC DSL format:
+        prompt = f"""Encode 26 USC {citation} into RAC format.
 
-Citation: {citation}
-Output File: {output_path}
+Output to: {output_path}
 
 Statute Text:
 {statute_text}
 
-Requirements:
-1. Include the full statute text in the `text:` block
-2. Define appropriate variable(s) for the computation
-3. Use proper imports for any dependencies (e.g., income, filing_status)
-4. Include at least 3 test cases covering normal and edge cases
-5. Follow the exact RAC DSL syntax - no markdown formatting
+Write the .rac file directly. Include:
+1. The statute text in `text:` block
+2. Variable definitions with proper entity/period/dtype
+3. At least 3 test cases
+4. No hardcoded numbers except -1, 0, 1, 2, 3
 """
 
         try:
-            response = client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=4096,
-                system=ENCODER_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_prompt}],
+            output, returncode = run_claude_code(
+                prompt,
+                model="sonnet",  # Use sonnet for encoding (balanced)
+                timeout=300,
+                cwd=self.config.rac_us_path,
             )
 
-            # Extract text content from response
-            rac_content = response.content[0].text
+            # Check if file was created
+            if output_path.exists():
+                rac_content = output_path.read_text()
+            else:
+                # Try to extract RAC content from output
+                rac_content = output
 
             # Clean up any markdown code blocks if present
             rac_content = re.sub(r'^```\w*\n', '', rac_content)
             rac_content = re.sub(r'\n```$', '', rac_content)
             rac_content = rac_content.strip()
 
-            # Ensure output directory exists
+            # Ensure output directory exists and write
             output_path.parent.mkdir(parents=True, exist_ok=True)
-
-            # Write the RAC file
             output_path.write_text(rac_content)
 
             return rac_content
 
         except Exception as e:
-            # Log error and return a minimal placeholder
-            print(f"Warning: Failed to encode with Claude: {e}")
+            print(f"Warning: Failed to encode: {e}")
 
             # Return a minimal valid RAC structure as fallback
             fallback = f'''text: """
@@ -412,7 +334,6 @@ variable {var_name}:
   dtype: Money
   label: "{citation}"
   description: "Auto-generated placeholder - encoding failed"
-  syntax: python
   formula: |
     # TODO: Implement formula
     return 0
@@ -434,13 +355,9 @@ variable {var_name}:
         validation_result: PipelineResult,
     ) -> list[AgentSuggestion]:
         """
-        Ask Claude for framework improvement suggestions.
+        Ask Claude Code for framework improvement suggestions.
 
-        Based on validation errors, Claude suggests:
-        - Documentation improvements
-        - Agent prompt changes
-        - Validator fixes
-        - DSL enhancements
+        Based on validation errors, suggests improvements.
         """
         # Only get suggestions if there were failures
         failures = [
@@ -452,8 +369,6 @@ variable {var_name}:
         if not failures:
             return []
 
-        client = get_anthropic_client()
-
         # Build validation summary
         validation_summary = []
         for name, result in validation_result.results.items():
@@ -463,47 +378,36 @@ variable {var_name}:
             issues_str = f" Issues: {result.issues}" if result.issues else ""
             validation_summary.append(f"  {name}: {status}{score_str}{error_str}{issues_str}")
 
-        user_prompt = f"""Analyze the following encoding attempt and suggest framework improvements:
-
-Citation: {citation}
-
-RAC Content:
-```
-{rac_content[:2000]}{'...' if len(rac_content) > 2000 else ''}
-```
+        prompt = f"""Analyze encoding attempt for {citation} and suggest framework improvements.
 
 Validation Results:
 {chr(10).join(validation_summary)}
 
-Based on these results, suggest improvements to:
-1. Documentation - How could the DSL docs be clearer?
-2. Agent prompts - How could encoding instructions be better?
-3. Validators - Are any validation checks incorrect or missing?
-4. DSL - What language features would help?
-
-Focus on actionable, specific suggestions.
+Output ONLY valid JSON array:
+[
+  {{
+    "category": "documentation" | "agent_prompt" | "validator" | "dsl",
+    "description": "<what to improve>",
+    "predicted_impact": "high" | "medium" | "low",
+    "specific_change": "<exact change, or null>"
+  }}
+]
 """
 
         try:
-            response = client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=2048,
-                system=SUGGESTIONS_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_prompt}],
+            output, returncode = run_claude_code(
+                prompt,
+                model="haiku",  # Use haiku for suggestions (cheap)
+                timeout=60,
+                cwd=self.config.rac_us_path,
             )
 
-            # Extract text content from response
-            response_text = response.content[0].text
-
-            # Try to parse JSON array from response
-            # Handle potential wrapper text
-            json_match = re.search(r'\[[\s\S]*\]', response_text)
+            # Parse JSON array from output
+            json_match = re.search(r'\[[\s\S]*\]', output)
             if json_match:
-                json_str = json_match.group()
+                data = json.loads(json_match.group())
             else:
-                json_str = response_text
-
-            data = json.loads(json_str)
+                raise ValueError("No JSON array found in output")
 
             suggestions = []
             for item in data:
@@ -517,9 +421,9 @@ Focus on actionable, specific suggestions.
             return suggestions
 
         except Exception as e:
-            # Log error and return basic suggestions based on failures
-            print(f"Warning: Failed to get suggestions from Claude: {e}")
+            print(f"Warning: Failed to get suggestions: {e}")
 
+            # Return basic suggestions based on failures
             suggestions = []
             for name, result in failures:
                 suggestions.append(AgentSuggestion(

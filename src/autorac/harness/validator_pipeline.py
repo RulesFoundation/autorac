@@ -5,6 +5,8 @@ Validators:
 1. CI checks (parse, lint, test)
 2. Reviewer agents (rac, formula, parameter, integration)
 3. External oracles (PolicyEngine, TAXSIM)
+
+Uses Claude Code CLI (subprocess) for reviewer agents - cheaper than direct API.
 """
 
 import os
@@ -21,20 +23,35 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from .experiment_db import ActualScores
 
 
-# Lazy import for Anthropic client to avoid circular imports
-_anthropic_client = None
+def run_claude_code(
+    prompt: str,
+    model: str = "haiku",
+    timeout: int = 120,
+    cwd: Optional[Path] = None,
+) -> tuple[str, int]:
+    """
+    Run Claude Code CLI as subprocess.
 
+    Returns:
+        Tuple of (output text, return code)
+    """
+    cmd = ["claude", "--print", "--model", model, "-p", prompt]
 
-def get_anthropic_client():
-    """Get or create Anthropic client."""
-    global _anthropic_client
-    if _anthropic_client is None:
-        try:
-            from anthropic import Anthropic
-            _anthropic_client = Anthropic()
-        except ImportError:
-            raise ImportError("anthropic package required for reviewer agents")
-    return _anthropic_client
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=cwd,
+        )
+        return result.stdout + result.stderr, result.returncode
+    except subprocess.TimeoutExpired:
+        return f"Timeout after {timeout}s", 1
+    except FileNotFoundError:
+        return "Claude CLI not found", 1
+    except Exception as e:
+        return f"Error: {e}", 1
 
 
 # Reviewer agent system prompts
@@ -275,7 +292,7 @@ print(f'TESTS:{{passed}}/{{total}}')
         )
 
     def _run_reviewer(self, reviewer_type: str, rac_file: Path) -> ValidationResult:
-        """Run a reviewer agent via Claude API.
+        """Run a reviewer agent via Claude Code CLI.
 
         Args:
             reviewer_type: Type of reviewer (rac-reviewer, formula-reviewer, etc.)
@@ -285,20 +302,6 @@ print(f'TESTS:{{passed}}/{{total}}')
             ValidationResult with score, issues, and raw output
         """
         start = time.time()
-
-        # Select appropriate system prompt
-        prompts = {
-            "rac-reviewer": RAC_REVIEWER_PROMPT,
-            "formula-reviewer": FORMULA_REVIEWER_PROMPT,
-            "parameter-reviewer": PARAMETER_REVIEWER_PROMPT,
-            "integration-reviewer": INTEGRATION_REVIEWER_PROMPT,
-            # Handle legacy names with different casing
-            "Formula Reviewer": FORMULA_REVIEWER_PROMPT,
-            "Parameter Reviewer": PARAMETER_REVIEWER_PROMPT,
-            "Integration Reviewer": INTEGRATION_REVIEWER_PROMPT,
-        }
-
-        system_prompt = prompts.get(reviewer_type, RAC_REVIEWER_PROMPT)
 
         # Read RAC file content
         try:
@@ -314,53 +317,47 @@ print(f'TESTS:{{passed}}/{{total}}')
                 error=str(e),
             )
 
-        # Check if Claude API is available
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key:
-            # Return placeholder when API is not configured
-            duration = int((time.time() - start) * 1000)
-            return ValidationResult(
-                validator_name=reviewer_type,
-                passed=True,  # Placeholder passes
-                score=8.0,    # Placeholder score
-                issues=[],
-                duration_ms=duration,
-                raw_output="[No API key - using placeholder]",
-            )
+        # Build review prompt based on reviewer type
+        review_focus = {
+            "rac-reviewer": "structure, legal citations, imports, entity hierarchy, DSL compliance",
+            "formula-reviewer": "logic correctness, edge cases, circular dependencies, return statements, type consistency",
+            "parameter-reviewer": "no magic numbers (only -1,0,1,2,3 allowed), parameter sourcing, time-varying values",
+            "integration-reviewer": "test coverage, dependency resolution, documentation, completeness",
+            "Formula Reviewer": "logic correctness, edge cases, circular dependencies, return statements",
+            "Parameter Reviewer": "no magic numbers (only -1,0,1,2,3 allowed), parameter sourcing",
+            "Integration Reviewer": "test coverage, dependency resolution, documentation",
+        }.get(reviewer_type, "overall quality")
 
-        try:
-            client = get_anthropic_client()
-
-            user_prompt = f"""Review the following RAC file:
+        prompt = f"""Review this RAC file for: {review_focus}
 
 File: {rac_file}
 
 Content:
-```
-{rac_content}
-```
+{rac_content[:3000]}{'...' if len(rac_content) > 3000 else ''}
 
-Provide your review in the specified JSON format.
+Output ONLY valid JSON:
+{{
+  "score": <float 1-10>,
+  "passed": <boolean>,
+  "issues": ["issue1", "issue2"],
+  "reasoning": "<brief explanation>"
+}}
 """
 
-            response = client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=2048,
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_prompt}],
+        try:
+            output, returncode = run_claude_code(
+                prompt,
+                model="haiku",  # Use haiku for reviews (cheap)
+                timeout=120,
+                cwd=self.rac_us_path,
             )
 
-            # Extract response text
-            response_text = response.content[0].text
-
-            # Parse JSON from response
-            json_match = re.search(r'\{[^{}]*\}', response_text, re.DOTALL)
+            # Parse JSON from output
+            json_match = re.search(r'\{[^{}]*\}', output, re.DOTALL)
             if json_match:
-                json_str = json_match.group()
+                data = json.loads(json_match.group())
             else:
-                json_str = response_text
-
-            data = json.loads(json_str)
+                raise ValueError("No JSON found in output")
 
             score = float(data.get("score", 5.0))
             passed = bool(data.get("passed", score >= 7.0))
@@ -374,27 +371,16 @@ Provide your review in the specified JSON format.
                 score=score,
                 issues=issues if isinstance(issues, list) else [str(issues)],
                 duration_ms=duration,
-                raw_output=response_text,
+                raw_output=output,
             )
 
-        except json.JSONDecodeError as e:
-            duration = int((time.time() - start) * 1000)
-            return ValidationResult(
-                validator_name=reviewer_type,
-                passed=False,
-                score=5.0,
-                issues=[f"Failed to parse reviewer response: {e}"],
-                duration_ms=duration,
-                error=str(e),
-                raw_output=response_text if 'response_text' in locals() else None,
-            )
         except Exception as e:
             duration = int((time.time() - start) * 1000)
             return ValidationResult(
                 validator_name=reviewer_type,
-                passed=True,  # Fail open when API errors
+                passed=True,  # Fail open when CLI errors
                 score=8.0,    # Placeholder
-                issues=[f"Reviewer API error: {e}"],
+                issues=[f"Reviewer error: {e}"],
                 duration_ms=duration,
                 error=str(e),
             )

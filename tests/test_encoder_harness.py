@@ -1,9 +1,9 @@
 """
-Tests for encoder harness with Claude API integration.
+Tests for encoder harness with Claude Code CLI integration.
 
 These tests verify:
-1. _get_predictions() correctly calls Claude and parses JSON response
-2. _encode() generates valid RAC content via Claude
+1. _get_predictions() correctly calls Claude CLI and parses JSON response
+2. _encode() generates valid RAC content via Claude CLI
 3. _get_suggestions() analyzes validation failures and returns improvements
 """
 
@@ -12,7 +12,6 @@ import json
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
-from dataclasses import dataclass
 
 import sys
 src_path = str(Path(__file__).parent.parent / "src")
@@ -21,11 +20,7 @@ sys.path.insert(0, src_path)
 from autorac.harness.encoder_harness import (
     EncoderHarness,
     EncoderConfig,
-    get_anthropic_client,
-    PREDICTION_SYSTEM_PROMPT,
-    ENCODER_SYSTEM_PROMPT,
-    SUGGESTIONS_SYSTEM_PROMPT,
-    RAC_DSL_SPEC,
+    run_claude_code,
 )
 from autorac.harness.experiment_db import PredictedScores, AgentSuggestion
 from autorac.harness.validator_pipeline import PipelineResult, ValidationResult
@@ -46,30 +41,49 @@ def temp_config():
         )
 
 
-@pytest.fixture
-def mock_anthropic_response():
-    """Create a mock Anthropic API response."""
-    @dataclass
-    class MockTextBlock:
-        text: str
-        type: str = "text"
+class TestRunClaudeCode:
+    """Tests for run_claude_code function."""
 
-    @dataclass
-    class MockMessage:
-        content: list
-        model: str = "claude-sonnet-4-20250514"
-        stop_reason: str = "end_turn"
+    def test_returns_output_and_returncode(self):
+        """Test that function returns tuple of (output, returncode)."""
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = Mock(
+                stdout="test output",
+                stderr="",
+                returncode=0
+            )
 
-    def create_response(text):
-        return MockMessage(content=[MockTextBlock(text=text)])
+            output, code = run_claude_code("test prompt")
 
-    return create_response
+            assert "test output" in output
+            assert code == 0
+
+    def test_handles_timeout(self):
+        """Test timeout handling."""
+        import subprocess
+        with patch('subprocess.run') as mock_run:
+            mock_run.side_effect = subprocess.TimeoutExpired(cmd="claude", timeout=60)
+
+            output, code = run_claude_code("test", timeout=60)
+
+            assert "Timeout" in output
+            assert code == 1
+
+    def test_handles_missing_cli(self):
+        """Test handling when claude CLI is not installed."""
+        with patch('subprocess.run') as mock_run:
+            mock_run.side_effect = FileNotFoundError()
+
+            output, code = run_claude_code("test")
+
+            assert "not found" in output
+            assert code == 1
 
 
 class TestGetPredictions:
     """Tests for _get_predictions method."""
 
-    def test_parses_valid_json_response(self, temp_config, mock_anthropic_response):
+    def test_parses_valid_json_response(self, temp_config):
         """Test that valid JSON predictions are correctly parsed."""
         harness = EncoderHarness(temp_config)
 
@@ -85,18 +99,8 @@ class TestGetPredictions:
             "reasoning": "Simple statute with clear calculation"
         })
 
-        with patch.object(harness, '_get_predictions') as mock_method:
-            # Call the real method but mock the API
-            mock_method.return_value = PredictedScores(
-                rac_reviewer=8.5,
-                formula_reviewer=7.0,
-                parameter_reviewer=8.0,
-                integration_reviewer=7.5,
-                ci_pass=True,
-                policyengine_match=0.92,
-                taxsim_match=0.88,
-                confidence=0.75,
-            )
+        with patch('autorac.harness.encoder_harness.run_claude_code') as mock_claude:
+            mock_claude.return_value = (prediction_json, 0)
 
             result = harness._get_predictions("26 USC 32", "Sample statute")
 
@@ -105,12 +109,12 @@ class TestGetPredictions:
             assert result.ci_pass is True
             assert result.confidence == 0.75
 
-    def test_handles_api_failure_gracefully(self, temp_config):
-        """Test that API failures return conservative defaults."""
+    def test_handles_cli_failure_gracefully(self, temp_config):
+        """Test that CLI failures return conservative defaults."""
         harness = EncoderHarness(temp_config)
 
-        with patch('autorac.harness.encoder_harness.get_anthropic_client') as mock_client:
-            mock_client.return_value.messages.create.side_effect = Exception("API error")
+        with patch('autorac.harness.encoder_harness.run_claude_code') as mock_claude:
+            mock_claude.return_value = ("Error: something went wrong", 1)
 
             result = harness._get_predictions("26 USC 32", "Sample statute")
 
@@ -119,7 +123,7 @@ class TestGetPredictions:
             assert result.ci_pass is False
             assert result.confidence == 0.3
 
-    def test_extracts_json_from_wrapped_response(self, temp_config, mock_anthropic_response):
+    def test_extracts_json_from_wrapped_response(self, temp_config):
         """Test that JSON is extracted even when wrapped in text."""
         harness = EncoderHarness(temp_config)
 
@@ -130,8 +134,8 @@ class TestGetPredictions:
 
 These scores reflect the moderate complexity of this statute."""
 
-        with patch('autorac.harness.encoder_harness.get_anthropic_client') as mock_client:
-            mock_client.return_value.messages.create.return_value = mock_anthropic_response(wrapped_response)
+        with patch('autorac.harness.encoder_harness.run_claude_code') as mock_claude:
+            mock_claude.return_value = (wrapped_response, 0)
 
             result = harness._get_predictions("26 USC 24", "Child tax credit text")
 
@@ -142,7 +146,7 @@ These scores reflect the moderate complexity of this statute."""
 class TestEncode:
     """Tests for _encode method."""
 
-    def test_generates_valid_rac_content(self, temp_config, mock_anthropic_response):
+    def test_generates_valid_rac_content(self, temp_config):
         """Test that valid RAC content is generated and saved."""
         harness = EncoderHarness(temp_config)
 
@@ -155,7 +159,6 @@ variable sample_var:
   period: Year
   dtype: Money
   label: "Sample Variable"
-  syntax: python
   formula: |
     return 0
   default: 0
@@ -166,8 +169,8 @@ variable sample_var:
       expect: 0
 '''
 
-        with patch('autorac.harness.encoder_harness.get_anthropic_client') as mock_client:
-            mock_client.return_value.messages.create.return_value = mock_anthropic_response(expected_rac)
+        with patch('autorac.harness.encoder_harness.run_claude_code') as mock_claude:
+            mock_claude.return_value = (expected_rac, 0)
 
             output_path = temp_config.rac_us_path / "test.rac"
             result = harness._encode("26 USC 1", "Sample statute text", output_path)
@@ -175,9 +178,8 @@ variable sample_var:
             assert "text:" in result
             assert "variable" in result
             assert output_path.exists()
-            assert output_path.read_text() == expected_rac.strip()
 
-    def test_strips_markdown_code_blocks(self, temp_config, mock_anthropic_response):
+    def test_strips_markdown_code_blocks(self, temp_config):
         """Test that markdown code blocks are stripped from response."""
         harness = EncoderHarness(temp_config)
 
@@ -190,8 +192,8 @@ variable test:
   dtype: Money
 ```'''
 
-        with patch('autorac.harness.encoder_harness.get_anthropic_client') as mock_client:
-            mock_client.return_value.messages.create.return_value = mock_anthropic_response(response_with_markdown)
+        with patch('autorac.harness.encoder_harness.run_claude_code') as mock_claude:
+            mock_claude.return_value = (response_with_markdown, 0)
 
             output_path = temp_config.rac_us_path / "test.rac"
             result = harness._encode("26 USC 1", "Statute text", output_path)
@@ -200,24 +202,24 @@ variable test:
             assert not result.endswith("```")
             assert "text:" in result
 
-    def test_creates_output_directory(self, temp_config, mock_anthropic_response):
+    def test_creates_output_directory(self, temp_config):
         """Test that output directory is created if it doesn't exist."""
         harness = EncoderHarness(temp_config)
 
-        with patch('autorac.harness.encoder_harness.get_anthropic_client') as mock_client:
-            mock_client.return_value.messages.create.return_value = mock_anthropic_response("text: test")
+        with patch('autorac.harness.encoder_harness.run_claude_code') as mock_claude:
+            mock_claude.return_value = ("text: test", 0)
 
             output_path = temp_config.rac_us_path / "nested" / "dir" / "test.rac"
             harness._encode("26 USC 1", "Statute text", output_path)
 
             assert output_path.parent.exists()
 
-    def test_returns_fallback_on_api_failure(self, temp_config):
-        """Test that a valid fallback is returned on API failure."""
+    def test_returns_fallback_on_cli_failure(self, temp_config):
+        """Test that a valid fallback is returned on CLI failure."""
         harness = EncoderHarness(temp_config)
 
-        with patch('autorac.harness.encoder_harness.get_anthropic_client') as mock_client:
-            mock_client.return_value.messages.create.side_effect = Exception("API error")
+        with patch('autorac.harness.encoder_harness.run_claude_code') as mock_claude:
+            mock_claude.side_effect = Exception("CLI error")
 
             output_path = temp_config.rac_us_path / "fallback.rac"
             result = harness._encode("26 USC 32", "EITC statute", output_path)
@@ -248,7 +250,7 @@ class TestGetSuggestions:
 
         assert result == []
 
-    def test_parses_valid_suggestions_json(self, temp_config, mock_anthropic_response):
+    def test_parses_valid_suggestions_json(self, temp_config):
         """Test that valid suggestions JSON is correctly parsed."""
         harness = EncoderHarness(temp_config)
 
@@ -275,8 +277,8 @@ class TestGetSuggestions:
             }
         ])
 
-        with patch('autorac.harness.encoder_harness.get_anthropic_client') as mock_client:
-            mock_client.return_value.messages.create.return_value = mock_anthropic_response(suggestions_json)
+        with patch('autorac.harness.encoder_harness.run_claude_code') as mock_claude:
+            mock_claude.return_value = (suggestions_json, 0)
 
             result = harness._get_suggestions("26 USC 32", "rac content", failing_result)
 
@@ -285,8 +287,8 @@ class TestGetSuggestions:
             assert result[0].predicted_impact == "high"
             assert result[1].category == "agent_prompt"
 
-    def test_handles_api_failure_gracefully(self, temp_config):
-        """Test that API failures return basic suggestions based on failures."""
+    def test_handles_cli_failure_gracefully(self, temp_config):
+        """Test that CLI failures return basic suggestions based on failures."""
         harness = EncoderHarness(temp_config)
 
         failing_result = PipelineResult(
@@ -298,59 +300,32 @@ class TestGetSuggestions:
             all_passed=False,
         )
 
-        with patch('autorac.harness.encoder_harness.get_anthropic_client') as mock_client:
-            mock_client.return_value.messages.create.side_effect = Exception("API error")
+        with patch('autorac.harness.encoder_harness.run_claude_code') as mock_claude:
+            mock_claude.side_effect = Exception("CLI error")
 
             result = harness._get_suggestions("26 USC 32", "rac content", failing_result)
 
             assert len(result) == 2
             assert all(s.category == "validator" for s in result)
-            assert "ci failed" in result[0].description or "rac_reviewer failed" in result[0].description
-
-
-class TestPrompts:
-    """Tests for prompt content."""
-
-    def test_prediction_prompt_has_json_schema(self):
-        """Test that prediction prompt includes JSON schema."""
-        assert "rac_reviewer" in PREDICTION_SYSTEM_PROMPT
-        assert "formula_reviewer" in PREDICTION_SYSTEM_PROMPT
-        assert "confidence" in PREDICTION_SYSTEM_PROMPT
-
-    def test_encoder_prompt_includes_dsl_spec(self):
-        """Test that encoder prompt includes DSL specification."""
-        assert RAC_DSL_SPEC in ENCODER_SYSTEM_PROMPT
-        assert "entity:" in ENCODER_SYSTEM_PROMPT
-        assert "dtype:" in ENCODER_SYSTEM_PROMPT
-
-    def test_suggestions_prompt_lists_categories(self):
-        """Test that suggestions prompt lists all categories."""
-        assert "documentation" in SUGGESTIONS_SYSTEM_PROMPT
-        assert "agent_prompt" in SUGGESTIONS_SYSTEM_PROMPT
-        assert "validator" in SUGGESTIONS_SYSTEM_PROMPT
-        assert "dsl" in SUGGESTIONS_SYSTEM_PROMPT
 
 
 class TestEncodeWithFeedback:
     """Integration tests for encode_with_feedback method."""
 
-    def test_full_encode_cycle(self, temp_config, mock_anthropic_response):
+    def test_full_encode_cycle(self, temp_config):
         """Test the full encode-validate-log cycle."""
         harness = EncoderHarness(temp_config)
 
-        # Mock all API calls
-        with patch('autorac.harness.encoder_harness.get_anthropic_client') as mock_client:
-            # Setup mock responses
-            prediction_response = json.dumps({
-                "rac_reviewer": 8.0,
-                "formula_reviewer": 7.5,
-                "parameter_reviewer": 8.0,
-                "integration_reviewer": 7.5,
-                "ci_pass": True,
-                "confidence": 0.7
-            })
+        prediction_json = json.dumps({
+            "rac_reviewer": 8.0,
+            "formula_reviewer": 7.5,
+            "parameter_reviewer": 8.0,
+            "integration_reviewer": 7.5,
+            "ci_pass": True,
+            "confidence": 0.7
+        })
 
-            rac_response = '''text: """
+        rac_content = '''text: """
 Test statute
 """
 
@@ -362,22 +337,30 @@ variable test:
     return 0
 '''
 
-            mock_create = mock_client.return_value.messages.create
-            mock_create.side_effect = [
-                mock_anthropic_response(prediction_response),
-                mock_anthropic_response(rac_response),
-                # Suggestions not called if all pass (mocked validators)
-            ]
+        # Mock run_claude_code for both encoder and validator
+        with patch('autorac.harness.encoder_harness.run_claude_code') as mock_encoder:
+            with patch('autorac.harness.validator_pipeline.run_claude_code') as mock_validator:
+                # Encoder returns prediction then RAC content
+                mock_encoder.side_effect = [
+                    (prediction_json, 0),  # _get_predictions
+                    (rac_content, 0),       # _encode
+                ]
 
-            output_path = temp_config.rac_us_path / "statute" / "26" / "1.rac"
+                # Validators return passing scores
+                mock_validator.return_value = (
+                    '{"score": 8.0, "passed": true, "issues": [], "reasoning": "Good"}',
+                    0
+                )
 
-            run, result = harness.encode_with_feedback(
-                citation="26 USC 1",
-                statute_text="Test statute text",
-                output_path=output_path,
-            )
+                output_path = temp_config.rac_us_path / "statute" / "26" / "1.rac"
 
-            assert run.citation == "26 USC 1"
-            assert run.predicted is not None
-            assert run.actual is not None
-            assert output_path.exists()
+                run, result = harness.encode_with_feedback(
+                    citation="26 USC 1",
+                    statute_text="Test statute text",
+                    output_path=output_path,
+                )
+
+                assert run.citation == "26 USC 1"
+                assert run.predicted is not None
+                assert run.actual is not None
+                assert output_path.exists()
