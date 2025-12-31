@@ -77,6 +77,19 @@ def main():
     calibration_parser.add_argument("--db", type=Path, default=DEFAULT_DB)
     calibration_parser.add_argument("--limit", type=int, default=50)
 
+    # statute command - extract from local USC XML
+    statute_parser = subparsers.add_parser(
+        "statute",
+        help="Extract statute text from local USC XML (e.g., '26 USC 25B')"
+    )
+    statute_parser.add_argument("citation", help="Citation like '26 USC 25B' or '26/25B'")
+    statute_parser.add_argument(
+        "--xml-path",
+        type=Path,
+        default=Path.home() / "CosilicoAI" / "arch" / "data" / "uscode",
+        help="Path to USC XML files"
+    )
+
     # runs command
     runs_parser = subparsers.add_parser(
         "runs",
@@ -152,6 +165,8 @@ def main():
         cmd_stats(args)
     elif args.command == "calibration":
         cmd_calibration(args)
+    elif args.command == "statute":
+        cmd_statute(args)
     elif args.command == "runs":
         cmd_runs(args)
     elif args.command == "session-start":
@@ -444,6 +459,148 @@ def cmd_calibration(args):
         err = pred_avg - act_avg
         citation = run.citation[:25]
         print(f"{citation:<25} {pred_avg:>8.1f} {act_avg:>8.1f} {err:>+8.1f} {run.iterations_needed:>6}")
+
+
+def cmd_statute(args):
+    """Extract statute text from local USC XML."""
+    import re
+    import html
+
+    # Parse citation: "26 USC 25B" or "26/25B" or "26 25B"
+    citation = args.citation.upper().replace("USC", "").replace("§", "").strip()
+    parts = re.split(r'[\s/]+', citation)
+
+    if len(parts) < 2:
+        print(f"Error: Could not parse citation '{args.citation}'")
+        print("Expected format: '26 USC 25B' or '26/25B'")
+        sys.exit(1)
+
+    title = int(parts[0])
+    section = parts[1]
+
+    xml_file = args.xml_path / f"usc{title}.xml"
+
+    if not xml_file.exists():
+        print(f"Error: USC Title {title} XML not found at {xml_file}")
+        print(f"Available titles: {sorted([f.stem.replace('usc', '') for f in args.xml_path.glob('usc*.xml')])}")
+        sys.exit(1)
+
+    content = xml_file.read_text()
+
+    # Find the section
+    identifier = f"/us/usc/t{title}/s{section}"
+    start_pattern = rf'<section[^>]*identifier="{re.escape(identifier)}"[^>]*>'
+    start_match = re.search(start_pattern, content)
+
+    if not start_match:
+        print(f"Error: Section {identifier} not found in {xml_file.name}")
+        sys.exit(1)
+
+    # Find matching closing tag (handle nesting)
+    start_pos = start_match.start()
+    depth = 0
+    end_pos = start_pos
+    i = start_pos
+
+    while i < len(content):
+        if content[i:i+8] == '<section':
+            depth += 1
+        elif content[i:i+10] == '</section>':
+            depth -= 1
+            if depth == 0:
+                end_pos = i + 10
+                break
+        i += 1
+
+    xml_section = content[start_pos:end_pos]
+
+    # Simple text extraction: strip all tags, preserve structure via identifiers
+    def clean(text):
+        text = re.sub(r'<[^>]+>', '', text)
+        text = html.unescape(text)
+        return ' '.join(text.split()).strip()
+
+    # Extract heading
+    sec_head = re.search(r'<heading[^>]*>(.*?)</heading>', xml_section, re.DOTALL)
+
+    print(f"=== {title} USC § {section} ===")
+    if sec_head:
+        print(f"{clean(sec_head.group(1))}")
+    print()
+
+    # Process the XML structure iteratively
+    def extract_element(xml, tag, depth=0):
+        """Extract elements of given tag type with proper nesting."""
+        results = []
+        pattern = rf'<{tag}[^>]*identifier="([^"]+)"[^>]*>'
+        pos = 0
+
+        for match in re.finditer(pattern, xml):
+            start = match.start()
+            ident = match.group(1)
+
+            # Find closing tag
+            open_tag = f'<{tag}'
+            close_tag = f'</{tag}>'
+            d = 1
+            j = match.end()
+            while j < len(xml) and d > 0:
+                if xml[j:j+len(open_tag)] == open_tag:
+                    d += 1
+                elif xml[j:j+len(close_tag)] == close_tag:
+                    d -= 1
+                j += 1
+            end = j
+
+            elem_xml = xml[match.end():end-len(close_tag)]
+            results.append((ident, elem_xml))
+
+        return results
+
+    # Extract subsections
+    for sub_id, sub_xml in extract_element(xml_section, 'subsection'):
+        sub_letter = sub_id.split('/')[-1]
+        sub_num = re.search(r'<num[^>]*>(.*?)</num>', sub_xml)
+        sub_head = re.search(r'<heading[^>]*>(.*?)</heading>', sub_xml, re.DOTALL)
+        sub_content = re.search(r'<content>(.*?)</content>', sub_xml, re.DOTALL)
+
+        line = f"({sub_letter})"
+        if sub_head:
+            line += f" {clean(sub_head.group(1))}"
+        print(line)
+
+        if sub_content:
+            text = clean(sub_content.group(1))
+            if text and text not in line:
+                print(f"    {text}")
+
+        # Extract paragraphs
+        for para_id, para_xml in extract_element(sub_xml, 'paragraph'):
+            para_num = para_id.split('/')[-1]
+            para_head = re.search(r'<heading[^>]*>(.*?)</heading>', para_xml, re.DOTALL)
+            para_content = re.search(r'<content>(.*?)</content>', para_xml, re.DOTALL)
+
+            pline = f"  ({para_num})"
+            if para_head:
+                pline += f" {clean(para_head.group(1))}"
+            elif para_content:
+                pline += f" {clean(para_content.group(1))}"
+            print(pline)
+
+            # Extract subparagraphs
+            for subp_id, subp_xml in extract_element(para_xml, 'subparagraph'):
+                subp_letter = subp_id.split('/')[-1]
+                subp_head = re.search(r'<heading[^>]*>(.*?)</heading>', subp_xml, re.DOTALL)
+                subp_content = re.search(r'<content>(.*?)</content>', subp_xml, re.DOTALL)
+
+                sline = f"    ({subp_letter})"
+                if subp_head:
+                    sline += f" {clean(subp_head.group(1))}"
+                elif subp_content:
+                    sline += f" {clean(subp_content.group(1))}"
+                print(sline)
+
+        print()
 
 
 def cmd_runs(args):
