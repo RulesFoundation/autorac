@@ -28,13 +28,21 @@ dependencies = [
     "sqlite-utils",
 ]
 
-# Note: Uses Claude Code CLI (subprocess) for agent calls - no anthropic SDK needed.
+# Note: Uses Claude Code CLI (subprocess) by default - no anthropic SDK needed.
 # Claude Code must be installed: npm install -g @anthropic-ai/claude-code
+#
+# For parallel encoding via API, install with: pip install autorac[sdk]
 
 [project.optional-dependencies]
+sdk = [
+    "claude-agent-sdk>=0.1.0",
+]
 dev = [
     "pytest",
     "pytest-asyncio",
+]
+all = [
+    "autorac[sdk,dev]",
 ]
 
 [project.scripts]

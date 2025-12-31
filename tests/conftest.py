@@ -18,12 +18,10 @@ from autorac import (
     ExperimentDB,
     EncodingRun,
     PredictedScores,
-    ActualScores,
-    AgentSuggestion,
-    create_run,
     ValidatorPipeline,
     ValidationResult,
     PipelineResult,
+    FinalScores,
 )
 
 
@@ -44,36 +42,33 @@ def experiment_db(temp_db_path):
 def sample_predicted_scores():
     """Sample predicted scores for testing."""
     return PredictedScores(
-        rac_reviewer=7.5,
-        formula_reviewer=7.0,
-        parameter_reviewer=8.0,
-        integration_reviewer=7.5,
-        ci_pass=True,
-        policyengine_match=0.90,
-        taxsim_match=0.85,
+        rac=7.5,
+        formula=7.0,
+        param=8.0,
+        integration=7.5,
+        iterations=1,
+        time_minutes=5.0,
         confidence=0.6,
     )
 
 
 @pytest.fixture
-def sample_actual_scores():
-    """Sample actual scores for testing."""
-    return ActualScores(
+def sample_final_scores():
+    """Sample final scores for testing."""
+    return FinalScores(
         rac_reviewer=8.0,
         formula_reviewer=6.5,
         parameter_reviewer=7.5,
         integration_reviewer=8.0,
-        ci_pass=True,
         policyengine_match=0.88,
         taxsim_match=0.82,
-        reviewer_issues=["Minor formatting issue"],
     )
 
 
 @pytest.fixture
-def sample_encoding_run(sample_predicted_scores, sample_actual_scores):
+def sample_encoding_run(sample_predicted_scores, sample_final_scores):
     """Create a sample encoding run."""
-    run = create_run(
+    run = EncodingRun(
         file_path="/path/to/statute.rac",
         citation="26 USC 32",
         agent_type="autorac:encoder",
@@ -81,17 +76,9 @@ def sample_encoding_run(sample_predicted_scores, sample_actual_scores):
         rac_content="# EITC variable\nvariable EarnedIncome:\n  dtype: Money\n",
         statute_text="Sample statute text for EITC",
     )
-    run.predicted = sample_predicted_scores
-    run.actual = sample_actual_scores
-    run.suggestions = [
-        AgentSuggestion(
-            category="documentation",
-            description="Add example for nested conditionals",
-            predicted_impact="medium",
-        )
-    ]
-    run.encoding_duration_ms = 1500
-    run.validation_duration_ms = 3000
+    run.predicted_scores = sample_predicted_scores
+    run.final_scores = sample_final_scores
+    run.total_duration_ms = 4500
     return run
 
 
@@ -224,13 +211,12 @@ def mock_agent():
     """Create a mock agent for testing encoder harness."""
     mock = Mock()
     mock.predict.return_value = PredictedScores(
-        rac_reviewer=8.0,
-        formula_reviewer=7.5,
-        parameter_reviewer=8.5,
-        integration_reviewer=8.0,
-        ci_pass=True,
-        policyengine_match=0.92,
-        taxsim_match=0.88,
+        rac=8.0,
+        formula=7.5,
+        param=8.5,
+        integration=8.0,
+        iterations=1,
+        time_minutes=5.0,
         confidence=0.7,
     )
     mock.encode.return_value = "# Encoded content\n"

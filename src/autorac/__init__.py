@@ -9,11 +9,19 @@ from .harness import (
     IterationError,
     Iteration,
     FinalScores,
+    PredictedScores,
     # Validator Pipeline
     ValidatorPipeline,
     ValidationResult,
     PipelineResult,
     validate_file,
+    # Encoder Backends
+    EncoderBackend,
+    ClaudeCodeBackend,
+    AgentSDKBackend,
+    EncoderRequest,
+    EncoderResponse,
+    PredictionScores,
 )
 
 __all__ = [
@@ -23,8 +31,16 @@ __all__ = [
     "IterationError",
     "Iteration",
     "FinalScores",
+    "PredictedScores",
     "ValidatorPipeline",
     "ValidationResult",
     "PipelineResult",
     "validate_file",
+    # Encoder Backends
+    "EncoderBackend",
+    "ClaudeCodeBackend",
+    "AgentSDKBackend",
+    "EncoderRequest",
+    "EncoderResponse",
+    "PredictionScores",
 ]
