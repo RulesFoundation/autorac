@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Optional, Callable, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from .experiment_db import ActualScores
+from .experiment_db import FinalScores
 
 
 def run_claude_code(
@@ -147,23 +147,21 @@ class PipelineResult:
     total_duration_ms: int
     all_passed: bool
 
-    def to_actual_scores(self) -> ActualScores:
-        """Convert to ActualScores for experiment DB."""
-        issues = []
-        for r in self.results.values():
-            issues.extend(r.issues)
-
-        return ActualScores(
-            rac_reviewer=self.results.get("rac_reviewer", ValidationResult("", False)).score,
-            formula_reviewer=self.results.get("formula_reviewer", ValidationResult("", False)).score,
-            parameter_reviewer=self.results.get("parameter_reviewer", ValidationResult("", False)).score,
-            integration_reviewer=self.results.get("integration_reviewer", ValidationResult("", False)).score,
-            ci_pass=self.results.get("ci", ValidationResult("", False)).passed,
+    def to_actual_scores(self) -> FinalScores:
+        """Convert to FinalScores for experiment DB."""
+        return FinalScores(
+            rac_reviewer=self.results.get("rac_reviewer", ValidationResult("", False)).score or 0.0,
+            formula_reviewer=self.results.get("formula_reviewer", ValidationResult("", False)).score or 0.0,
+            parameter_reviewer=self.results.get("parameter_reviewer", ValidationResult("", False)).score or 0.0,
+            integration_reviewer=self.results.get("integration_reviewer", ValidationResult("", False)).score or 0.0,
             policyengine_match=self.results.get("policyengine", ValidationResult("", False)).score,
             taxsim_match=self.results.get("taxsim", ValidationResult("", False)).score,
-            ci_error=self.results.get("ci", ValidationResult("", False)).error,
-            reviewer_issues=issues,
         )
+
+    @property
+    def ci_pass(self) -> bool:
+        """Check if CI passed."""
+        return self.results.get("ci", ValidationResult("", False)).passed
 
 
 class ValidatorPipeline:

@@ -4,10 +4,10 @@
 from .experiment_db import (
     ExperimentDB,
     EncodingRun,
-    PredictedScores,
-    ActualScores,
-    AgentSuggestion,
-    create_run,
+    ComplexityFactors,
+    IterationError,
+    Iteration,
+    FinalScores,
 )
 from .validator_pipeline import (
     ValidatorPipeline,
@@ -15,42 +15,21 @@ from .validator_pipeline import (
     PipelineResult,
     validate_file,
 )
-from .encoder_harness import (
-    EncoderHarness,
-    EncoderConfig,
-    run_encoding_experiment,
-)
-from .metrics import (
-    CalibrationMetrics,
-    CalibrationSnapshot,
-    compute_calibration,
-    print_calibration_report,
-    save_calibration_snapshot,
-    get_calibration_trend,
-)
+
+# Note: encoder_harness and metrics need updating for new journey-based model
+# They still use the old prediction-based approach
 
 __all__ = [
     # Experiment DB
     "ExperimentDB",
     "EncodingRun",
-    "PredictedScores",
-    "ActualScores",
-    "AgentSuggestion",
-    "create_run",
+    "ComplexityFactors",
+    "IterationError",
+    "Iteration",
+    "FinalScores",
     # Validator Pipeline
     "ValidatorPipeline",
     "ValidationResult",
     "PipelineResult",
     "validate_file",
-    # Encoder Harness
-    "EncoderHarness",
-    "EncoderConfig",
-    "run_encoding_experiment",
-    # Metrics
-    "CalibrationMetrics",
-    "CalibrationSnapshot",
-    "compute_calibration",
-    "print_calibration_report",
-    "save_calibration_snapshot",
-    "get_calibration_trend",
 ]
