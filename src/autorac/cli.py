@@ -208,17 +208,17 @@ def cmd_validate(args):
 
 def cmd_log(args):
     """Log an encoding run to the experiment database."""
-    from .harness.experiment_db import EncodingRun, Scores
+    from .harness.experiment_db import EncodingRun, PredictedScores, ActualScores
 
     db = ExperimentDB(args.db)
 
     predicted = None
     if args.predicted:
         p = json.loads(args.predicted)
-        predicted = Scores(
+        predicted = PredictedScores(
             rac_reviewer=p.get("rac", 0),
             formula_reviewer=p.get("formula", 0),
-            param_reviewer=p.get("param", 0),
+            parameter_reviewer=p.get("param", 0),
             integration_reviewer=p.get("integration", 0),
             ci_pass=p.get("ci_pass", False),
         )
@@ -226,17 +226,30 @@ def cmd_log(args):
     actual = None
     if args.actual:
         a = json.loads(args.actual)
-        actual = Scores(
+        actual = ActualScores(
             rac_reviewer=a.get("rac", 0),
             formula_reviewer=a.get("formula", 0),
-            param_reviewer=a.get("param", 0),
+            parameter_reviewer=a.get("param", 0),
             integration_reviewer=a.get("integration", 0),
             ci_pass=a.get("ci_pass", False),
         )
 
+    import uuid
+    from datetime import datetime
+
+    # Read RAC content
+    rac_content = ""
+    if args.file.exists():
+        rac_content = args.file.read_text()
+
     run = EncodingRun(
+        id=str(uuid.uuid4())[:8],
+        timestamp=datetime.now(),
+        file_path=str(args.file),
         citation=args.citation,
-        rac_file=args.file,
+        agent_type="encoder",
+        agent_model="claude-opus-4-5-20251101",
+        rac_content=rac_content,
         predicted=predicted,
         actual=actual,
     )
