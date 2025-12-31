@@ -194,7 +194,7 @@ def cmd_validate(args):
     if args.json:
         output = {
             "file": str(rac_file),
-            "ci_pass": scores.ci_pass,
+            "ci_pass": result.ci_pass,
             "scores": {
                 "rac_reviewer": scores.rac_reviewer,
                 "formula_reviewer": scores.formula_reviewer,
@@ -208,7 +208,7 @@ def cmd_validate(args):
         print(json.dumps(output, indent=2))
     else:
         print(f"File: {rac_file}")
-        print(f"CI: {'✓' if scores.ci_pass else '✗'}")
+        print(f"CI: {'✓' if result.ci_pass else '✗'}")
         if not args.skip_reviewers:
             print(f"Scores: RAC {scores.rac_reviewer}/10 | Formula {scores.formula_reviewer}/10 | Param {scores.parameter_reviewer}/10 | Integration {scores.integration_reviewer}/10")
         print(f"Result: {'✓ PASSED' if result.all_passed else '✗ FAILED'}")

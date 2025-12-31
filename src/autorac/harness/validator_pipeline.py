@@ -12,6 +12,7 @@ Uses Claude Code CLI (subprocess) for reviewer agents - cheaper than direct API.
 import os
 import re
 import subprocess
+import sys
 import json
 import time
 import yaml
@@ -231,7 +232,7 @@ class ValidatorPipeline:
         # 1. Parse check
         try:
             result = subprocess.run(
-                ["python", "-c", f"""
+                [sys.executable, "-c", f"""
 import sys
 sys.path.insert(0, '{self.rac_path}/src')
 from rac.dsl_parser import parse_file
@@ -252,7 +253,7 @@ print('PARSE_OK')
         # 2. Run inline tests
         try:
             result = subprocess.run(
-                ["python", "-c", f"""
+                [sys.executable, "-c", f"""
 import sys
 sys.path.insert(0, '{self.rac_path}/src')
 from rac.test_runner import run_tests_for_file
