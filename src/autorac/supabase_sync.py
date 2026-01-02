@@ -192,26 +192,161 @@ def fetch_runs_from_supabase(
     return result.data
 
 
+# ============================================================================
+# Transcript Sync (from PostToolUse hook local DB to Supabase)
+# ============================================================================
+
+TRANSCRIPT_DB = Path.home() / "CosilicoAI" / "autorac" / "transcripts.db"
+
+
+def sync_transcripts_to_supabase(
+    session_id: Optional[str] = None,
+    client: Optional[Client] = None,
+) -> dict:
+    """
+    Sync agent transcripts from local SQLite to Supabase.
+
+    Args:
+        session_id: Optional filter by session (syncs all unsynced if None)
+        client: Optional Supabase client
+
+    Returns:
+        Dict with sync stats
+    """
+    import sqlite3
+
+    if not TRANSCRIPT_DB.exists():
+        return {"total": 0, "synced": 0, "failed": 0, "error": "No local transcript DB"}
+
+    if client is None:
+        client = get_supabase_client()
+
+    conn = sqlite3.connect(str(TRANSCRIPT_DB))
+    conn.row_factory = sqlite3.Row
+
+    # Get unsynced transcripts
+    query = "SELECT * FROM agent_transcripts WHERE uploaded_at IS NULL"
+    params = []
+    if session_id:
+        query += " AND session_id = ?"
+        params.append(session_id)
+
+    rows = conn.execute(query, params).fetchall()
+
+    synced = 0
+    failed = 0
+
+    for row in rows:
+        try:
+            data = {
+                "session_id": row["session_id"],
+                "tool_use_id": row["tool_use_id"],
+                "subagent_type": row["subagent_type"],
+                "prompt": row["prompt"],
+                "description": row["description"],
+                "response_summary": row["response_summary"],
+                "transcript": json.loads(row["transcript"]) if row["transcript"] else None,
+                "message_count": row["message_count"],
+                "created_at": row["created_at"],
+            }
+
+            result = client.schema("autorac").table("agent_transcripts").upsert(data).execute()
+
+            if result.data:
+                # Mark as uploaded
+                conn.execute(
+                    "UPDATE agent_transcripts SET uploaded_at = ? WHERE id = ?",
+                    (datetime.now().isoformat(), row["id"])
+                )
+                conn.commit()
+                synced += 1
+            else:
+                failed += 1
+        except Exception as e:
+            print(f"Error syncing transcript {row['tool_use_id']}: {e}")
+            failed += 1
+
+    conn.close()
+
+    return {
+        "total": len(rows),
+        "synced": synced,
+        "failed": failed,
+    }
+
+
+def get_local_transcript_stats() -> dict:
+    """Get stats about local transcript database."""
+    import sqlite3
+
+    if not TRANSCRIPT_DB.exists():
+        return {"exists": False}
+
+    conn = sqlite3.connect(str(TRANSCRIPT_DB))
+
+    total = conn.execute("SELECT COUNT(*) FROM agent_transcripts").fetchone()[0]
+    unsynced = conn.execute(
+        "SELECT COUNT(*) FROM agent_transcripts WHERE uploaded_at IS NULL"
+    ).fetchone()[0]
+    by_type = conn.execute(
+        "SELECT subagent_type, COUNT(*) FROM agent_transcripts GROUP BY subagent_type"
+    ).fetchall()
+
+    conn.close()
+
+    return {
+        "exists": True,
+        "total": total,
+        "unsynced": unsynced,
+        "synced": total - unsynced,
+        "by_type": dict(by_type),
+    }
+
+
 if __name__ == "__main__":
     # CLI usage: python -m autorac.supabase_sync <db_path> <data_source>
     # data_source is REQUIRED to prevent syncing fake data
     import sys
 
-    if len(sys.argv) < 3:
-        print("Usage: python -m autorac.supabase_sync <db_path> <data_source>")
+    if len(sys.argv) < 2:
+        print("Usage:")
+        print("  python -m autorac.supabase_sync runs <db_path> <data_source>")
+        print("  python -m autorac.supabase_sync transcripts [session_id]")
+        print("  python -m autorac.supabase_sync stats")
         print("")
-        print("data_source must be one of:")
+        print("data_source for runs must be one of:")
         print("  reviewer_agent  - Scores from actual reviewer agent runs")
         print("  ci_only         - Only CI tests ran, no reviewer scores")
         print("  mock            - Fake/placeholder data for testing")
         print("  manual_estimate - Human-estimated scores (NOT from agents)")
-        print("")
-        print("Example: python -m autorac.supabase_sync experiments.db ci_only")
         sys.exit(1)
 
-    db_path = Path(sys.argv[1])
-    data_source = sys.argv[2]
+    cmd = sys.argv[1]
 
-    print(f"Syncing from {db_path} with data_source={data_source}...")
-    stats = sync_all_runs(db_path, data_source)
-    print(f"Done! {stats['synced']} synced, {stats['failed']} failed of {stats['total']} total")
+    if cmd == "runs":
+        if len(sys.argv) < 4:
+            print("Usage: python -m autorac.supabase_sync runs <db_path> <data_source>")
+            sys.exit(1)
+        db_path = Path(sys.argv[2])
+        data_source = sys.argv[3]
+        print(f"Syncing runs from {db_path} with data_source={data_source}...")
+        stats = sync_all_runs(db_path, data_source)
+        print(f"Done! {stats['synced']} synced, {stats['failed']} failed of {stats['total']} total")
+
+    elif cmd == "transcripts":
+        session_id = sys.argv[2] if len(sys.argv) > 2 else None
+        print(f"Syncing transcripts{f' for session {session_id}' if session_id else ''}...")
+        stats = sync_transcripts_to_supabase(session_id)
+        print(f"Done! {stats['synced']} synced, {stats['failed']} failed of {stats['total']} total")
+
+    elif cmd == "stats":
+        stats = get_local_transcript_stats()
+        if not stats.get("exists"):
+            print("No local transcript database found")
+        else:
+            print(f"Local transcripts: {stats['total']} total, {stats['unsynced']} unsynced")
+            print(f"By agent type: {stats['by_type']}")
+
+    else:
+        print(f"Unknown command: {cmd}")
+        sys.exit(1)

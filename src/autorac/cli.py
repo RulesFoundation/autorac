@@ -155,6 +155,25 @@ def main():
     )
     session_stats_parser.add_argument("--db", type=Path, default=DEFAULT_DB)
 
+    # =========================================================================
+    # Transcript sync commands
+    # =========================================================================
+
+    # sync-transcripts command
+    sync_transcripts_parser = subparsers.add_parser(
+        "sync-transcripts",
+        help="Sync local transcripts to Supabase"
+    )
+    sync_transcripts_parser.add_argument(
+        "--session", default=None, help="Only sync specific session"
+    )
+
+    # transcript-stats command
+    transcript_stats_parser = subparsers.add_parser(
+        "transcript-stats",
+        help="Show local transcript database stats"
+    )
+
     args = parser.parse_args()
 
     if args.command == "validate":
@@ -181,6 +200,10 @@ def main():
         cmd_session_show(args)
     elif args.command == "session-stats":
         cmd_session_stats(args)
+    elif args.command == "sync-transcripts":
+        cmd_sync_transcripts(args)
+    elif args.command == "transcript-stats":
+        cmd_transcript_stats(args)
     else:
         parser.print_help()
         sys.exit(1)
@@ -758,6 +781,48 @@ def cmd_session_stats(args):
         print("Top tools:")
         for tool, count in list(stats['tool_usage'].items())[:10]:
             print(f"  {tool}: {count}")
+
+
+# =========================================================================
+# Transcript Sync Commands
+# =========================================================================
+
+def cmd_sync_transcripts(args):
+    """Sync local transcripts to Supabase."""
+    from .supabase_sync import sync_transcripts_to_supabase
+
+    print(f"Syncing transcripts{f' for session {args.session}' if args.session else ''}...")
+
+    try:
+        stats = sync_transcripts_to_supabase(session_id=args.session)
+        print(f"Done! {stats['synced']} synced, {stats['failed']} failed of {stats['total']} total")
+    except ValueError as e:
+        print(f"Error: {e}")
+        print("Set COSILICO_SUPABASE_URL and COSILICO_SUPABASE_SECRET_KEY environment variables")
+        sys.exit(1)
+
+
+def cmd_transcript_stats(args):
+    """Show local transcript database stats."""
+    from .supabase_sync import get_local_transcript_stats
+
+    stats = get_local_transcript_stats()
+
+    if not stats.get("exists"):
+        print("No local transcript database found")
+        print("Transcripts are created automatically when subagents complete")
+        return
+
+    print("=== Local Transcript Stats ===")
+    print(f"Total transcripts: {stats['total']}")
+    print(f"Unsynced: {stats['unsynced']}")
+    print(f"Synced: {stats['synced']}")
+    print()
+
+    if stats.get('by_type'):
+        print("By agent type:")
+        for agent_type, count in sorted(stats['by_type'].items(), key=lambda x: -x[1]):
+            print(f"  {agent_type}: {count}")
 
 
 if __name__ == "__main__":

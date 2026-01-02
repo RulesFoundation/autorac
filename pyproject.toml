@@ -26,6 +26,7 @@ dependencies = [
     "pyyaml",
     "requests",
     "sqlite-utils",
+    "supabase>=2.0.0",
 ]
 
 # Note: Uses Claude Code CLI (subprocess) by default - no anthropic SDK needed.
