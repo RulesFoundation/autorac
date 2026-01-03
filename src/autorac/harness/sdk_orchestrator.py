@@ -245,7 +245,7 @@ Write .rac files to the output path. Run tests after each file."""
         model: str,
     ) -> AgentRun:
         """Run a single agent and capture everything."""
-        from claude_code_sdk import query, ClaudeCodeOptions
+        from claude_agent_sdk import query, ClaudeAgentOptions
         import sys
 
         agent_type = self.AGENTS.get(agent_key, agent_key)
@@ -269,7 +269,7 @@ Write .rac files to the output path. Run tests after each file."""
         print(f"  Model: {model}", flush=True)
 
         try:
-            options = ClaudeCodeOptions(
+            options = ClaudeAgentOptions(
                 model=model,
                 allowed_tools=["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Task"],
             )
