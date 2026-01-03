@@ -109,6 +109,33 @@ def main():
     runs_parser.add_argument("--db", type=Path, default=DEFAULT_DB)
     runs_parser.add_argument("--limit", type=int, default=20)
 
+    # init command - create stubs for all subsections
+    init_parser = subparsers.add_parser(
+        "init",
+        help="Initialize encoding: create stubs for all subsections with text from arch"
+    )
+    init_parser.add_argument("citation", help="Citation like '26 USC 1' or '26/1'")
+    init_parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path.home() / "CosilicoAI" / "rac-us" / "statute",
+        help="Output directory for .rac files"
+    )
+    init_parser.add_argument("--force", action="store_true", help="Overwrite existing files")
+
+    # coverage command - check all subsections have been examined
+    coverage_parser = subparsers.add_parser(
+        "coverage",
+        help="Check encoding coverage: verify no subsections remain unexamined"
+    )
+    coverage_parser.add_argument("citation", help="Citation like '26 USC 1' or '26/1'")
+    coverage_parser.add_argument(
+        "--path",
+        type=Path,
+        default=Path.home() / "CosilicoAI" / "rac-us" / "statute",
+        help="Path to statute directory"
+    )
+
     # =========================================================================
     # Session logging commands (for hooks)
     # =========================================================================
@@ -199,6 +226,10 @@ def main():
         cmd_statute(args)
     elif args.command == "runs":
         cmd_runs(args)
+    elif args.command == "init":
+        cmd_init(args)
+    elif args.command == "coverage":
+        cmd_coverage(args)
     elif args.command == "session-start":
         cmd_session_start(args)
     elif args.command == "session-end":
@@ -695,6 +726,240 @@ def cmd_runs(args):
         result = "✓" if run.success else "✗"
         time_s = run.total_duration_ms / 1000
         print(f"{run.id:<10} {run.citation:<30} {run.iterations_needed:<5} {time_s:>6.1f}s {result}")
+
+
+# =========================================================================
+# Init and Coverage Commands
+# =========================================================================
+
+SUPABASE_URL = "https://nsupqhfchdtqclomlrgs.supabase.co/rest/v1"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5zdXBxaGZjaGR0cWNsb21scmdzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY5MzExMDgsImV4cCI6MjA4MjUwNzEwOH0.BPdUadtBCdKfWZrKbfxpBQUqSGZ4hd34Dlor8kMBrVI"
+
+
+def cmd_init(args):
+    """Initialize encoding: create stubs for all subsections with text from arch."""
+    import requests
+
+    # Parse citation to get title/section
+    citation = args.citation.replace(" ", "").upper()
+    if "USC" in citation:
+        parts = citation.split("USC")
+        title = parts[0]
+        section = parts[1]
+    else:
+        # Assume format like "26/1"
+        parts = args.citation.split("/")
+        title = parts[0]
+        section = "/".join(parts[1:])
+
+    # Query arch.rules for all subsections
+    source_path_prefix = f"usc/{title}/{section}"
+    url = f"{SUPABASE_URL}/rules"
+    params = {
+        "source_path": f"like.{source_path_prefix}%",
+        "select": "id,heading,body,line_count,citation_path,source_path",
+        "order": "citation_path",
+    }
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Accept-Profile": "arch",
+    }
+
+    try:
+        response = requests.get(url, params=params, headers=headers, timeout=30)
+        response.raise_for_status()
+        rules = response.json()
+    except requests.RequestException as e:
+        print(f"Error fetching from arch: {e}")
+        sys.exit(1)
+
+    if not rules:
+        print(f"No rules found for {args.citation}")
+        sys.exit(1)
+
+    print(f"Found {len(rules)} subsections for {args.citation}")
+
+    # Build tree structure to determine depth and encoding order
+    tree = {}
+    for rule in rules:
+        path = rule["source_path"].replace(f"usc/{title}/", "")
+        parts = path.split("/")
+        tree[path] = {
+            "depth": len(parts),
+            "heading": rule.get("heading", ""),
+            "body": rule.get("body", ""),
+            "line_count": rule.get("line_count", 0),
+            "citation_path": rule.get("citation_path", ""),
+        }
+
+    # Sort by depth (deepest first), then alphabetically for encoding order
+    sorted_paths = sorted(tree.keys(), key=lambda p: (-tree[p]["depth"], p))
+
+    # Generate encoding sequence
+    sequence = []
+    for i, path in enumerate(sorted_paths, 1):
+        info = tree[path]
+        sequence.append({
+            "order": i,
+            "path": path,
+            "depth": info["depth"],
+            "heading": info["heading"],
+            "line_count": info["line_count"],
+        })
+
+    # Create .rac stub files
+    created = 0
+    skipped = 0
+    output_base = args.output / title
+
+    for path, info in tree.items():
+        # Convert path to filesystem path
+        rac_path = output_base / f"{path}.rac"
+
+        if rac_path.exists() and not args.force:
+            skipped += 1
+            continue
+
+        # Create parent directories
+        rac_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Build stub content
+        heading = info["heading"] or path.split("/")[-1]
+        body = info["body"] or ""
+
+        # Clean body text (remove HTML tags if present)
+        import html
+        body = html.unescape(body)
+        body = re.sub(r'<[^>]+>', '', body)
+
+        stub_content = f'''# {title} USC Section {path} - {heading}
+# Status: unexamined - encoder must set disposition
+
+status: unexamined
+
+text: """
+{body[:3000]}{"..." if len(body) > 3000 else ""}
+"""
+
+# Encoder: Set status to one of:
+#   encoded - has formula (replace this stub entirely)
+#   stub - interface only, needs future work
+#   skip - with skip_reason: "administrative" | "superseded" | "boilerplate"
+#   consolidated - captured in parent/sibling file
+'''
+        rac_path.write_text(stub_content)
+        created += 1
+
+    # Write encoding sequence file
+    sequence_path = output_base / section / "_encoding_sequence.yaml"
+    sequence_path.parent.mkdir(parents=True, exist_ok=True)
+
+    import yaml
+    sequence_content = {
+        "citation": args.citation,
+        "total_subsections": len(rules),
+        "encoding_order": "leaf-first (deepest to shallowest)",
+        "sequence": sequence,
+    }
+    sequence_path.write_text(yaml.dump(sequence_content, default_flow_style=False, sort_keys=False))
+
+    print(f"Created {created} stub files, skipped {skipped} existing")
+    print(f"Encoding sequence written to: {sequence_path}")
+    print(f"\nEncoding order (first 10):")
+    for item in sequence[:10]:
+        print(f"  {item['order']:3}. {item['path']} (depth={item['depth']}, {item['line_count']} lines)")
+    if len(sequence) > 10:
+        print(f"  ... and {len(sequence) - 10} more")
+
+
+def cmd_coverage(args):
+    """Check encoding coverage: verify no subsections remain unexamined."""
+    # Parse citation to get path
+    citation = args.citation.replace(" ", "").upper()
+    if "USC" in citation:
+        parts = citation.split("USC")
+        title = parts[0]
+        section = parts[1]
+    else:
+        parts = args.citation.split("/")
+        title = parts[0]
+        section = "/".join(parts[1:])
+
+    # Find all .rac files
+    search_path = args.path / title / section
+    if not search_path.exists():
+        print(f"Path not found: {search_path}")
+        sys.exit(1)
+
+    rac_files = list(search_path.rglob("*.rac"))
+
+    if not rac_files:
+        print(f"No .rac files found in {search_path}")
+        sys.exit(1)
+
+    # Check each file for status
+    unexamined = []
+    examined = {"encoded": [], "stub": [], "skip": [], "consolidated": []}
+    errors = []
+
+    for rac_file in rac_files:
+        if rac_file.name.startswith("_"):
+            continue  # Skip sequence files
+
+        try:
+            content = rac_file.read_text()
+
+            # Extract status
+            status_match = re.search(r'^status:\s*(\w+)', content, re.MULTILINE)
+            if not status_match:
+                errors.append(f"{rac_file}: no status field")
+                continue
+
+            status = status_match.group(1).lower()
+
+            if status == "unexamined":
+                unexamined.append(rac_file)
+            elif status in examined:
+                examined[status].append(rac_file)
+            else:
+                errors.append(f"{rac_file}: unknown status '{status}'")
+
+        except Exception as e:
+            errors.append(f"{rac_file}: {e}")
+
+    # Print summary
+    total = len(rac_files)
+    print(f"Coverage for {args.citation}:")
+    print(f"  Total files: {total}")
+    print(f"  Encoded:     {len(examined['encoded'])}")
+    print(f"  Stub:        {len(examined['stub'])}")
+    print(f"  Skip:        {len(examined['skip'])}")
+    print(f"  Consolidated:{len(examined['consolidated'])}")
+    print(f"  Unexamined:  {len(unexamined)}")
+    if errors:
+        print(f"  Errors:      {len(errors)}")
+
+    # Show unexamined files
+    if unexamined:
+        print(f"\nUnexamined files ({len(unexamined)}):")
+        for f in unexamined[:20]:
+            rel_path = f.relative_to(args.path)
+            print(f"  - {rel_path}")
+        if len(unexamined) > 20:
+            print(f"  ... and {len(unexamined) - 20} more")
+
+    if errors:
+        print(f"\nErrors:")
+        for e in errors[:10]:
+            print(f"  - {e}")
+
+    # Exit with error if any unexamined
+    if unexamined:
+        print(f"\n✗ INCOMPLETE: {len(unexamined)} subsections not examined")
+        sys.exit(1)
+    else:
+        print(f"\n✓ COMPLETE: All subsections examined")
+        sys.exit(0)
 
 
 # =========================================================================
