@@ -49,6 +49,7 @@ class AgentRun:
     started_at: datetime = field(default_factory=datetime.utcnow)
     ended_at: Optional[datetime] = None
     total_tokens: Optional[TokenUsage] = None
+    total_cost: Optional[float] = None  # USD from SDK
     result: Optional[str] = None
     error: Optional[str] = None
 
@@ -305,25 +306,32 @@ Write .rac files to the output path. Run tests after each file."""
                 if hasattr(event, "tool_output"):
                     msg.tool_output = str(event.tool_output)[:10000]
 
-                # Capture tokens - PRINT IMMEDIATELY
-                if hasattr(event, "usage"):
+                # Capture tokens from ResultMessage (final event has real data)
+                if event_type == "ResultMessage" and hasattr(event, "usage"):
                     usage = event.usage
-                    in_tok = getattr(usage, "input_tokens", 0)
-                    out_tok = getattr(usage, "output_tokens", 0)
-                    cache_tok = getattr(usage, "cache_read_input_tokens", 0)
+                    # usage is a dict, not an object
+                    in_tok = usage.get("input_tokens", 0)
+                    out_tok = usage.get("output_tokens", 0)
+                    cache_create = usage.get("cache_creation_input_tokens", 0)
+                    cache_read = usage.get("cache_read_input_tokens", 0)
 
                     msg.tokens = TokenUsage(
-                        input_tokens=in_tok,
+                        input_tokens=in_tok + cache_create,
                         output_tokens=out_tok,
-                        cache_read_tokens=cache_tok,
+                        cache_read_tokens=cache_read,
                     )
-                    total_input += in_tok
-                    total_output += out_tok
-                    total_cache_read += cache_tok
+                    total_input = in_tok + cache_create
+                    total_output = out_tok
+                    total_cache_read = cache_read
 
-                    # REAL-TIME token logging
-                    cost = (in_tok * 15 + out_tok * 75 + cache_tok * 1.875) / 1_000_000
-                    print(f"  Tokens: +{in_tok:,} in, +{out_tok:,} out = ${cost:.4f}", flush=True)
+                    # Also capture total_cost_usd if available
+                    if hasattr(event, "total_cost_usd"):
+                        run.total_cost = event.total_cost_usd
+
+                    # Print final token summary
+                    print(f"  Tokens: {in_tok + cache_create:,} in (+{cache_read:,} cache), {out_tok:,} out", flush=True)
+                    if hasattr(event, "total_cost_usd"):
+                        print(f"  Cost: ${event.total_cost_usd:.4f}", flush=True)
 
                 run.messages.append(msg)
 
@@ -482,12 +490,19 @@ Write .rac files to the output path. Run tests after each file."""
             "## Agent Runs",
         ])
         for agent_run in run.agent_runs:
+            cost = agent_run.total_cost
             tokens = agent_run.total_tokens
-            lines.append(
-                f"- {agent_run.phase.value}: {agent_run.agent_type} "
-                f"({tokens.total_tokens if tokens else 0} tokens, "
-                f"${tokens.estimated_cost_usd:.4f})" if tokens else f"- {agent_run.phase.value}: {agent_run.agent_type}"
-            )
+            if cost is not None:
+                lines.append(
+                    f"- {agent_run.phase.value}: {agent_run.agent_type} (${cost:.4f})"
+                )
+            elif tokens:
+                lines.append(
+                    f"- {agent_run.phase.value}: {agent_run.agent_type} "
+                    f"({tokens.total_tokens} tokens)"
+                )
+            else:
+                lines.append(f"- {agent_run.phase.value}: {agent_run.agent_type}")
 
         if run.total_tokens:
             lines.extend([
