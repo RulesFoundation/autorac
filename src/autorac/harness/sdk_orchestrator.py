@@ -132,7 +132,7 @@ class SDKOrchestrator:
                 agent_type=self.AGENTS["analyzer"],
                 prompt=f"Analyze {citation}. Report: subsection tree, encoding order, dependencies.",
                 phase=Phase.ANALYSIS,
-                model="claude-haiku-3-5-20241022",
+                model="claude-3-5-haiku-20241022",
             )
             run.agent_runs.append(analysis)
 
@@ -173,27 +173,19 @@ Write .rac files to the output path. Run tests after each file."""
             # Phase 4: LLM Review (parallel)
             oracle_summary = self._format_oracle_summary(oracle_context)
 
-            reviews = await asyncio.gather(
-                self._run_agent(
-                    agent_type=self.AGENTS["formula_reviewer"],
-                    prompt=f"Review {citation} formulas. Oracle found: {oracle_summary}",
+            # Run reviewers sequentially (parallel has async issues with SDK)
+            for reviewer, reviewer_type in [
+                ("formula_reviewer", "formulas"),
+                ("parameter_reviewer", "parameters"),
+                ("integration_reviewer", "integration"),
+            ]:
+                review = await self._run_agent(
+                    agent_type=self.AGENTS[reviewer],
+                    prompt=f"Review {citation} {reviewer_type}. Oracle found: {oracle_summary}",
                     phase=Phase.REVIEW,
-                    model="claude-haiku-3-5-20241022",
-                ),
-                self._run_agent(
-                    agent_type=self.AGENTS["parameter_reviewer"],
-                    prompt=f"Review {citation} parameters. Oracle found: {oracle_summary}",
-                    phase=Phase.REVIEW,
-                    model="claude-haiku-3-5-20241022",
-                ),
-                self._run_agent(
-                    agent_type=self.AGENTS["integration_reviewer"],
-                    prompt=f"Review {citation} integration. Oracle found: {oracle_summary}",
-                    phase=Phase.REVIEW,
-                    model="claude-haiku-3-5-20241022",
-                ),
-            )
-            run.agent_runs.extend(reviews)
+                    model="claude-3-5-haiku-20241022",
+                )
+                run.agent_runs.append(review)
 
             # Phase 5: Report (computed, not an agent)
             run.ended_at = datetime.utcnow()
