@@ -94,6 +94,17 @@ class SDKOrchestrator:
         "integration_reviewer": "cosilico:Integration Reviewer",
     }
 
+    # Map agent keys to their prompt files
+    AGENT_PROMPTS = {
+        "analyzer": "statute-analyzer.md",
+        "encoder": "encoder.md",
+        "validator": "validator.md",
+        "rac_reviewer": "rac-reviewer.md",
+        "formula_reviewer": "formula-reviewer.md",
+        "parameter_reviewer": "parameter-reviewer.md",
+        "integration_reviewer": "integration-reviewer.md",
+    }
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -109,6 +120,16 @@ class SDKOrchestrator:
         self.model = model
         self.plugin_path = plugin_path or Path(__file__).parent.parent.parent.parent.parent / "cosilico-claude"
         self.experiment_db = experiment_db
+
+    def _load_agent_prompt(self, agent_key: str) -> str:
+        """Load the system prompt for an agent from the plugin."""
+        prompt_file = self.AGENT_PROMPTS.get(agent_key)
+        if not prompt_file:
+            return ""
+        prompt_path = self.plugin_path / "agents" / prompt_file
+        if prompt_path.exists():
+            return prompt_path.read_text()
+        return ""
 
     async def encode(
         self,
@@ -129,7 +150,7 @@ class SDKOrchestrator:
         try:
             # Phase 1: Analysis
             analysis = await self._run_agent(
-                agent_type=self.AGENTS["analyzer"],
+                agent_key="analyzer",
                 prompt=f"Analyze {citation}. Report: subsection tree, encoding order, dependencies.",
                 phase=Phase.ANALYSIS,
                 model="claude-3-5-haiku-20241022",
@@ -137,13 +158,7 @@ class SDKOrchestrator:
             run.agent_runs.append(analysis)
 
             # Phase 2: Encoding
-            # Load encoder agent system prompt
-            encoder_prompt_path = self.plugin_path / "agents" / "encoder.md"
-            encoder_system = ""
-            if encoder_prompt_path.exists():
-                encoder_system = encoder_prompt_path.read_text() + "\n\n---\n\n"
-
-            encode_prompt = f"""{encoder_system}# TASK: Encode {citation}
+            encode_prompt = f"""Encode {citation} into RAC format.
 
 Output path: {output_path}
 {f'Statute text: {statute_text[:5000]}' if statute_text else 'Fetch statute text as needed.'}
@@ -162,7 +177,7 @@ Output path: {output_path}
 Write .rac files to the output path. Run tests after each file."""
 
             encoding = await self._run_agent(
-                agent_type=self.AGENTS["encoder"],
+                agent_key="encoder",
                 prompt=encode_prompt,
                 phase=Phase.ENCODING,
                 model="claude-sonnet-4-20250514",
@@ -175,7 +190,7 @@ Write .rac files to the output path. Run tests after each file."""
 
             # Phase 3: Oracle validation
             oracle = await self._run_agent(
-                agent_type=self.AGENTS["validator"],
+                agent_key="validator",
                 prompt=f"Validate {citation} encoding at {output_path} against PolicyEngine and TAXSIM. Report match rates and specific discrepancies.",
                 phase=Phase.ORACLE,
                 model="claude-sonnet-4-20250514",
@@ -192,13 +207,13 @@ Write .rac files to the output path. Run tests after each file."""
             oracle_summary = self._format_oracle_summary(oracle_context)
 
             # Run reviewers sequentially (parallel has async issues with SDK)
-            for reviewer, reviewer_type in [
+            for reviewer_key, reviewer_type in [
                 ("formula_reviewer", "formulas"),
                 ("parameter_reviewer", "parameters"),
                 ("integration_reviewer", "integration"),
             ]:
                 review = await self._run_agent(
-                    agent_type=self.AGENTS[reviewer],
+                    agent_key=reviewer_key,
                     prompt=f"Review {citation} {reviewer_type}. Oracle found: {oracle_summary}",
                     phase=Phase.REVIEW,
                     model="claude-3-5-haiku-20241022",
@@ -224,7 +239,7 @@ Write .rac files to the output path. Run tests after each file."""
 
     async def _run_agent(
         self,
-        agent_type: str,
+        agent_key: str,
         prompt: str,
         phase: Phase,
         model: str,
@@ -233,9 +248,18 @@ Write .rac files to the output path. Run tests after each file."""
         from claude_code_sdk import query, ClaudeCodeOptions
         import sys
 
+        agent_type = self.AGENTS.get(agent_key, agent_key)
+
+        # Load the agent's system prompt from plugin
+        system_prompt = self._load_agent_prompt(agent_key)
+        if system_prompt:
+            full_prompt = f"{system_prompt}\n\n---\n\n# TASK\n\n{prompt}"
+        else:
+            full_prompt = prompt
+
         run = AgentRun(
             agent_type=agent_type,
-            prompt=prompt,
+            prompt=prompt,  # Store original prompt, not full
             phase=phase,
         )
 
@@ -256,7 +280,7 @@ Write .rac files to the output path. Run tests after each file."""
             total_cache_read = 0
             event_count = 0
 
-            async for event in query(prompt=prompt, options=options):
+            async for event in query(prompt=full_prompt, options=options):
                 event_count += 1
                 event_type = type(event).__name__
 
