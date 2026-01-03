@@ -71,10 +71,10 @@ responses = await backend.encode_batch(requests, max_concurrent=10)
 │    ├── ClaudeCodeBackend (subprocess, Max subscription)         │
 │    └── AgentSDKBackend (API, parallelization)                   │
 ├─────────────────────────────────────────────────────────────────┤
-│  Validator Pipeline (parallel)                                   │
-│    ├── CI (parse, lint, inline tests)                           │
-│    ├── Reviewer agents (rac, formula, param, integration)       │
-│    └── External oracles (PolicyEngine, TAXSIM)                  │
+│  3-Tier Validator Pipeline (tiers run in order)                  │
+│    ├── Tier 1: CI (rac pytest) - instant, catches syntax        │
+│    ├── Tier 2: Oracles (PE/TAXSIM) - fast ~10s, comparison data │
+│    └── Tier 3: LLM reviewers - uses oracle context to diagnose  │
 ├─────────────────────────────────────────────────────────────────┤
 │  Experiment DB                                                   │
 │    ├── encoding_id, file, timestamp                             │
@@ -87,6 +87,19 @@ responses = await backend.encode_batch(requests, max_concurrent=10)
 │    └── Confidence calibration                                   │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+## 3-Tier Validation
+
+Validation runs in order with oracle results feeding into LLM reviewers:
+
+| Tier | What | Time | Cost | Purpose |
+|------|------|------|------|---------|
+| 1. CI | rac pytest | instant | free | Catches syntax/format errors |
+| 2. Oracles | PE + TAXSIM | ~10s | free | Generates comparison data |
+| 3. LLM Reviewers | 4 specialists | ~30s | API cost | Diagnoses WHY discrepancies exist |
+
+Oracles run before LLM reviewers because they're fast/free and provide essential
+diagnostic context. LLMs can then investigate *why* encodings differ from consensus.
 
 ## Components
 

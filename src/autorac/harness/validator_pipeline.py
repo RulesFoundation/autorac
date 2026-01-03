@@ -1,10 +1,15 @@
 """
-Validator Pipeline - runs all validators in parallel.
+Validator Pipeline - 3-tier validation architecture.
 
-Validators:
-1. CI checks (parse, lint, test)
-2. Reviewer agents (rac, formula, parameter, integration)
-3. External oracles (PolicyEngine, TAXSIM)
+Tiers (run in order):
+1. CI checks (rac pytest) - instant, catches syntax/format errors
+2. External oracles (PolicyEngine, TAXSIM) - fast (~10s), generates comparison data
+3. LLM reviewers (rac, formula, parameter, integration) - uses oracle context
+
+Oracles run BEFORE LLM reviewers because:
+- They're fast and free (no API costs)
+- They generate rich comparison context for LLM analysis
+- LLMs can diagnose WHY discrepancies exist, not just that they exist
 
 Uses Claude Code CLI (subprocess) for reviewer agents - cheaper than direct API.
 """
@@ -181,27 +186,64 @@ class ValidatorPipeline:
         self.max_workers = max_workers
 
     def validate(self, rac_file: Path) -> PipelineResult:
-        """Run all validators on a RAC file."""
+        """Run 3-tier validation on a RAC file.
+
+        Tiers run in order:
+        1. CI checks (instant) - parse, lint, inline tests, rac pytest validation
+        2. Oracles (fast, ~10s) - PolicyEngine + TAXSIM comparison data
+        3. LLM reviewers (uses oracle context) - diagnose issues
+
+        Oracle results are passed to LLM reviewers as context.
+        """
         start = time.time()
-
-        validators = {
-            "ci": lambda: self._run_ci(rac_file),
-            "rac_reviewer": lambda: self._run_reviewer("rac-reviewer", rac_file),
-            "formula_reviewer": lambda: self._run_reviewer("Formula Reviewer", rac_file),
-            "parameter_reviewer": lambda: self._run_reviewer("Parameter Reviewer", rac_file),
-            "integration_reviewer": lambda: self._run_reviewer("Integration Reviewer", rac_file),
-        }
-
-        if self.enable_oracles:
-            validators["policyengine"] = lambda: self._run_policyengine(rac_file)
-            validators["taxsim"] = lambda: self._run_taxsim(rac_file)
-
         results = {}
+
+        # Tier 1: CI checks (instant, blocks further validation if fails)
+        results["ci"] = self._run_ci(rac_file)
+
+        # Tier 2: Oracles (parallel, fast, generates comparison context)
+        oracle_context = {}
+        if self.enable_oracles:
+            oracle_validators = {
+                "policyengine": lambda: self._run_policyengine(rac_file),
+                "taxsim": lambda: self._run_taxsim(rac_file),
+            }
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                futures = {
+                    executor.submit(fn): name
+                    for name, fn in oracle_validators.items()
+                }
+
+                for future in as_completed(futures):
+                    name = futures[future]
+                    try:
+                        results[name] = future.result()
+                        # Build context for LLM reviewers
+                        oracle_context[name] = {
+                            "score": results[name].score,
+                            "passed": results[name].passed,
+                            "issues": results[name].issues,
+                        }
+                    except Exception as e:
+                        results[name] = ValidationResult(
+                            validator_name=name,
+                            passed=False,
+                            error=str(e),
+                        )
+
+        # Tier 3: LLM reviewers (parallel, use oracle context)
+        llm_validators = {
+            "rac_reviewer": lambda: self._run_reviewer("rac-reviewer", rac_file, oracle_context),
+            "formula_reviewer": lambda: self._run_reviewer("Formula Reviewer", rac_file, oracle_context),
+            "parameter_reviewer": lambda: self._run_reviewer("Parameter Reviewer", rac_file, oracle_context),
+            "integration_reviewer": lambda: self._run_reviewer("Integration Reviewer", rac_file, oracle_context),
+        }
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = {
                 executor.submit(fn): name
-                for name, fn in validators.items()
+                for name, fn in llm_validators.items()
             }
 
             for future in as_completed(futures):
@@ -329,12 +371,18 @@ print(f'TESTS:{{report.passed}}/{{report.total}}')
             error=issues[0] if issues else None,
         )
 
-    def _run_reviewer(self, reviewer_type: str, rac_file: Path) -> ValidationResult:
-        """Run a reviewer agent via Claude Code CLI.
+    def _run_reviewer(
+        self,
+        reviewer_type: str,
+        rac_file: Path,
+        oracle_context: Optional[dict] = None,
+    ) -> ValidationResult:
+        """Run a reviewer agent via Claude Code CLI with oracle context.
 
         Args:
             reviewer_type: Type of reviewer (rac-reviewer, formula-reviewer, etc.)
             rac_file: Path to the RAC file to review
+            oracle_context: Results from oracle validators (PE, TAXSIM) for context
 
         Returns:
             ValidationResult with score, issues, and raw output
@@ -366,12 +414,25 @@ print(f'TESTS:{{report.passed}}/{{report.total}}')
             "Integration Reviewer": "test coverage, dependency resolution, documentation",
         }.get(reviewer_type, "overall quality")
 
+        # Build oracle context section if available
+        oracle_section = ""
+        if oracle_context:
+            oracle_section = "\n## Oracle Validation Results (use to diagnose issues)\n"
+            for oracle_name, ctx in oracle_context.items():
+                oracle_section += f"\n### {oracle_name.upper()}\n"
+                oracle_section += f"- Score: {ctx.get('score', 'N/A')}\n"
+                oracle_section += f"- Passed: {ctx.get('passed', 'N/A')}\n"
+                if ctx.get('issues'):
+                    oracle_section += f"- Issues: {', '.join(ctx['issues'][:3])}\n"
+
         prompt = f"""Review this RAC file for: {review_focus}
 
 File: {rac_file}
 
 Content:
 {rac_content[:3000]}{'...' if len(rac_content) > 3000 else ''}
+{oracle_section}
+If oracle validators show discrepancies, investigate WHY the encoding differs from consensus.
 
 Output ONLY valid JSON:
 {{
