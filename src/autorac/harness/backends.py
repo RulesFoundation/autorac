@@ -227,24 +227,39 @@ class AgentSDKBackend(EncoderBackend):
 
     Requires ANTHROPIC_API_KEY - pay per token.
     Enables massive parallelization for batch encoding.
+
+    Uses the same agent definitions as the Claude Code plugin by loading
+    the cosilico-claude plugin via the SDK's plugins option.
     """
+
+    # Default path to cosilico-claude plugin (relative to CosilicoAI)
+    DEFAULT_PLUGIN_PATH = Path(__file__).parent.parent.parent.parent.parent / "cosilico-claude"
 
     def __init__(
         self,
         api_key: Optional[str] = None,
         model: str = "claude-opus-4-5-20251101",
+        plugin_path: Optional[Path] = None,
     ):
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not self.api_key:
             raise ValueError("ANTHROPIC_API_KEY required for AgentSDKBackend")
         self.model = model
+        self.plugin_path = Path(plugin_path) if plugin_path else self.DEFAULT_PLUGIN_PATH
+
+        if not self.plugin_path.exists():
+            raise ValueError(f"Plugin path does not exist: {self.plugin_path}")
 
     def encode(self, request: EncoderRequest) -> EncoderResponse:
         """Synchronous encode using Agent SDK (runs async under the hood)."""
         return asyncio.run(self.encode_async(request))
 
     async def encode_async(self, request: EncoderRequest) -> EncoderResponse:
-        """Async encode using Agent SDK."""
+        """Async encode using Agent SDK with cosilico-claude plugin.
+
+        Uses the same agent definitions as Claude Code CLI by loading
+        the cosilico-claude plugin.
+        """
         start = time.time()
 
         try:
@@ -261,14 +276,27 @@ Statute Text:
 Use the Write tool to create the .rac file at the specified path.
 """
 
+            # Configure SDK to load the cosilico-claude plugin
+            # This gives access to the same agents as Claude Code CLI
+            options = ClaudeAgentOptions(
+                model=self.model,
+                allowed_tools=["Read", "Write", "Edit", "Grep", "Glob", "Task", "Bash"],
+                # Load cosilico-claude plugin for agent definitions
+                plugins=[{"type": "local", "path": str(self.plugin_path)}],
+                # Load agent definitions from plugin
+                setting_sources=["project"],
+            )
+
+            # If a specific agent is requested, use the Task tool pattern
+            # to invoke it (same as Claude Code CLI does)
+            if request.agent_type and request.agent_type != "cosilico:RAC Encoder":
+                prompt = f"""Use the Task tool to invoke the {request.agent_type} agent with this prompt:
+
+{prompt}
+"""
+
             result_content = ""
-            async for message in query(
-                prompt=prompt,
-                options=ClaudeAgentOptions(
-                    model=self.model,
-                    allowed_tools=["Read", "Write", "Edit", "Grep", "Glob"],
-                )
-            ):
+            async for message in query(prompt=prompt, options=options):
                 if hasattr(message, "result"):
                     result_content = message.result
 
