@@ -57,6 +57,11 @@ def main():
         default=0.95,
         help="Minimum match rate for oracle validation (default: 0.95)"
     )
+    validate_parser.add_argument(
+        "--check-params",
+        action="store_true",
+        help="Check that all parameter values appear in statute text"
+    )
 
     # log command
     log_parser = subparsers.add_parser(
@@ -304,8 +309,22 @@ def cmd_validate(args):
                     oracle_passed = False
                     errors.append(f"TAXSIM: {ts_result.score:.1%} < {min_match:.0%} required")
 
-    # Overall pass requires both regular checks AND oracle checks (if enabled)
-    all_passed = result.all_passed and oracle_passed
+    # Check parameter values appear in text (if --check-params)
+    param_check_result = None
+    param_check_passed = True
+    if args.check_params:
+        from .checks import check_param_values_in_text
+        rac_content = rac_file.read_text()
+        param_check_result = check_param_values_in_text(rac_content)
+        param_check_passed = param_check_result.passed
+        if not param_check_passed:
+            if param_check_result.error:
+                errors.append(f"Param check: {param_check_result.error}")
+            else:
+                errors.append(f"Param check: {param_check_result.details}")
+
+    # Overall pass requires regular checks, oracle checks (if enabled), and param check (if enabled)
+    all_passed = result.all_passed and oracle_passed and param_check_passed
 
     if args.json:
         output = {
@@ -322,6 +341,7 @@ def cmd_validate(args):
                 "taxsim": scores.taxsim_match,
             } if args.oracle else None,
             "oracle_passed": oracle_passed if args.oracle else None,
+            "param_check_passed": param_check_passed if args.check_params else None,
             "all_passed": all_passed,
             "errors": errors,
             "duration_ms": result.total_duration_ms,
@@ -342,6 +362,9 @@ def cmd_validate(args):
             if args.oracle in ("taxsim", "all") and ts_score is not None:
                 status = '✓' if ts_score >= min_match else '✗'
                 print(f"TAXSIM: {status} {ts_score:.1%} (min: {min_match:.0%})")
+        if args.check_params:
+            status = '✓' if param_check_passed else '✗'
+            print(f"Param values in text: {status}")
         print(f"Result: {'✓ PASSED' if all_passed else '✗ FAILED'}")
         if errors:
             for err in errors:
