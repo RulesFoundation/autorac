@@ -84,6 +84,13 @@ EventType = Literal[
     "tool_result",
     "subagent_start",
     "subagent_end",
+    # Validation events (3-tier pipeline)
+    "validation_ci_start",
+    "validation_ci_end",
+    "validation_oracle_start",
+    "validation_oracle_end",
+    "validation_llm_start",
+    "validation_llm_end",
 ]
 
 
@@ -143,6 +150,18 @@ class Iteration:
 
 
 @dataclass
+class OracleResult:
+    """Detailed result from an oracle validator."""
+    name: str  # "policyengine" or "taxsim"
+    score: Optional[float] = None  # Match rate 0-1
+    passed: bool = False
+    issues: list[str] = field(default_factory=list)
+    duration_ms: int = 0
+    test_cases_run: int = 0
+    test_cases_passed: int = 0
+
+
+@dataclass
 class FinalScores:
     """Scores from validators after CI passes."""
     rac_reviewer: float = 0.0
@@ -151,6 +170,8 @@ class FinalScores:
     integration_reviewer: float = 0.0
     policyengine_match: Optional[float] = None
     taxsim_match: Optional[float] = None
+    # Detailed oracle context (passed to LLM reviewers)
+    oracle_context: dict = field(default_factory=dict)  # {oracle_name: OracleResult as dict}
 
 
 @dataclass
@@ -401,6 +422,7 @@ class ExperimentDB:
                 "integration_reviewer": run.final_scores.integration_reviewer,
                 "policyengine_match": run.final_scores.policyengine_match,
                 "taxsim_match": run.final_scores.taxsim_match,
+                "oracle_context": run.final_scores.oracle_context,
             })
 
         predicted_scores_json = None
@@ -559,6 +581,7 @@ class ExperimentDB:
                 integration_reviewer=f.get("integration_reviewer", 0),
                 policyengine_match=f.get("policyengine_match"),
                 taxsim_match=f.get("taxsim_match"),
+                oracle_context=f.get("oracle_context", {}),
             )
 
         # Parse predicted scores

@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Optional, Callable, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from .experiment_db import FinalScores
+from .experiment_db import FinalScores, ExperimentDB
 
 
 def run_claude_code(
@@ -152,6 +152,7 @@ class PipelineResult:
     results: dict[str, ValidationResult]
     total_duration_ms: int
     all_passed: bool
+    oracle_context: dict = field(default_factory=dict)  # Context passed to LLM reviewers
 
     def to_actual_scores(self) -> FinalScores:
         """Convert to FinalScores for experiment DB."""
@@ -162,6 +163,7 @@ class PipelineResult:
             integration_reviewer=self.results.get("integration_reviewer", ValidationResult("", False)).score or 0.0,
             policyengine_match=self.results.get("policyengine", ValidationResult("", False)).score,
             taxsim_match=self.results.get("taxsim", ValidationResult("", False)).score,
+            oracle_context=self.oracle_context,
         )
 
     @property
@@ -171,7 +173,7 @@ class PipelineResult:
 
 
 class ValidatorPipeline:
-    """Runs validators in parallel."""
+    """Runs validators in 3 tiers with session event logging."""
 
     def __init__(
         self,
@@ -179,11 +181,25 @@ class ValidatorPipeline:
         rac_path: Path,
         enable_oracles: bool = True,
         max_workers: int = 4,
+        experiment_db: Optional[ExperimentDB] = None,
+        session_id: Optional[str] = None,
     ):
         self.rac_us_path = Path(rac_us_path)
         self.rac_path = Path(rac_path)
         self.enable_oracles = enable_oracles
         self.max_workers = max_workers
+        self.experiment_db = experiment_db
+        self.session_id = session_id
+
+    def _log_event(self, event_type: str, content: str = "", metadata: Optional[dict] = None):
+        """Log a validation event if session tracking is enabled."""
+        if self.experiment_db and self.session_id:
+            self.experiment_db.log_event(
+                session_id=self.session_id,
+                event_type=event_type,
+                content=content,
+                metadata=metadata,
+            )
 
     def validate(self, rac_file: Path) -> PipelineResult:
         """Run 3-tier validation on a RAC file.
@@ -194,16 +210,27 @@ class ValidatorPipeline:
         3. LLM reviewers (uses oracle context) - diagnose issues
 
         Oracle results are passed to LLM reviewers as context.
+        Each tier is logged as session events with timestamps.
         """
         start = time.time()
         results = {}
 
         # Tier 1: CI checks (instant, blocks further validation if fails)
+        self._log_event("validation_ci_start", f"Starting CI validation for {rac_file.name}")
+        ci_start = time.time()
         results["ci"] = self._run_ci(rac_file)
+        self._log_event("validation_ci_end", f"CI validation complete", {
+            "passed": results["ci"].passed,
+            "issues": results["ci"].issues,
+            "duration_ms": int((time.time() - ci_start) * 1000),
+        })
 
         # Tier 2: Oracles (parallel, fast, generates comparison context)
         oracle_context = {}
         if self.enable_oracles:
+            self._log_event("validation_oracle_start", "Starting oracle validation (PE + TAXSIM)")
+            oracle_start = time.time()
+
             oracle_validators = {
                 "policyengine": lambda: self._run_policyengine(rac_file),
                 "taxsim": lambda: self._run_taxsim(rac_file),
@@ -219,11 +246,12 @@ class ValidatorPipeline:
                     name = futures[future]
                     try:
                         results[name] = future.result()
-                        # Build context for LLM reviewers
+                        # Build context for LLM reviewers (with full details)
                         oracle_context[name] = {
                             "score": results[name].score,
                             "passed": results[name].passed,
                             "issues": results[name].issues,
+                            "duration_ms": results[name].duration_ms,
                         }
                     except Exception as e:
                         results[name] = ValidationResult(
@@ -231,8 +259,24 @@ class ValidatorPipeline:
                             passed=False,
                             error=str(e),
                         )
+                        oracle_context[name] = {
+                            "score": None,
+                            "passed": False,
+                            "issues": [str(e)],
+                            "error": str(e),
+                        }
+
+            self._log_event("validation_oracle_end", "Oracle validation complete", {
+                "oracle_context": oracle_context,
+                "duration_ms": int((time.time() - oracle_start) * 1000),
+            })
 
         # Tier 3: LLM reviewers (parallel, use oracle context)
+        self._log_event("validation_llm_start", "Starting LLM reviewers with oracle context", {
+            "oracle_context_summary": {k: v.get("score") for k, v in oracle_context.items()},
+        })
+        llm_start = time.time()
+
         llm_validators = {
             "rac_reviewer": lambda: self._run_reviewer("rac-reviewer", rac_file, oracle_context),
             "formula_reviewer": lambda: self._run_reviewer("Formula Reviewer", rac_file, oracle_context),
@@ -257,6 +301,11 @@ class ValidatorPipeline:
                         error=str(e),
                     )
 
+        self._log_event("validation_llm_end", "LLM reviewers complete", {
+            "scores": {k: results[k].score for k in llm_validators.keys() if k in results},
+            "duration_ms": int((time.time() - llm_start) * 1000),
+        })
+
         total_duration = int((time.time() - start) * 1000)
         all_passed = all(r.passed for r in results.values())
 
@@ -264,6 +313,7 @@ class ValidatorPipeline:
             results=results,
             total_duration_ms=total_duration,
             all_passed=all_passed,
+            oracle_context=oracle_context,
         )
 
     def _run_ci(self, rac_file: Path) -> ValidationResult:
