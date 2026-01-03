@@ -276,6 +276,49 @@ print(f'TESTS:{{report.passed}}/{{report.total}}')
         except Exception as e:
             issues.append(f"Test exception: {e}")
 
+        # 3. Run rac validation tests (param values in text, hardcoded values, etc.)
+        try:
+            # Set STATUTE_DIR to a temp dir containing just this file
+            # so pytest parametrization picks up only this file
+            import tempfile
+            import shutil
+            with tempfile.TemporaryDirectory() as tmpdir:
+                # Copy the file to temp dir
+                tmp_file = Path(tmpdir) / rac_file.name
+                shutil.copy(rac_file, tmp_file)
+
+                result = subprocess.run(
+                    [
+                        sys.executable, "-m", "pytest",
+                        f"{self.rac_path}/tests/rac_validation/",
+                        "-v", "--tb=short",
+                        f"-k={rac_file.stem}",  # Filter to just this file
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    env={**os.environ, "STATUTE_DIR": tmpdir},
+                    cwd=str(self.rac_path),
+                )
+
+                # Parse pytest output for failures
+                if result.returncode != 0:
+                    # Extract FAILED lines with test names (dedupe)
+                    seen = set()
+                    for line in result.stdout.split("\n"):
+                        if "FAILED" in line and "::" in line:
+                            # Format: "test_file.py::TestClass::test_name[param] FAILED"
+                            parts = line.split("::")
+                            if len(parts) >= 2:
+                                test_part = parts[-1].split(" FAILED")[0].strip()
+                                if test_part not in seen:
+                                    seen.add(test_part)
+                                    issues.append(f"Validation failed: {test_part}")
+        except subprocess.TimeoutExpired:
+            issues.append("Validation timeout")
+        except Exception as e:
+            issues.append(f"Validation exception: {e}")
+
         duration = int((time.time() - start) * 1000)
 
         return ValidationResult(
