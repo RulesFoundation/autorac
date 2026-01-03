@@ -137,9 +137,27 @@ class SDKOrchestrator:
             run.agent_runs.append(analysis)
 
             # Phase 2: Encoding
-            encode_prompt = f"""Encode {citation} into RAC format.
+            # Load encoder agent system prompt
+            encoder_prompt_path = self.plugin_path / "agents" / "encoder.md"
+            encoder_system = ""
+            if encoder_prompt_path.exists():
+                encoder_system = encoder_prompt_path.read_text() + "\n\n---\n\n"
+
+            encode_prompt = f"""{encoder_system}# TASK: Encode {citation}
+
 Output path: {output_path}
 {f'Statute text: {statute_text[:5000]}' if statute_text else 'Fetch statute text as needed.'}
+
+## CRITICAL RULES (violations = encoding failure):
+
+1. **FILEPATH = CITATION** - File names MUST be subsection names:
+   - ✓ `statute/26/1/j.rac` for § 1(j)
+   - ✓ `statute/26/1/a.rac` for § 1(a)
+   - ❌ `formulas.rac`, `parameters.rac`, `variables.rac` - WRONG
+
+2. **One subsection per file** - Each .rac encodes exactly one statutory subsection
+
+3. **Only statute values** - No indexed/derived/computed values
 
 Write .rac files to the output path. Run tests after each file."""
 
