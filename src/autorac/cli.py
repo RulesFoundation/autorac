@@ -736,10 +736,128 @@ SUPABASE_URL = "https://nsupqhfchdtqclomlrgs.supabase.co/rest/v1"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5zdXBxaGZjaGR0cWNsb21scmdzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY5MzExMDgsImV4cCI6MjA4MjUwNzEwOH0.BPdUadtBCdKfWZrKbfxpBQUqSGZ4hd34Dlor8kMBrVI"
 
 
-def cmd_init(args):
-    """Initialize encoding: create stubs for all subsections with text from arch."""
-    import requests
+def _extract_subsections_from_xml(xml_path: Path, section: str) -> list[dict]:
+    """Extract all subsections from USC XML file.
 
+    Returns list of dicts with: path, heading, body, line_count, depth
+    """
+    import html as html_module
+    import re
+
+    content = xml_path.read_text()
+
+    # Find the section
+    title = xml_path.stem.replace("usc", "")
+    identifier = f"/us/usc/t{title}/s{section}"
+    start_pattern = rf'<section[^>]*identifier="{re.escape(identifier)}"[^>]*>'
+    start_match = re.search(start_pattern, content)
+
+    if not start_match:
+        return []
+
+    # Find matching closing tag
+    start_pos = start_match.start()
+    depth = 0
+    end_pos = start_pos
+    i = start_pos
+
+    while i < len(content):
+        if content[i:i+8] == '<section':
+            depth += 1
+        elif content[i:i+10] == '</section>':
+            depth -= 1
+            if depth == 0:
+                end_pos = i + 10
+                break
+        i += 1
+
+    xml_section = content[start_pos:end_pos]
+
+    def clean(text):
+        text = re.sub(r'<[^>]+>', '', text)
+        text = html_module.unescape(text)
+        return ' '.join(text.split()).strip()
+
+    def extract_elements_recursive(xml, parent_path, depth=0):
+        """Recursively extract all nested elements."""
+        results = []
+
+        # Tags to look for at each level
+        tag_order = ['subsection', 'paragraph', 'subparagraph', 'clause', 'subclause']
+        if depth >= len(tag_order):
+            return results
+
+        tag = tag_order[depth]
+        pattern = rf'<{tag}[^>]*identifier="([^"]+)"[^>]*>'
+
+        for match in re.finditer(pattern, xml):
+            ident = match.group(1)
+
+            # Find closing tag
+            open_tag = f'<{tag}'
+            close_tag = f'</{tag}>'
+            d = 1
+            j = match.end()
+            while j < len(xml) and d > 0:
+                if xml[j:j+len(open_tag)] == open_tag:
+                    d += 1
+                elif xml[j:j+len(close_tag)] == close_tag:
+                    d -= 1
+                j += 1
+
+            elem_xml = xml[match.end():j-len(close_tag)]
+
+            # Extract heading and content
+            heading_match = re.search(r'<heading[^>]*>(.*?)</heading>', elem_xml, re.DOTALL)
+            content_match = re.search(r'<content>(.*?)</content>', elem_xml, re.DOTALL)
+
+            heading = clean(heading_match.group(1)) if heading_match else ""
+            body = clean(content_match.group(1)) if content_match else ""
+
+            # Build path from identifier (e.g., /us/usc/t26/s1/h/1/E -> 1/h/1/E)
+            path_parts = ident.split('/')
+            # Find section and take everything after
+            try:
+                sec_idx = next(i for i, p in enumerate(path_parts) if p.startswith('s'))
+                local_path = '/'.join([path_parts[sec_idx][1:]] + path_parts[sec_idx+1:])
+            except StopIteration:
+                local_path = path_parts[-1]
+
+            results.append({
+                "source_path": f"usc/{title}/{local_path}",
+                "heading": heading,
+                "body": body,
+                "line_count": len(body.split('\n')) if body else 0,
+            })
+
+            # Recurse into children
+            children = extract_elements_recursive(elem_xml, local_path, depth + 1)
+            results.extend(children)
+
+        return results
+
+    # Start extraction
+    rules = extract_elements_recursive(xml_section, section, 0)
+
+    # Also add the section itself if it has content
+    sec_heading = re.search(r'<heading[^>]*>(.*?)</heading>', xml_section[:500], re.DOTALL)
+    sec_content = re.search(r'<chapeau>(.*?)</chapeau>', xml_section, re.DOTALL)
+    if sec_heading:
+        rules.insert(0, {
+            "source_path": f"usc/{title}/{section}",
+            "heading": clean(sec_heading.group(1)),
+            "body": clean(sec_content.group(1)) if sec_content else "",
+            "line_count": 0,
+        })
+
+    return rules
+
+
+def cmd_init(args):
+    """Initialize encoding: create stubs for all subsections with text from arch.
+
+    Uses local USC XML as primary source (faster, more reliable).
+    """
     # Parse citation to get title/section
     citation = args.citation.replace(" ", "").upper()
     if "USC" in citation:
@@ -752,29 +870,18 @@ def cmd_init(args):
         title = parts[0]
         section = "/".join(parts[1:])
 
-    # Query arch.rules for all subsections
-    source_path_prefix = f"usc/{title}/{section}"
-    url = f"{SUPABASE_URL}/rules"
-    params = {
-        "source_path": f"like.{source_path_prefix}%",
-        "select": "id,heading,body,line_count,citation_path,source_path",
-        "order": "citation_path",
-    }
-    headers = {
-        "apikey": SUPABASE_KEY,
-        "Accept-Profile": "arch",
-    }
-
-    try:
-        response = requests.get(url, params=params, headers=headers, timeout=30)
-        response.raise_for_status()
-        rules = response.json()
-    except requests.RequestException as e:
-        print(f"Error fetching from arch: {e}")
+    # Use local USC XML
+    xml_path = Path.home() / "CosilicoAI" / "arch" / "data" / "uscode" / f"usc{title}.xml"
+    if not xml_path.exists():
+        print(f"USC XML not found: {xml_path}")
+        print("Run: cd ~/CosilicoAI/arch && python scripts/download_usc.py")
         sys.exit(1)
 
+    print(f"Parsing {xml_path}...")
+    rules = _extract_subsections_from_xml(xml_path, section)
+
     if not rules:
-        print(f"No rules found for {args.citation}")
+        print(f"No subsections found for section {section} in {xml_path}")
         sys.exit(1)
 
     print(f"Found {len(rules)} subsections for {args.citation}")
@@ -829,6 +936,7 @@ def cmd_init(args):
 
         # Clean body text (remove HTML tags if present)
         import html
+        import re
         body = html.unescape(body)
         body = re.sub(r'<[^>]+>', '', body)
 
@@ -874,19 +982,25 @@ text: """
 
 def cmd_coverage(args):
     """Check encoding coverage: verify no subsections remain unexamined."""
-    # Parse citation to get path
-    citation = args.citation.replace(" ", "").upper()
-    if "USC" in citation:
-        parts = citation.split("USC")
-        title = parts[0]
-        section = parts[1]
-    else:
-        parts = args.citation.split("/")
-        title = parts[0]
-        section = "/".join(parts[1:])
+    import re
 
-    # Find all .rac files
-    search_path = args.path / title / section
+    # Handle absolute paths directly
+    if args.citation.startswith("/"):
+        search_path = Path(args.citation)
+    else:
+        # Parse citation to get path
+        citation = args.citation.replace(" ", "").upper()
+        if "USC" in citation:
+            parts = citation.split("USC")
+            title = parts[0]
+            section = parts[1]
+        else:
+            parts = args.citation.split("/")
+            title = parts[0]
+            section = "/".join(parts[1:])
+
+        # Find all .rac files
+        search_path = args.path / title / section
     if not search_path.exists():
         print(f"Path not found: {search_path}")
         sys.exit(1)
@@ -929,7 +1043,7 @@ def cmd_coverage(args):
 
     # Print summary
     total = len(rac_files)
-    print(f"Coverage for {args.citation}:")
+    print(f"Coverage for {search_path}:")
     print(f"  Total files: {total}")
     print(f"  Encoded:     {len(examined['encoded'])}")
     print(f"  Stub:        {len(examined['stub'])}")
@@ -943,7 +1057,7 @@ def cmd_coverage(args):
     if unexamined:
         print(f"\nUnexamined files ({len(unexamined)}):")
         for f in unexamined[:20]:
-            rel_path = f.relative_to(args.path)
+            rel_path = f.relative_to(search_path)
             print(f"  - {rel_path}")
         if len(unexamined) > 20:
             print(f"  ... and {len(unexamined) - 20} more")
