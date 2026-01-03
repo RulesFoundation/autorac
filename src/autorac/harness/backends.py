@@ -32,12 +32,35 @@ class EncoderRequest:
 
 
 @dataclass
+class TokenUsage:
+    """Token usage from an encoding operation."""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+    @property
+    def estimated_cost_usd(self) -> float:
+        """Rough cost estimate (Opus pricing as of 2025)."""
+        return (
+            self.input_tokens * 15 / 1_000_000 +
+            self.output_tokens * 75 / 1_000_000 +
+            self.cache_read_tokens * 1.875 / 1_000_000
+        )
+
+
+@dataclass
 class EncoderResponse:
     """Output from an encoding operation."""
     rac_content: str
     success: bool
     error: Optional[str] = None
     duration_ms: int = 0
+    tokens: Optional[TokenUsage] = None
 
 
 @dataclass
@@ -296,9 +319,20 @@ Use the Write tool to create the .rac file at the specified path.
 """
 
             result_content = ""
+            token_usage = TokenUsage()
+
             async for message in query(prompt=prompt, options=options):
                 if hasattr(message, "result"):
                     result_content = message.result
+                # Capture token usage from API response
+                if hasattr(message, "usage"):
+                    usage = message.usage
+                    token_usage = TokenUsage(
+                        input_tokens=getattr(usage, "input_tokens", 0),
+                        output_tokens=getattr(usage, "output_tokens", 0),
+                        cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0),
+                        cache_creation_tokens=getattr(usage, "cache_creation_input_tokens", 0),
+                    )
 
             duration_ms = int((time.time() - start) * 1000)
 
@@ -313,6 +347,7 @@ Use the Write tool to create the .rac file at the specified path.
                 success=True,
                 error=None,
                 duration_ms=duration_ms,
+                tokens=token_usage if token_usage.total_tokens > 0 else None,
             )
 
         except ImportError:
