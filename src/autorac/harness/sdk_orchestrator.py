@@ -213,6 +213,7 @@ Write .rac files to the output path. Run tests after each file."""
     ) -> AgentRun:
         """Run a single agent and capture everything."""
         from claude_code_sdk import query, ClaudeCodeOptions
+        import sys
 
         run = AgentRun(
             agent_type=agent_type,
@@ -220,20 +221,29 @@ Write .rac files to the output path. Run tests after each file."""
             phase=phase,
         )
 
+        # ALWAYS print phase start with timestamp
+        start_time = datetime.utcnow()
+        print(f"\n[{start_time.strftime('%H:%M:%S')}] {phase.value.upper()}: {agent_type}", flush=True)
+        print(f"  Model: {model}", flush=True)
+
         try:
             options = ClaudeCodeOptions(
                 model=model,
                 allowed_tools=["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Task"],
             )
 
-            # Collect all messages
+            # Collect all messages - log tokens in REAL TIME
             total_input = 0
             total_output = 0
             total_cache_read = 0
+            event_count = 0
 
             async for event in query(prompt=prompt, options=options):
+                event_count += 1
+                event_type = type(event).__name__
+
                 msg = AgentMessage(
-                    role=getattr(event, "type", "unknown"),
+                    role=getattr(event, "type", event_type),
                     content="",
                 )
 
@@ -244,25 +254,34 @@ Write .rac files to the output path. Run tests after each file."""
                     msg.content = str(event.result)[:10000]
                     run.result = event.result
 
-                # Capture tool use
+                # Capture tool use - PRINT IT
                 if hasattr(event, "tool_name"):
                     msg.tool_name = event.tool_name
+                    print(f"  Tool: {event.tool_name}", flush=True)
                 if hasattr(event, "tool_input"):
                     msg.tool_input = event.tool_input
                 if hasattr(event, "tool_output"):
                     msg.tool_output = str(event.tool_output)[:10000]
 
-                # Capture tokens
+                # Capture tokens - PRINT IMMEDIATELY
                 if hasattr(event, "usage"):
                     usage = event.usage
+                    in_tok = getattr(usage, "input_tokens", 0)
+                    out_tok = getattr(usage, "output_tokens", 0)
+                    cache_tok = getattr(usage, "cache_read_input_tokens", 0)
+
                     msg.tokens = TokenUsage(
-                        input_tokens=getattr(usage, "input_tokens", 0),
-                        output_tokens=getattr(usage, "output_tokens", 0),
-                        cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0),
+                        input_tokens=in_tok,
+                        output_tokens=out_tok,
+                        cache_read_tokens=cache_tok,
                     )
-                    total_input += msg.tokens.input_tokens
-                    total_output += msg.tokens.output_tokens
-                    total_cache_read += msg.tokens.cache_read_tokens
+                    total_input += in_tok
+                    total_output += out_tok
+                    total_cache_read += cache_tok
+
+                    # REAL-TIME token logging
+                    cost = (in_tok * 15 + out_tok * 75 + cache_tok * 1.875) / 1_000_000
+                    print(f"  Tokens: +{in_tok:,} in, +{out_tok:,} out = ${cost:.4f}", flush=True)
 
                 run.messages.append(msg)
 
@@ -273,9 +292,18 @@ Write .rac files to the output path. Run tests after each file."""
                 cache_read_tokens=total_cache_read,
             )
 
+            # Print phase summary
+            duration = (run.ended_at - start_time).total_seconds()
+            total_cost = run.total_tokens.estimated_cost_usd
+            print(f"  DONE: {total_input:,} in + {total_output:,} out = ${total_cost:.4f} ({duration:.1f}s)", flush=True)
+
         except Exception as e:
             run.error = str(e)
             run.ended_at = datetime.utcnow()
+            print(f"  ERROR: {e}", flush=True)
+            # Still print whatever tokens we captured
+            if total_input or total_output:
+                print(f"  Partial tokens: {total_input:,} in + {total_output:,} out", flush=True)
 
         return run
 
