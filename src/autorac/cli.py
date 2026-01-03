@@ -46,6 +46,17 @@ def main():
     validate_parser.add_argument("file", type=Path, help="Path to .rac file")
     validate_parser.add_argument("--json", action="store_true", help="Output as JSON")
     validate_parser.add_argument("--skip-reviewers", action="store_true")
+    validate_parser.add_argument(
+        "--oracle",
+        choices=["policyengine", "taxsim", "all"],
+        help="Run external validation against oracles"
+    )
+    validate_parser.add_argument(
+        "--min-match",
+        type=float,
+        default=0.95,
+        help="Minimum match rate for oracle validation (default: 0.95)"
+    )
 
     # log command
     log_parser = subparsers.add_parser(
@@ -228,10 +239,13 @@ def cmd_validate(args):
     else:
         rac_path = rac_us.parent / "rac"
 
+    # Enable oracles if --oracle flag is set
+    enable_oracles = args.oracle is not None
+
     pipeline = ValidatorPipeline(
         rac_us_path=rac_us,
         rac_path=rac_path,
-        enable_oracles=False,
+        enable_oracles=enable_oracles,
     )
 
     result = pipeline.validate(rac_file)
@@ -241,6 +255,26 @@ def cmd_validate(args):
     for name, vr in result.results.items():
         if vr.error:
             errors.append(f"{name}: {vr.error}")
+
+    # Check oracle results against minimum match rate
+    oracle_passed = True
+    if args.oracle:
+        min_match = args.min_match
+        if args.oracle in ("policyengine", "all"):
+            pe_result = result.results.get("policyengine")
+            if pe_result and pe_result.score is not None:
+                if pe_result.score < min_match:
+                    oracle_passed = False
+                    errors.append(f"PolicyEngine: {pe_result.score:.1%} < {min_match:.0%} required")
+        if args.oracle in ("taxsim", "all"):
+            ts_result = result.results.get("taxsim")
+            if ts_result and ts_result.score is not None:
+                if ts_result.score < min_match:
+                    oracle_passed = False
+                    errors.append(f"TAXSIM: {ts_result.score:.1%} < {min_match:.0%} required")
+
+    # Overall pass requires both regular checks AND oracle checks (if enabled)
+    all_passed = result.all_passed and oracle_passed
 
     if args.json:
         output = {
@@ -252,7 +286,12 @@ def cmd_validate(args):
                 "parameter_reviewer": scores.parameter_reviewer,
                 "integration_reviewer": scores.integration_reviewer,
             },
-            "all_passed": result.all_passed,
+            "oracle_scores": {
+                "policyengine": scores.policyengine_match,
+                "taxsim": scores.taxsim_match,
+            } if args.oracle else None,
+            "oracle_passed": oracle_passed if args.oracle else None,
+            "all_passed": all_passed,
             "errors": errors,
             "duration_ms": result.total_duration_ms,
         }
@@ -262,12 +301,22 @@ def cmd_validate(args):
         print(f"CI: {'✓' if result.ci_pass else '✗'}")
         if not args.skip_reviewers:
             print(f"Scores: RAC {scores.rac_reviewer}/10 | Formula {scores.formula_reviewer}/10 | Param {scores.parameter_reviewer}/10 | Integration {scores.integration_reviewer}/10")
-        print(f"Result: {'✓ PASSED' if result.all_passed else '✗ FAILED'}")
+        if args.oracle:
+            pe_score = scores.policyengine_match
+            ts_score = scores.taxsim_match
+            min_match = args.min_match
+            if args.oracle in ("policyengine", "all") and pe_score is not None:
+                status = '✓' if pe_score >= min_match else '✗'
+                print(f"PolicyEngine: {status} {pe_score:.1%} (min: {min_match:.0%})")
+            if args.oracle in ("taxsim", "all") and ts_score is not None:
+                status = '✓' if ts_score >= min_match else '✗'
+                print(f"TAXSIM: {status} {ts_score:.1%} (min: {min_match:.0%})")
+        print(f"Result: {'✓ PASSED' if all_passed else '✗ FAILED'}")
         if errors:
             for err in errors:
                 print(f"  - {err}")
 
-    sys.exit(0 if result.all_passed else 1)
+    sys.exit(0 if all_passed else 1)
 
 
 def cmd_log(args):
