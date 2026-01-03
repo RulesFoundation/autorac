@@ -109,7 +109,7 @@ class SDKOrchestrator:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "claude-sonnet-4-20250514",
+        model: str = "claude-opus-4-5-20251101",
         plugin_path: Optional[Path] = None,
         experiment_db: Optional[ExperimentDB] = None,
     ):
@@ -154,7 +154,7 @@ class SDKOrchestrator:
                 agent_key="analyzer",
                 prompt=f"Analyze {citation}. Report: subsection tree, encoding order, dependencies.",
                 phase=Phase.ANALYSIS,
-                model="claude-3-5-haiku-20241022",
+                model=self.model,  # Use configured model
             )
             run.agent_runs.append(analysis)
 
@@ -181,7 +181,7 @@ Write .rac files to the output path. Run tests after each file."""
                 agent_key="encoder",
                 prompt=encode_prompt,
                 phase=Phase.ENCODING,
-                model="claude-sonnet-4-20250514",
+                model=self.model,  # Use configured model
             )
             run.agent_runs.append(encoding)
 
@@ -194,7 +194,7 @@ Write .rac files to the output path. Run tests after each file."""
                 agent_key="validator",
                 prompt=f"Validate {citation} encoding at {output_path} against PolicyEngine and TAXSIM. Report match rates and specific discrepancies.",
                 phase=Phase.ORACLE,
-                model="claude-sonnet-4-20250514",
+                model=self.model,  # Use configured model
             )
             run.agent_runs.append(oracle)
 
@@ -217,7 +217,7 @@ Write .rac files to the output path. Run tests after each file."""
                     agent_key=reviewer_key,
                     prompt=f"Review {citation} {reviewer_type}. Oracle found: {oracle_summary}",
                     phase=Phase.REVIEW,
-                    model="claude-3-5-haiku-20241022",
+                    model=self.model,  # Use configured model
                 )
                 run.agent_runs.append(review)
 
