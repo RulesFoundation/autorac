@@ -236,6 +236,34 @@ class EncodingRun:
         return errors
 
 
+@dataclass
+class AgentSuggestion:
+    """Suggestion from agent for framework improvement."""
+    category: str = "documentation"  # documentation, validation, tooling, etc.
+    description: str = ""
+    predicted_impact: str = "medium"  # low, medium, high
+    specific_change: Optional[str] = None
+
+
+def create_run(
+    file_path: str,
+    citation: str,
+    agent_type: str,
+    agent_model: str,
+    rac_content: str,
+    statute_text: Optional[str] = None,
+) -> EncodingRun:
+    """Factory function to create an EncodingRun with defaults."""
+    return EncodingRun(
+        file_path=file_path,
+        citation=citation,
+        agent_type=agent_type,
+        agent_model=agent_model,
+        rac_content=rac_content,
+        statute_text=statute_text,
+    )
+
+
 class ExperimentDB:
     """SQLite-based experiment database."""
 

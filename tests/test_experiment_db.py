@@ -14,10 +14,9 @@ from autorac import (
     ExperimentDB,
     EncodingRun,
     PredictedScores,
-    ActualScores,
-    AgentSuggestion,
-    create_run,
+    FinalScores,
 )
+from autorac.harness.encoder_harness import create_run
 
 
 class TestCreateRun:
@@ -347,3 +346,88 @@ class TestCalibrationData:
         pred, actual = data[0]
         assert pred.rac_reviewer == 7.5
         assert actual.rac_reviewer == 8.0
+
+
+class TestSessionLogging:
+    """Tests for session logging (used by SDK orchestrator)."""
+
+    def test_start_session_generates_id(self, experiment_db):
+        """Test that start_session generates a unique ID."""
+        session = experiment_db.start_session(model="test-model", cwd="/tmp")
+        assert session.id is not None
+        assert len(session.id) == 8
+
+    def test_start_session_with_custom_id(self, experiment_db):
+        """Test that start_session accepts custom session_id."""
+        session = experiment_db.start_session(
+            model="test-model",
+            cwd="/tmp",
+            session_id="custom-123"
+        )
+        assert session.id == "custom-123"
+
+    def test_get_session_retrieves_by_id(self, experiment_db):
+        """Test that get_session retrieves session by ID."""
+        experiment_db.start_session(
+            model="opus-4.5",
+            cwd="/workspace",
+            session_id="retrieve-test"
+        )
+
+        retrieved = experiment_db.get_session("retrieve-test")
+        assert retrieved is not None
+        assert retrieved.id == "retrieve-test"
+        assert retrieved.model == "opus-4.5"
+        assert retrieved.cwd == "/workspace"
+
+    def test_get_session_returns_none_for_unknown(self, experiment_db):
+        """Test that get_session returns None for unknown ID."""
+        retrieved = experiment_db.get_session("nonexistent-id")
+        assert retrieved is None
+
+    def test_log_event_to_session(self, experiment_db):
+        """Test logging events to a session."""
+        experiment_db.start_session(session_id="event-test")
+
+        event = experiment_db.log_event(
+            session_id="event-test",
+            event_type="agent_start",
+            content="Test prompt",
+            metadata={"agent_type": "encoder"}
+        )
+
+        assert event.sequence == 1
+        assert event.event_type == "agent_start"
+
+    def test_get_session_events(self, experiment_db):
+        """Test retrieving all events for a session."""
+        experiment_db.start_session(session_id="events-test")
+
+        experiment_db.log_event(
+            session_id="events-test",
+            event_type="agent_start",
+            content="Starting"
+        )
+        experiment_db.log_event(
+            session_id="events-test",
+            event_type="agent_end",
+            content="Done"
+        )
+
+        events = experiment_db.get_session_events("events-test")
+        assert len(events) == 2
+        assert events[0].event_type == "agent_start"
+        assert events[1].event_type == "agent_end"
+
+    def test_session_event_count_updates(self, experiment_db):
+        """Test that session event_count is tracked."""
+        experiment_db.start_session(session_id="count-test")
+
+        for i in range(3):
+            experiment_db.log_event(
+                session_id="count-test",
+                event_type=f"event_{i}"
+            )
+
+        session = experiment_db.get_session("count-test")
+        assert session.event_count == 3

@@ -25,7 +25,7 @@ from .experiment_db import (
     ExperimentDB,
     EncodingRun,
     PredictedScores,
-    ActualScores,
+    FinalScores,
     AgentSuggestion,
     create_run,
 )
