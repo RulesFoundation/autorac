@@ -231,6 +231,15 @@ def main():
         help="Show local transcript database stats"
     )
 
+    # sync-sdk-sessions command
+    sync_sdk_parser = subparsers.add_parser(
+        "sync-sdk-sessions",
+        help="Sync SDK orchestrator sessions to Supabase"
+    )
+    sync_sdk_parser.add_argument(
+        "--session", default=None, help="Only sync specific session"
+    )
+
     args = parser.parse_args()
 
     if args.command == "validate":
@@ -267,6 +276,8 @@ def main():
         cmd_sync_transcripts(args)
     elif args.command == "transcript-stats":
         cmd_transcript_stats(args)
+    elif args.command == "sync-sdk-sessions":
+        cmd_sync_sdk_sessions(args)
     else:
         parser.print_help()
         sys.exit(1)
@@ -1356,6 +1367,21 @@ def cmd_transcript_stats(args):
         print("By agent type:")
         for agent_type, count in sorted(stats['by_type'].items(), key=lambda x: -x[1]):
             print(f"  {agent_type}: {count}")
+
+
+def cmd_sync_sdk_sessions(args):
+    """Sync SDK orchestrator sessions to Supabase."""
+    from .supabase_sync import sync_sdk_sessions_to_supabase
+
+    print(f"Syncing SDK sessions{f' for {args.session}' if args.session else ''}...")
+
+    try:
+        stats = sync_sdk_sessions_to_supabase(session_id=args.session)
+        print(f"Done! {stats['synced']} synced, {stats['failed']} failed of {stats['total']} total")
+    except ValueError as e:
+        print(f"Error: {e}")
+        print("Set COSILICO_SUPABASE_URL and COSILICO_SUPABASE_SECRET_KEY environment variables")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

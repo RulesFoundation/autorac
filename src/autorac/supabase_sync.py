@@ -250,7 +250,7 @@ def sync_transcripts_to_supabase(
                 "created_at": row["created_at"],
             }
 
-            result = client.schema("autorac").table("agent_transcripts").upsert(data).execute()
+            result = client.schema("rac").table("agent_transcripts").upsert(data).execute()
 
             if result.data:
                 # Mark as uploaded
@@ -270,6 +270,107 @@ def sync_transcripts_to_supabase(
 
     return {
         "total": len(rows),
+        "synced": synced,
+        "failed": failed,
+    }
+
+
+EXPERIMENTS_DB = Path.home() / "CosilicoAI" / "autorac" / "experiments.db"
+
+
+def sync_sdk_sessions_to_supabase(
+    session_id: Optional[str] = None,
+    client: Optional[Client] = None,
+) -> dict:
+    """
+    Sync SDK orchestrator sessions from experiments.db to Supabase.
+
+    Args:
+        session_id: Optional filter by session ID
+        client: Optional Supabase client
+
+    Returns:
+        Dict with sync stats
+    """
+    import sqlite3
+
+    if not EXPERIMENTS_DB.exists():
+        return {"total": 0, "synced": 0, "failed": 0, "error": "No experiments.db"}
+
+    if client is None:
+        client = get_supabase_client()
+
+    conn = sqlite3.connect(str(EXPERIMENTS_DB))
+    conn.row_factory = sqlite3.Row
+
+    # Get sessions (SDK sessions start with "sdk-")
+    query = "SELECT * FROM sessions WHERE id LIKE 'sdk-%'"
+    params = []
+    if session_id:
+        query = "SELECT * FROM sessions WHERE id = ?"
+        params.append(session_id)
+
+    sessions = conn.execute(query, params).fetchall()
+
+    synced = 0
+    failed = 0
+
+    for session in sessions:
+        try:
+            # Get events for this session
+            events = conn.execute(
+                "SELECT * FROM session_events WHERE session_id = ? ORDER BY sequence",
+                (session["id"],)
+            ).fetchall()
+
+            # Build session data
+            session_data = {
+                "id": session["id"],
+                "started_at": session["started_at"],
+                "ended_at": session["ended_at"],
+                "model": session["model"],
+                "cwd": session["cwd"],
+                "event_count": session["event_count"],
+                "input_tokens": session["input_tokens"],
+                "output_tokens": session["output_tokens"],
+                "cache_read_tokens": session["cache_read_tokens"],
+                "estimated_cost_usd": float(session["estimated_cost_usd"] or 0),
+            }
+
+            # Build events data
+            events_data = [
+                {
+                    "id": e["id"],
+                    "session_id": e["session_id"],
+                    "sequence": e["sequence"],
+                    "timestamp": e["timestamp"],
+                    "event_type": e["event_type"],
+                    "tool_name": e["tool_name"],
+                    "content": e["content"][:10000] if e["content"] else None,  # Truncate large content
+                    "metadata": json.loads(e["metadata_json"]) if e["metadata_json"] else None,
+                }
+                for e in events
+            ]
+
+            # Upsert session
+            client.schema("rac").table("sdk_sessions").upsert(session_data).execute()
+
+            # Upsert events (in batches of 100)
+            for i in range(0, len(events_data), 100):
+                batch = events_data[i:i+100]
+                client.schema("rac").table("sdk_session_events").upsert(batch).execute()
+
+            synced += 1
+            print(f"  Synced session {session['id']} ({len(events)} events)")
+
+        except Exception as e:
+            print(f"  Error syncing session {session['id']}: {e}")
+            failed += 1
+
+    conn.close()
+
+    return {
+        "total": len(sessions),
         "synced": synced,
         "failed": failed,
     }
