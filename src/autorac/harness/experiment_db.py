@@ -618,12 +618,15 @@ class ExperimentDB:
     # Session Logging Methods
     # =========================================================================
 
-    def start_session(self, model: str = "", cwd: str = "") -> Session:
+    def start_session(self, model: str = "", cwd: str = "", session_id: str = None) -> Session:
         """Start a new session and return it."""
         session = Session(
             model=model,
             cwd=cwd or os.getcwd(),
         )
+        # Allow custom session_id for SDK orchestrator
+        if session_id:
+            session.id = session_id
 
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()

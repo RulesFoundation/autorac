@@ -411,7 +411,7 @@ Write .rac files to the output path. Run tests after each file."""
             return
 
         # Create session
-        self.experiment_db.create_session(run.session_id, self.model, str(Path.cwd()))
+        self.experiment_db.start_session(model=self.model, cwd=str(Path.cwd()), session_id=run.session_id)
 
         # Log each agent run as events
         for agent_run in run.agent_runs:

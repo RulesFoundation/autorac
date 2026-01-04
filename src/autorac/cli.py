@@ -1108,7 +1108,8 @@ def cmd_encode(args):
     from .harness.sdk_orchestrator import SDKOrchestrator
 
     # Parse citation to get output path
-    citation = args.citation.upper().replace("USC", "").replace("§", "").strip()
+    # Keep original case for subsection letters (a), (b), etc.
+    citation = args.citation.replace("USC", "").replace("usc", "").replace("§", "").strip()
     parts = citation.split()
     if len(parts) >= 2:
         title = parts[0]
