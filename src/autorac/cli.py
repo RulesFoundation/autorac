@@ -136,6 +136,25 @@ def main():
         help="Path to statute directory"
     )
 
+    # encode command - run SDK orchestrator with full logging
+    encode_parser = subparsers.add_parser(
+        "encode",
+        help="Encode a statute using SDK orchestrator with full logging"
+    )
+    encode_parser.add_argument("citation", help="Statute citation (e.g., '26 USC 1(j)(2)')")
+    encode_parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path.home() / "CosilicoAI" / "rac-us" / "statute",
+        help="Output directory for .rac files"
+    )
+    encode_parser.add_argument(
+        "--model",
+        default="claude-opus-4-5-20251101",
+        help="Model to use for encoding"
+    )
+    encode_parser.add_argument("--db", type=Path, default=DEFAULT_DB)
+
     # =========================================================================
     # Session logging commands (for hooks)
     # =========================================================================
@@ -230,6 +249,8 @@ def main():
         cmd_init(args)
     elif args.command == "coverage":
         cmd_coverage(args)
+    elif args.command == "encode":
+        cmd_encode(args)
     elif args.command == "session-start":
         cmd_session_start(args)
     elif args.command == "session-end":
@@ -1074,6 +1095,89 @@ def cmd_coverage(args):
     else:
         print(f"\n✓ COMPLETE: All subsections examined")
         sys.exit(0)
+
+
+# =========================================================================
+# Encode Command
+# =========================================================================
+
+def cmd_encode(args):
+    """Encode a statute using SDK orchestrator with full logging."""
+    import asyncio
+    from datetime import datetime
+    from .harness.sdk_orchestrator import SDKOrchestrator
+
+    # Parse citation to get output path
+    citation = args.citation.upper().replace("USC", "").replace("§", "").strip()
+    parts = citation.split()
+    if len(parts) >= 2:
+        title = parts[0]
+        section = parts[1]
+    else:
+        path_parts = citation.replace(" ", "/").split("/")
+        title = path_parts[0]
+        section = "/".join(path_parts[1:])
+
+    output_path = args.output / title / section.replace("(", "/").replace(")", "")
+
+    print(f"=== Encoding: {args.citation} ===")
+    print(f"Output: {output_path}")
+    print(f"Model: {args.model}")
+    print(f"DB: {args.db}")
+    print()
+
+    # Initialize experiment database
+    args.db.parent.mkdir(parents=True, exist_ok=True)
+    experiment_db = ExperimentDB(args.db)
+
+    # Create output directory
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    # Initialize orchestrator WITH experiment_db
+    orchestrator = SDKOrchestrator(
+        model=args.model,
+        experiment_db=experiment_db,
+    )
+
+    print(f"Starting encoding at {datetime.now().strftime('%H:%M:%S')}...")
+    print("-" * 60)
+
+    # Run encoding
+    async def run_encode():
+        return await orchestrator.encode(
+            citation=args.citation,
+            output_path=output_path,
+        )
+
+    run = asyncio.run(run_encode())
+
+    print("-" * 60)
+    print()
+
+    # Print report
+    report = orchestrator.print_report(run)
+    print(report)
+
+    # Show session ID for later lookup
+    print()
+    print(f"Session logged: {run.session_id}")
+    print(f"View with: autorac session-show {run.session_id}")
+
+    # Summary
+    print()
+    print("=== SUMMARY ===")
+    print(f"Files created: {len(run.files_created)}")
+    if run.total_tokens:
+        print(f"Total tokens: {run.total_tokens.input_tokens:,} in + {run.total_tokens.output_tokens:,} out")
+        print(f"Estimated cost: ${run.total_tokens.estimated_cost_usd:.2f}")
+    if run.oracle_pe_match is not None:
+        print(f"PE match: {run.oracle_pe_match}%")
+    if run.oracle_taxsim_match is not None:
+        print(f"TAXSIM match: {run.oracle_taxsim_match}%")
+
+    # Return exit code based on success
+    has_errors = any(a.error for a in run.agent_runs)
+    sys.exit(1 if has_errors else 0)
 
 
 # =========================================================================
