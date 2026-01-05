@@ -38,6 +38,7 @@ class AgentMessage:
     tool_name: Optional[str] = None
     tool_input: Optional[dict] = None
     tool_output: Optional[str] = None
+    summary: Optional[str] = None  # Human-readable summary of what happened
 
 
 @dataclass
@@ -77,12 +78,107 @@ class OrchestratorRun:
     total_cost_usd: float = 0.0
 
 
+def _summarize_tool_call(tool_name: str, tool_input: Optional[dict], tool_output: Optional[str]) -> str:
+    """Generate a human-readable summary of a tool call."""
+    if not tool_name:
+        return ""
+
+    input_str = ""
+    if tool_input:
+        # Extract key info based on tool type
+        if tool_name == "Read":
+            path = tool_input.get("file_path", "unknown")
+            input_str = f"'{path.split('/')[-1]}'"
+        elif tool_name == "Write":
+            path = tool_input.get("file_path", "unknown")
+            content = tool_input.get("content", "")
+            lines = content.count('\n') + 1 if content else 0
+            input_str = f"'{path.split('/')[-1]}' ({lines} lines)"
+        elif tool_name == "Edit":
+            path = tool_input.get("file_path", "unknown")
+            input_str = f"'{path.split('/')[-1]}'"
+        elif tool_name == "Grep":
+            pattern = tool_input.get("pattern", "")
+            input_str = f"pattern='{pattern[:30]}...'" if len(pattern) > 30 else f"pattern='{pattern}'"
+        elif tool_name == "Glob":
+            pattern = tool_input.get("pattern", "")
+            input_str = f"'{pattern}'"
+        elif tool_name == "Bash":
+            cmd = tool_input.get("command", "")
+            input_str = f"'{cmd[:50]}...'" if len(cmd) > 50 else f"'{cmd}'"
+        elif tool_name == "Task":
+            subagent = tool_input.get("subagent_type", "unknown")
+            input_str = f"spawn {subagent}"
+
+    # Add output summary
+    output_str = ""
+    if tool_output:
+        output_len = len(tool_output)
+        if output_len > 1000:
+            output_str = f" → {output_len:,} chars"
+        elif tool_name == "Grep" and "Found" in tool_output:
+            # Extract match count
+            output_str = f" → {tool_output.split()[1]} files"
+
+    return f"{tool_name} {input_str}{output_str}".strip()
+
+
+def _summarize_thinking(content: str) -> Optional[str]:
+    """Extract first key insight from thinking/reasoning content."""
+    if not content:
+        return None
+
+    # Look for thinking tags
+    import re
+    thinking_match = re.search(r'<thinking>([\s\S]*?)</thinking>', content)
+    if thinking_match:
+        thinking = thinking_match.group(1).strip()
+        # Get first sentence or first 100 chars
+        first_sentence = re.split(r'[.!?\n]', thinking)[0].strip()
+        if first_sentence:
+            return first_sentence[:150] + ('...' if len(first_sentence) > 150 else '')
+
+    # Look for reasoning patterns
+    for prefix in ['I need to', 'Let me', 'First,', 'The statute', 'This section']:
+        if prefix.lower() in content.lower()[:500]:
+            idx = content.lower().find(prefix.lower())
+            snippet = content[idx:idx+150]
+            first_sentence = re.split(r'[.!?\n]', snippet)[0].strip()
+            if first_sentence:
+                return first_sentence + ('...' if len(first_sentence) > 100 else '')
+
+    return None
+
+
+def _summarize_assistant_message(content: str) -> str:
+    """Summarize an assistant message."""
+    if not content:
+        return "Empty response"
+
+    # Check for common patterns
+    if "Error" in content or "error" in content:
+        return "Encountered an error"
+    if "Successfully" in content or "Created" in content:
+        return "Completed successfully"
+    if "```" in content:
+        return f"Code block response ({len(content):,} chars)"
+
+    # Get first meaningful line
+    lines = [l.strip() for l in content.split('\n') if l.strip() and not l.startswith('#')]
+    if lines:
+        first = lines[0][:100]
+        return first + ('...' if len(lines[0]) > 100 else '')
+
+    return f"Response ({len(content):,} chars)"
+
+
 class SDKOrchestrator:
     """
     SDK-based orchestrator with full logging.
 
     Uses Agent SDK to invoke agents with complete control and logging.
     Every message, tool call, and token count is captured.
+    Summaries are generated for human readability.
     """
 
     # Agent definitions from cosilico-claude plugin
@@ -337,21 +433,58 @@ Write .rac files to the output path. Run tests after each file."""
                     content="",
                 )
 
-                # Capture content based on event type
+                # Parse SDK content blocks properly
                 if hasattr(event, "content"):
-                    msg.content = str(event.content)[:10000]
+                    content = event.content
+                    # content is usually a list of blocks
+                    if isinstance(content, list):
+                        text_parts = []
+                        for block in content:
+                            block_type = type(block).__name__
+                            if block_type == "TextBlock" and hasattr(block, "text"):
+                                text_parts.append(block.text)
+                            elif block_type == "ToolUseBlock":
+                                # Extract tool info
+                                if hasattr(block, "name"):
+                                    msg.tool_name = block.name
+                                    print(f"  Tool: {block.name}", flush=True)
+                                if hasattr(block, "input"):
+                                    msg.tool_input = block.input if isinstance(block.input, dict) else {"raw": str(block.input)}
+                                # Generate summary
+                                msg.summary = _summarize_tool_call(
+                                    msg.tool_name,
+                                    msg.tool_input,
+                                    None
+                                )
+                            elif block_type == "ToolResultBlock":
+                                # Tool result content
+                                if hasattr(block, "content"):
+                                    result_text = str(block.content)[:5000]
+                                    text_parts.append(f"[Tool Result: {len(result_text)} chars]")
+                                    msg.tool_output = result_text
+                        msg.content = "\n".join(text_parts) if text_parts else str(content)[:10000]
+                        # Generate thinking summary if we have text
+                        if text_parts and not msg.summary:
+                            msg.summary = _summarize_thinking("\n".join(text_parts)) or _summarize_assistant_message("\n".join(text_parts))
+                    else:
+                        msg.content = str(content)[:10000]
                 elif hasattr(event, "result"):
                     msg.content = str(event.result)[:10000]
                     run.result = event.result
+                    msg.summary = "Final result"
 
-                # Capture tool use - PRINT IT
-                if hasattr(event, "tool_name"):
+                # Fallback tool capture from event attributes
+                if not msg.tool_name and hasattr(event, "tool_name"):
                     msg.tool_name = event.tool_name
                     print(f"  Tool: {event.tool_name}", flush=True)
-                if hasattr(event, "tool_input"):
+                if not msg.tool_input and hasattr(event, "tool_input"):
                     msg.tool_input = event.tool_input
-                if hasattr(event, "tool_output"):
+                if not msg.tool_output and hasattr(event, "tool_output"):
                     msg.tool_output = str(event.tool_output)[:10000]
+
+                # Generate summary if not already set
+                if not msg.summary and msg.tool_name:
+                    msg.summary = _summarize_tool_call(msg.tool_name, msg.tool_input, msg.tool_output)
 
                 # Capture tokens from ResultMessage (final event has real data)
                 if event_type == "ResultMessage" and hasattr(event, "usage"):
@@ -482,6 +615,7 @@ Write .rac files to the output path. Run tests after each file."""
                     content=msg.content,
                     metadata={
                         "agent_type": agent_run.agent_type,
+                        "summary": msg.summary,  # Human-readable summary
                         "tool_input": msg.tool_input,
                         "tool_output": msg.tool_output[:1000] if msg.tool_output else None,
                         "tokens": {
@@ -491,6 +625,22 @@ Write .rac files to the output path. Run tests after each file."""
                     }
                 )
 
+            # Calculate phase cost
+            phase_cost = agent_run.total_tokens.estimated_cost_usd if agent_run.total_tokens else 0
+
+            # Generate phase summary
+            tool_counts = {}
+            for msg in agent_run.messages:
+                if msg.tool_name:
+                    tool_counts[msg.tool_name] = tool_counts.get(msg.tool_name, 0) + 1
+            tools_summary = ", ".join(f"{t}×{c}" for t, c in sorted(tool_counts.items(), key=lambda x: -x[1]))
+
+            phase_summary = f"{agent_run.phase.value.upper()}: {len(agent_run.messages)} events"
+            if tools_summary:
+                phase_summary += f" ({tools_summary})"
+            if phase_cost > 0:
+                phase_summary += f" - ${phase_cost:.2f}"
+
             # Log agent end
             self.experiment_db.log_event(
                 session_id=run.session_id,
@@ -499,11 +649,14 @@ Write .rac files to the output path. Run tests after each file."""
                 metadata={
                     "agent_type": agent_run.agent_type,
                     "phase": agent_run.phase.value,
+                    "summary": phase_summary,
                     "error": agent_run.error,
                     "total_tokens": {
                         "input": agent_run.total_tokens.input_tokens,
                         "output": agent_run.total_tokens.output_tokens,
                     } if agent_run.total_tokens else None,
+                    "cost_usd": phase_cost,
+                    "tools_used": tool_counts,
                 }
             )
 
