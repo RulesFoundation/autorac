@@ -17,6 +17,7 @@ from typing import Optional, List, AsyncIterator
 from enum import Enum
 
 from .experiment_db import ExperimentDB, TokenUsage
+from .validator_pipeline import ValidatorPipeline
 
 
 class Phase(Enum):
@@ -189,17 +190,63 @@ Write .rac files to the output path. Run tests after each file."""
             if output_path.exists():
                 run.files_created = [str(f) for f in output_path.rglob("*.rac")]
 
-            # Phase 3: Oracle validation
-            oracle = await self._run_agent(
-                agent_key="validator",
-                prompt=f"Validate {citation} encoding at {output_path} against PolicyEngine and TAXSIM. Report match rates and specific discrepancies.",
-                phase=Phase.ORACLE,
-                model=self.model,  # Use configured model
-            )
-            run.agent_runs.append(oracle)
+            # Phase 3: Oracle validation (use actual ValidatorPipeline, not LLM agent)
+            print(f"\n[{datetime.utcnow().strftime('%H:%M:%S')}] ORACLE: ValidatorPipeline (PE + TAXSIM)", flush=True)
+            oracle_start = time.time()
 
-            # Extract oracle results from response
-            oracle_context = self._extract_oracle_context(oracle.result or "")
+            # Find RAC files to validate
+            rac_files = list(output_path.rglob("*.rac")) if output_path.exists() else []
+
+            oracle_context = {
+                "pe_match": None,
+                "taxsim_match": None,
+                "discrepancies": [],
+            }
+
+            if rac_files:
+                # Use ValidatorPipeline for actual oracle validation
+                pipeline = ValidatorPipeline(
+                    rac_us_path=output_path.parent.parent if "statute" in str(output_path) else output_path,
+                    rac_path=Path(__file__).parent.parent.parent.parent / "rac",
+                    enable_oracles=True,
+                    max_workers=2,
+                )
+
+                # Aggregate results across all RAC files
+                pe_scores = []
+                taxsim_scores = []
+                all_issues = []
+
+                for rac_file in rac_files:
+                    print(f"  Validating: {rac_file.name}", flush=True)
+                    try:
+                        pe_result = pipeline._run_policyengine(rac_file)
+                        if pe_result.score is not None:
+                            pe_scores.append(pe_result.score)
+                            print(f"    PE: {pe_result.score:.1%}", flush=True)
+                        all_issues.extend(pe_result.issues)
+
+                        taxsim_result = pipeline._run_taxsim(rac_file)
+                        if taxsim_result.score is not None:
+                            taxsim_scores.append(taxsim_result.score)
+                            print(f"    TAXSIM: {taxsim_result.score:.1%}", flush=True)
+                        all_issues.extend(taxsim_result.issues)
+                    except Exception as e:
+                        print(f"    Error: {e}", flush=True)
+                        all_issues.append(str(e))
+
+                # Average scores across files
+                if pe_scores:
+                    oracle_context["pe_match"] = sum(pe_scores) / len(pe_scores) * 100  # Convert to percentage
+                if taxsim_scores:
+                    oracle_context["taxsim_match"] = sum(taxsim_scores) / len(taxsim_scores) * 100
+                oracle_context["discrepancies"] = [{"description": issue} for issue in all_issues[:10]]
+            else:
+                print("  No RAC files found to validate", flush=True)
+
+            oracle_duration = time.time() - oracle_start
+            print(f"  DONE: PE={oracle_context.get('pe_match', 'N/A')}%, TAXSIM={oracle_context.get('taxsim_match', 'N/A')}% ({oracle_duration:.1f}s)", flush=True)
+
             run.oracle_pe_match = oracle_context.get("pe_match")
             run.oracle_taxsim_match = oracle_context.get("taxsim_match")
             run.discrepancies = oracle_context.get("discrepancies", [])
