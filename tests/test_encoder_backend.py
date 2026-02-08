@@ -157,9 +157,14 @@ class TestAgentSDKBackend:
             import sys
             mock_sdk = sys.modules["claude_agent_sdk"]
 
-            # Mock async generator
+            # Mock async generator — use spec to limit attributes
+            # so hasattr(message, "usage") returns False
+            class MockMessage:
+                def __init__(self, result):
+                    self.result = result
+
             async def mock_gen():
-                yield Mock(result="variable test:\n  entity: TaxUnit")
+                yield MockMessage(result="variable test:\n  entity: TaxUnit")
 
             mock_sdk.query = Mock(return_value=mock_gen())
             mock_sdk.ClaudeAgentOptions = Mock()

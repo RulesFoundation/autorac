@@ -10,6 +10,9 @@ from .harness import (
     Iteration,
     FinalScores,
     PredictedScores,
+    ActualScores,
+    AgentSuggestion,
+    create_run,
     # Validator Pipeline
     ValidatorPipeline,
     ValidationResult,
@@ -22,6 +25,13 @@ from .harness import (
     EncoderRequest,
     EncoderResponse,
     PredictionScores,
+    # Calibration Metrics
+    CalibrationMetrics,
+    CalibrationSnapshot,
+    compute_calibration,
+    print_calibration_report,
+    save_calibration_snapshot,
+    get_calibration_trend,
 )
 
 __all__ = [
@@ -32,6 +42,9 @@ __all__ = [
     "Iteration",
     "FinalScores",
     "PredictedScores",
+    "ActualScores",
+    "AgentSuggestion",
+    "create_run",
     "ValidatorPipeline",
     "ValidationResult",
     "PipelineResult",
@@ -43,4 +56,11 @@ __all__ = [
     "EncoderRequest",
     "EncoderResponse",
     "PredictionScores",
+    # Calibration Metrics
+    "CalibrationMetrics",
+    "CalibrationSnapshot",
+    "compute_calibration",
+    "print_calibration_report",
+    "save_calibration_snapshot",
+    "get_calibration_trend",
 ]

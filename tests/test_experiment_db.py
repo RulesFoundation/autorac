@@ -15,8 +15,10 @@ from autorac import (
     EncodingRun,
     PredictedScores,
     FinalScores,
+    ActualScores,
+    AgentSuggestion,
+    create_run,
 )
-from autorac.harness.encoder_harness import create_run
 
 
 class TestCreateRun:

@@ -136,6 +136,48 @@ def main():
         help="Path to statute directory"
     )
 
+    # compile command
+    compile_parser = subparsers.add_parser(
+        "compile",
+        help="Compile a .rac file to engine IR"
+    )
+    compile_parser.add_argument("file", type=Path, help="Path to .rac file")
+    compile_parser.add_argument(
+        "--as-of",
+        default=None,
+        help="Date for temporal resolution (YYYY-MM-DD, default: today)"
+    )
+    compile_parser.add_argument("--json", action="store_true", help="Output as JSON")
+    compile_parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Execute the compiled IR after compilation"
+    )
+
+    # benchmark command
+    benchmark_parser = subparsers.add_parser(
+        "benchmark",
+        help="Benchmark execution speed of a .rac file"
+    )
+    benchmark_parser.add_argument("file", type=Path, help="Path to .rac file")
+    benchmark_parser.add_argument(
+        "--as-of",
+        default=None,
+        help="Date for temporal resolution (YYYY-MM-DD, default: today)"
+    )
+    benchmark_parser.add_argument(
+        "--iterations",
+        type=int,
+        default=100,
+        help="Number of iterations (default: 100)"
+    )
+    benchmark_parser.add_argument(
+        "--rows",
+        type=int,
+        default=1000,
+        help="Number of entity rows to generate (default: 1000)"
+    )
+
     # encode command - run SDK orchestrator with full logging
     encode_parser = subparsers.add_parser(
         "encode",
@@ -244,6 +286,10 @@ def main():
 
     if args.command == "validate":
         cmd_validate(args)
+    elif args.command == "compile":
+        cmd_compile(args)
+    elif args.command == "benchmark":
+        cmd_benchmark(args)
     elif args.command == "log":
         cmd_log(args)
     elif args.command == "stats":
@@ -380,6 +426,161 @@ def cmd_validate(args):
                 print(f"  - {err}")
 
     sys.exit(0 if all_passed else 1)
+
+
+def cmd_compile(args):
+    """Compile a .rac file to engine IR."""
+    from datetime import date as date_type
+
+    if not args.file.exists():
+        print(f"File not found: {args.file}")
+        sys.exit(1)
+
+    # Parse as_of date
+    if args.as_of:
+        as_of = date_type.fromisoformat(args.as_of)
+    else:
+        as_of = date_type.today()
+
+    try:
+        from rac.dsl_parser import parse_dsl
+        from rac.engine import compile as engine_compile, execute as engine_execute
+        from rac.engine.converter import convert_v2_to_engine_module
+
+        # Step 1: Parse
+        rac_content = args.file.read_text()
+        v2_module = parse_dsl(rac_content)
+
+        # Step 2: Convert
+        module_path = args.file.stem
+        engine_module = convert_v2_to_engine_module(v2_module, module_path=module_path)
+
+        # Step 3: Compile
+        ir = engine_compile([engine_module], as_of=as_of)
+
+        var_names = list(ir.variables.keys())
+        entity_names = list(ir.entities.keys()) if hasattr(ir, 'entities') else []
+
+        if args.execute:
+            # Execute with empty data
+            result = engine_execute(ir, {})
+            scalars = dict(result.scalars) if hasattr(result, 'scalars') else {}
+
+        if args.json:
+            output = {
+                "success": True,
+                "file": str(args.file),
+                "as_of": str(as_of),
+                "variables": var_names,
+                "variable_count": len(var_names),
+            }
+            if args.execute:
+                output["scalars"] = {k: v for k, v in scalars.items()}
+            print(json.dumps(output, indent=2, default=str))
+        else:
+            print(f"Compiled: {args.file}")
+            print(f"Date: {as_of}")
+            print(f"Variables: {len(var_names)}")
+            for name in var_names:
+                print(f"  - {name}")
+            if args.execute:
+                print(f"\nExecution results:")
+                for k, v in scalars.items():
+                    print(f"  {k} = {v}")
+            print(f"\nResult: compiled successfully")
+
+        sys.exit(0)
+
+    except Exception as e:
+        if args.json:
+            output = {
+                "success": False,
+                "file": str(args.file),
+                "error": str(e),
+            }
+            print(json.dumps(output, indent=2))
+        else:
+            print(f"Compilation failed: {e}")
+
+        sys.exit(1)
+
+
+def cmd_benchmark(args):
+    """Benchmark execution speed of a .rac file."""
+    import time
+    from datetime import date as date_type
+
+    if not args.file.exists():
+        print(f"File not found: {args.file}")
+        sys.exit(1)
+
+    if args.as_of:
+        as_of = date_type.fromisoformat(args.as_of)
+    else:
+        as_of = date_type.today()
+
+    try:
+        from rac.dsl_parser import parse_dsl
+        from rac.engine import compile as engine_compile, execute as engine_execute
+        from rac.engine.converter import convert_v2_to_engine_module
+
+        # Parse and compile once
+        rac_content = args.file.read_text()
+        v2_module = parse_dsl(rac_content)
+        module_path = args.file.stem
+        engine_module = convert_v2_to_engine_module(v2_module, module_path=module_path)
+        ir = engine_compile([engine_module], as_of=as_of)
+
+        # Build test data with specified number of rows
+        # Detect entity types from IR
+        entity_data = {}
+        for var in ir.variables.values():
+            if hasattr(var, 'entity') and var.entity:
+                if var.entity not in entity_data:
+                    entity_data[var.entity] = [
+                        {"id": i, "income": 1000 * (i + 1)}
+                        for i in range(args.rows)
+                    ]
+
+        # If no entities, just use empty data
+        data = entity_data if entity_data else {}
+
+        # Warmup
+        for _ in range(min(5, args.iterations)):
+            engine_execute(ir, data)
+
+        # Benchmark
+        times = []
+        for _ in range(args.iterations):
+            start = time.perf_counter()
+            engine_execute(ir, data)
+            elapsed = (time.perf_counter() - start) * 1000  # ms
+            times.append(elapsed)
+
+        avg_ms = sum(times) / len(times)
+        min_ms = min(times)
+        max_ms = max(times)
+        total_ms = sum(times)
+        rows_per_sec = (args.rows * args.iterations) / (total_ms / 1000) if total_ms > 0 and args.rows > 0 else 0
+
+        print(f"Benchmark: {args.file}")
+        print(f"Date: {as_of}")
+        print(f"Variables: {len(ir.variables)}")
+        print(f"Rows: {args.rows}")
+        print(f"Iterations: {args.iterations}")
+        print(f"")
+        print(f"Avg: {avg_ms:.3f} ms/iteration")
+        print(f"Min: {min_ms:.3f} ms")
+        print(f"Max: {max_ms:.3f} ms")
+        print(f"Total: {total_ms:.1f} ms")
+        if rows_per_sec > 0:
+            print(f"Throughput: {rows_per_sec:,.0f} rows/sec")
+
+        sys.exit(0)
+
+    except Exception as e:
+        print(f"Benchmark failed: {e}")
+        sys.exit(1)
 
 
 def cmd_log(args):

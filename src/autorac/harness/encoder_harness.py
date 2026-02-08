@@ -286,8 +286,6 @@ Score each dimension from 1-10. Output ONLY valid JSON:
                 parameter_reviewer=6.0,
                 integration_reviewer=6.0,
                 ci_pass=False,
-                policyengine_match=0.7,
-                taxsim_match=0.7,
                 confidence=0.3,
             )
 

@@ -178,14 +178,41 @@ class FinalScores:
 class PredictedScores:
     """Upfront predictions for calibration tracking."""
     # Dimension scores (0-10)
-    rac: float = 0.0
-    formula: float = 0.0
-    param: float = 0.0
-    integration: float = 0.0
-    # Effort predictions
-    iterations: int = 1
-    time_minutes: float = 0.0
+    rac_reviewer: float = 0.0
+    formula_reviewer: float = 0.0
+    parameter_reviewer: float = 0.0
+    integration_reviewer: float = 0.0
+    # Pass/fail predictions
+    ci_pass: bool = True
+    policyengine_match: Optional[float] = None
+    taxsim_match: Optional[float] = None
+    # Confidence
     confidence: float = 0.5  # 0-1 confidence in predictions
+
+
+@dataclass
+class ActualScores:
+    """Actual scores from validation after encoding."""
+    # Dimension scores (0-10)
+    rac_reviewer: float = 0.0
+    formula_reviewer: float = 0.0
+    parameter_reviewer: float = 0.0
+    integration_reviewer: float = 0.0
+    # Pass/fail results
+    ci_pass: bool = False
+    ci_error: Optional[str] = None
+    policyengine_match: Optional[float] = None
+    taxsim_match: Optional[float] = None
+    reviewer_issues: list[str] = field(default_factory=list)
+
+
+@dataclass
+class AgentSuggestion:
+    """Suggestion from agent for framework improvement."""
+    category: str = "documentation"  # documentation, validation, tooling, etc.
+    description: str = ""
+    predicted_impact: str = "medium"  # low, medium, high
+    specific_change: Optional[str] = None
 
 
 @dataclass
@@ -202,8 +229,13 @@ class EncodingRun:
     # Upfront analysis
     complexity: ComplexityFactors = field(default_factory=ComplexityFactors)
 
-    # Predictions (for calibration)
-    predicted_scores: Optional[PredictedScores] = None
+    # Predictions and actuals (for calibration)
+    predicted: Optional[PredictedScores] = None
+    actual: Optional[ActualScores] = None
+
+    # Iteration tracking
+    iteration: int = 1
+    parent_run_id: Optional[str] = None
 
     # The journey
     iterations: list[Iteration] = field(default_factory=list)
@@ -217,8 +249,20 @@ class EncodingRun:
     agent_type: str = "encoder"
     agent_model: str = "claude-opus-4-5-20251101"
 
+    # Suggestions for framework improvement
+    suggestions: list[AgentSuggestion] = field(default_factory=list)
+
     # Session linkage
     session_id: Optional[str] = None
+
+    @property
+    def predicted_scores(self) -> Optional[PredictedScores]:
+        """Alias for backwards compatibility."""
+        return self.predicted
+
+    @predicted_scores.setter
+    def predicted_scores(self, value: Optional[PredictedScores]):
+        self.predicted = value
 
     @property
     def iterations_needed(self) -> int:
@@ -236,15 +280,6 @@ class EncodingRun:
         return errors
 
 
-@dataclass
-class AgentSuggestion:
-    """Suggestion from agent for framework improvement."""
-    category: str = "documentation"  # documentation, validation, tooling, etc.
-    description: str = ""
-    predicted_impact: str = "medium"  # low, medium, high
-    specific_change: Optional[str] = None
-
-
 def create_run(
     file_path: str,
     citation: str,
@@ -252,6 +287,7 @@ def create_run(
     agent_model: str,
     rac_content: str,
     statute_text: Optional[str] = None,
+    parent_run_id: Optional[str] = None,
 ) -> EncodingRun:
     """Factory function to create an EncodingRun with defaults."""
     return EncodingRun(
@@ -261,6 +297,8 @@ def create_run(
         agent_model=agent_model,
         rac_content=rac_content,
         statute_text=statute_text,
+        iteration=2 if parent_run_id else 1,
+        parent_run_id=parent_run_id,
     )
 
 
@@ -276,9 +314,20 @@ class ExperimentDB:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
+        # Migrate: rename 'runs' to 'encoding_runs' if old table exists
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='runs'"
+        )
+        if cursor.fetchone():
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='encoding_runs'"
+            )
+            if not cursor.fetchone():
+                cursor.execute("ALTER TABLE runs RENAME TO encoding_runs")
+
         # Encoding runs table
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS runs (
+            CREATE TABLE IF NOT EXISTS encoding_runs (
                 id TEXT PRIMARY KEY,
                 timestamp TEXT,
                 citation TEXT,
@@ -291,25 +340,49 @@ class ExperimentDB:
                 agent_model TEXT,
                 rac_content TEXT,
                 predicted_scores_json TEXT,
-                session_id TEXT
+                session_id TEXT,
+                iteration INTEGER DEFAULT 1,
+                parent_run_id TEXT,
+                actual_scores_json TEXT,
+                suggestions_json TEXT
             )
         """)
 
         # Add columns if they don't exist (for migration)
-        try:
-            cursor.execute("ALTER TABLE runs ADD COLUMN predicted_scores_json TEXT")
-        except sqlite3.OperationalError:
-            pass  # Column already exists
-        try:
-            cursor.execute("ALTER TABLE runs ADD COLUMN session_id TEXT")
-        except sqlite3.OperationalError:
-            pass  # Column already exists
+        for col, col_type, default in [
+            ("predicted_scores_json", "TEXT", None),
+            ("session_id", "TEXT", None),
+            ("iteration", "INTEGER", "1"),
+            ("parent_run_id", "TEXT", None),
+            ("actual_scores_json", "TEXT", None),
+            ("suggestions_json", "TEXT", None),
+        ]:
+            try:
+                stmt = f"ALTER TABLE encoding_runs ADD COLUMN {col} {col_type}"
+                if default is not None:
+                    stmt += f" DEFAULT {default}"
+                cursor.execute(stmt)
+            except sqlite3.OperationalError:
+                pass  # Column already exists
 
         cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_citation ON runs(citation)
+            CREATE INDEX IF NOT EXISTS idx_citation ON encoding_runs(citation)
         """)
         cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_timestamp ON runs(timestamp)
+            CREATE INDEX IF NOT EXISTS idx_timestamp ON encoding_runs(timestamp)
+        """)
+
+        # Calibration snapshots table (per-metric rows for trend analysis)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS calibration_snapshots (
+                id TEXT PRIMARY KEY,
+                timestamp TEXT NOT NULL,
+                metric_name TEXT NOT NULL,
+                predicted_mean REAL,
+                actual_mean REAL,
+                mse REAL,
+                n_samples INTEGER
+            )
         """)
 
         # Sessions table - full Claude Code session transcripts
@@ -408,8 +481,8 @@ class ExperimentDB:
         conn.commit()
         conn.close()
 
-    def log_run(self, run: EncodingRun):
-        """Log a completed encoding run."""
+    def log_run(self, run: EncodingRun) -> str:
+        """Log a completed encoding run. Returns the run ID."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
@@ -454,23 +527,51 @@ class ExperimentDB:
             })
 
         predicted_scores_json = None
-        if run.predicted_scores:
+        if run.predicted:
             predicted_scores_json = json.dumps({
-                "rac": run.predicted_scores.rac,
-                "formula": run.predicted_scores.formula,
-                "param": run.predicted_scores.param,
-                "integration": run.predicted_scores.integration,
-                "iterations": run.predicted_scores.iterations,
-                "time_minutes": run.predicted_scores.time_minutes,
-                "confidence": run.predicted_scores.confidence,
+                "rac_reviewer": run.predicted.rac_reviewer,
+                "formula_reviewer": run.predicted.formula_reviewer,
+                "parameter_reviewer": run.predicted.parameter_reviewer,
+                "integration_reviewer": run.predicted.integration_reviewer,
+                "ci_pass": run.predicted.ci_pass,
+                "policyengine_match": run.predicted.policyengine_match,
+                "taxsim_match": run.predicted.taxsim_match,
+                "confidence": run.predicted.confidence,
             })
 
+        actual_scores_json = None
+        if run.actual:
+            actual_scores_json = json.dumps({
+                "rac_reviewer": run.actual.rac_reviewer,
+                "formula_reviewer": run.actual.formula_reviewer,
+                "parameter_reviewer": run.actual.parameter_reviewer,
+                "integration_reviewer": run.actual.integration_reviewer,
+                "ci_pass": run.actual.ci_pass,
+                "ci_error": run.actual.ci_error,
+                "policyengine_match": run.actual.policyengine_match,
+                "taxsim_match": run.actual.taxsim_match,
+                "reviewer_issues": run.actual.reviewer_issues,
+            })
+
+        suggestions_json = None
+        if run.suggestions:
+            suggestions_json = json.dumps([
+                {
+                    "category": s.category,
+                    "description": s.description,
+                    "predicted_impact": s.predicted_impact,
+                    "specific_change": s.specific_change,
+                }
+                for s in run.suggestions
+            ])
+
         cursor.execute("""
-            INSERT OR REPLACE INTO runs
+            INSERT OR REPLACE INTO encoding_runs
             (id, timestamp, citation, file_path, complexity_json, iterations_json,
              total_duration_ms, final_scores_json, agent_type, agent_model, rac_content,
-             predicted_scores_json, session_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             predicted_scores_json, session_id, iteration, parent_run_id,
+             actual_scores_json, suggestions_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             run.id,
             run.timestamp.isoformat(),
@@ -485,17 +586,23 @@ class ExperimentDB:
             run.rac_content,
             predicted_scores_json,
             run.session_id,
+            run.iteration,
+            run.parent_run_id,
+            actual_scores_json,
+            suggestions_json,
         ))
 
         conn.commit()
         conn.close()
+
+        return run.id
 
     def get_run(self, run_id: str) -> Optional[EncodingRun]:
         """Get a specific run by ID."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        cursor.execute("SELECT * FROM runs WHERE id = ?", (run_id,))
+        cursor.execute("SELECT * FROM encoding_runs WHERE id = ?", (run_id,))
         row = cursor.fetchone()
         conn.close()
 
@@ -510,13 +617,74 @@ class ExperimentDB:
         cursor = conn.cursor()
 
         cursor.execute(
-            "SELECT * FROM runs ORDER BY timestamp DESC LIMIT ?",
+            "SELECT * FROM encoding_runs ORDER BY timestamp DESC LIMIT ?",
             (limit,)
         )
         rows = cursor.fetchall()
         conn.close()
 
         return [self._row_to_run(row) for row in rows]
+
+    def get_runs_for_citation(self, citation: str) -> list[EncodingRun]:
+        """Get all runs for a specific citation."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT * FROM encoding_runs WHERE citation = ? ORDER BY timestamp DESC",
+            (citation,)
+        )
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [self._row_to_run(row) for row in rows]
+
+    def update_actual_scores(self, run_id: str, actual: ActualScores) -> None:
+        """Update a run with actual scores after validation."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        actual_scores_json = json.dumps({
+            "rac_reviewer": actual.rac_reviewer,
+            "formula_reviewer": actual.formula_reviewer,
+            "parameter_reviewer": actual.parameter_reviewer,
+            "integration_reviewer": actual.integration_reviewer,
+            "ci_pass": actual.ci_pass,
+            "ci_error": actual.ci_error,
+            "policyengine_match": actual.policyengine_match,
+            "taxsim_match": actual.taxsim_match,
+            "reviewer_issues": actual.reviewer_issues,
+        })
+
+        cursor.execute(
+            "UPDATE encoding_runs SET actual_scores_json = ? WHERE id = ?",
+            (actual_scores_json, run_id)
+        )
+
+        conn.commit()
+        conn.close()
+
+    def get_calibration_data(self) -> list[tuple[PredictedScores, ActualScores]]:
+        """Get pairs of predicted and actual scores for calibration analysis.
+
+        Only returns runs that have BOTH predicted and actual scores.
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT * FROM encoding_runs WHERE predicted_scores_json IS NOT NULL AND actual_scores_json IS NOT NULL"
+        )
+        rows = cursor.fetchall()
+        conn.close()
+
+        pairs = []
+        for row in rows:
+            run = self._row_to_run(row)
+            if run.predicted and run.actual:
+                pairs.append((run.predicted, run.actual))
+
+        return pairs
 
     def get_error_stats(self) -> dict:
         """Get error type distribution."""
@@ -556,16 +724,29 @@ class ExperimentDB:
 
     def _row_to_run(self, row) -> EncodingRun:
         """Convert database row to EncodingRun."""
-        # Handle both old (11 columns) and new (13 columns) schema
+        # Handle various schema versions (11, 13, or 17 columns)
         if len(row) == 11:
             (id, timestamp, citation, file_path, complexity_json, iterations_json,
              total_duration_ms, final_scores_json, agent_type, agent_model, rac_content) = row
             predicted_scores_json = None
             session_id = None
-        else:
+            iteration = 1
+            parent_run_id = None
+            actual_scores_json = None
+            suggestions_json = None
+        elif len(row) == 13:
             (id, timestamp, citation, file_path, complexity_json, iterations_json,
              total_duration_ms, final_scores_json, agent_type, agent_model, rac_content,
              predicted_scores_json, session_id) = row
+            iteration = 1
+            parent_run_id = None
+            actual_scores_json = None
+            suggestions_json = None
+        else:
+            (id, timestamp, citation, file_path, complexity_json, iterations_json,
+             total_duration_ms, final_scores_json, agent_type, agent_model, rac_content,
+             predicted_scores_json, session_id, iteration, parent_run_id,
+             actual_scores_json, suggestions_json) = row
 
         # Parse complexity
         c = json.loads(complexity_json) if complexity_json else {}
@@ -613,18 +794,46 @@ class ExperimentDB:
             )
 
         # Parse predicted scores
-        predicted_scores = None
+        predicted = None
         if predicted_scores_json:
             p = json.loads(predicted_scores_json)
-            predicted_scores = PredictedScores(
-                rac=p.get("rac", 0),
-                formula=p.get("formula", 0),
-                param=p.get("param", 0),
-                integration=p.get("integration", 0),
-                iterations=p.get("iterations", 1),
-                time_minutes=p.get("time_minutes", 0),
+            predicted = PredictedScores(
+                rac_reviewer=p.get("rac_reviewer", p.get("rac", 0)),
+                formula_reviewer=p.get("formula_reviewer", p.get("formula", 0)),
+                parameter_reviewer=p.get("parameter_reviewer", p.get("param", 0)),
+                integration_reviewer=p.get("integration_reviewer", p.get("integration", 0)),
+                ci_pass=p.get("ci_pass", True),
+                policyengine_match=p.get("policyengine_match"),
+                taxsim_match=p.get("taxsim_match"),
                 confidence=p.get("confidence", 0.5),
             )
+
+        # Parse actual scores
+        actual = None
+        if actual_scores_json:
+            a = json.loads(actual_scores_json)
+            actual = ActualScores(
+                rac_reviewer=a.get("rac_reviewer", 0),
+                formula_reviewer=a.get("formula_reviewer", 0),
+                parameter_reviewer=a.get("parameter_reviewer", 0),
+                integration_reviewer=a.get("integration_reviewer", 0),
+                ci_pass=a.get("ci_pass", False),
+                ci_error=a.get("ci_error"),
+                policyengine_match=a.get("policyengine_match"),
+                taxsim_match=a.get("taxsim_match"),
+                reviewer_issues=a.get("reviewer_issues", []),
+            )
+
+        # Parse suggestions
+        suggestions = []
+        if suggestions_json:
+            for s_data in json.loads(suggestions_json):
+                suggestions.append(AgentSuggestion(
+                    category=s_data.get("category", "documentation"),
+                    description=s_data.get("description", ""),
+                    predicted_impact=s_data.get("predicted_impact", "medium"),
+                    specific_change=s_data.get("specific_change"),
+                ))
 
         return EncodingRun(
             id=id,
@@ -632,13 +841,17 @@ class ExperimentDB:
             citation=citation,
             file_path=file_path,
             complexity=complexity,
-            predicted_scores=predicted_scores,
+            predicted=predicted,
+            actual=actual,
+            iteration=iteration or 1,
+            parent_run_id=parent_run_id,
             iterations=iterations,
             total_duration_ms=total_duration_ms or 0,
             final_scores=final_scores,
             agent_type=agent_type or "encoder",
             agent_model=agent_model or "",
             rac_content=rac_content or "",
+            suggestions=suggestions,
             session_id=session_id,
         )
 

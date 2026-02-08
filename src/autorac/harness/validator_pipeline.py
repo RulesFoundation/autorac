@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Optional, Callable, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from .experiment_db import FinalScores, ExperimentDB
+from .experiment_db import FinalScores, ActualScores, ExperimentDB
 
 
 def run_claude_code(
@@ -154,16 +154,23 @@ class PipelineResult:
     all_passed: bool
     oracle_context: dict = field(default_factory=dict)  # Context passed to LLM reviewers
 
-    def to_actual_scores(self) -> FinalScores:
-        """Convert to FinalScores for experiment DB."""
-        return FinalScores(
+    def to_actual_scores(self) -> ActualScores:
+        """Convert to ActualScores for experiment DB."""
+        ci_result = self.results.get("ci", ValidationResult("", False))
+        return ActualScores(
             rac_reviewer=self.results.get("rac_reviewer", ValidationResult("", False)).score or 0.0,
             formula_reviewer=self.results.get("formula_reviewer", ValidationResult("", False)).score or 0.0,
             parameter_reviewer=self.results.get("parameter_reviewer", ValidationResult("", False)).score or 0.0,
             integration_reviewer=self.results.get("integration_reviewer", ValidationResult("", False)).score or 0.0,
+            ci_pass=ci_result.passed,
+            ci_error=ci_result.error,
             policyengine_match=self.results.get("policyengine", ValidationResult("", False)).score,
             taxsim_match=self.results.get("taxsim", ValidationResult("", False)).score,
-            oracle_context=self.oracle_context,
+            reviewer_issues=[
+                issue
+                for name, result in self.results.items()
+                for issue in (result.issues or [])
+            ],
         )
 
     @property
@@ -202,9 +209,10 @@ class ValidatorPipeline:
             )
 
     def validate(self, rac_file: Path) -> PipelineResult:
-        """Run 3-tier validation on a RAC file.
+        """Run 4-tier validation on a RAC file.
 
         Tiers run in order:
+        0. Compile check - can the .rac file compile to engine IR?
         1. CI checks (instant) - parse, lint, inline tests, rac pytest validation
         2. Oracles (fast, ~10s) - PolicyEngine + TAXSIM comparison data
         3. LLM reviewers (uses oracle context) - diagnose issues
@@ -215,10 +223,28 @@ class ValidatorPipeline:
         start = time.time()
         results = {}
 
+        # Tier 0: Compile check (fast, catches structural errors early)
+        self._log_event("validation_compile_start", f"Starting compilation check for {rac_file.name}")
+        compile_start = time.time()
+        results["compile"] = self._run_compile_check(rac_file)
+        self._log_event("validation_compile_end", f"Compilation check complete", {
+            "passed": results["compile"].passed,
+            "issues": results["compile"].issues,
+            "duration_ms": int((time.time() - compile_start) * 1000),
+        })
+
         # Tier 1: CI checks (instant, blocks further validation if fails)
         self._log_event("validation_ci_start", f"Starting CI validation for {rac_file.name}")
         ci_start = time.time()
-        results["ci"] = self._run_ci(rac_file)
+        try:
+            results["ci"] = self._run_ci(rac_file)
+        except Exception as e:
+            results["ci"] = ValidationResult(
+                validator_name="ci",
+                passed=False,
+                error=str(e),
+                issues=[str(e)],
+            )
         self._log_event("validation_ci_end", f"CI validation complete", {
             "passed": results["ci"].passed,
             "issues": results["ci"].issues,
@@ -315,6 +341,59 @@ class ValidatorPipeline:
             all_passed=all_passed,
             oracle_context=oracle_context,
         )
+
+    def _run_compile_check(self, rac_file: Path) -> ValidationResult:
+        """Tier 0: Compile check — can the .rac file compile to engine IR?
+
+        Parses the v2 .rac file, converts it to engine format, and compiles
+        to IR. Catches type errors, missing dependencies, and circular
+        references earlier than CI.
+        """
+        start = time.time()
+        issues = []
+
+        try:
+            from rac.dsl_parser import parse_dsl
+            from rac.engine import compile as engine_compile
+            from rac.engine.converter import convert_v2_to_engine_module
+            from datetime import date
+
+            # Step 1: Parse v2 format
+            rac_content = rac_file.read_text()
+            v2_module = parse_dsl(rac_content)
+
+            # Step 2: Convert to engine module
+            # Derive module_path from file path (e.g., statute/26/32 -> 26/32)
+            module_path = rac_file.stem
+            engine_module = convert_v2_to_engine_module(
+                v2_module, module_path=module_path
+            )
+
+            # Step 3: Compile to IR
+            ir = engine_compile([engine_module], as_of=date.today())
+
+            duration = int((time.time() - start) * 1000)
+            var_count = len(ir.variables)
+
+            return ValidationResult(
+                validator_name="compile",
+                passed=True,
+                issues=[],
+                duration_ms=duration,
+                raw_output=f"Successfully compiled {var_count} variables to engine IR",
+            )
+
+        except Exception as e:
+            duration = int((time.time() - start) * 1000)
+            issues.append(f"Compilation failed: {e}")
+
+            return ValidationResult(
+                validator_name="compile",
+                passed=False,
+                issues=issues,
+                duration_ms=duration,
+                error=str(e),
+            )
 
     def _run_ci(self, rac_file: Path) -> ValidationResult:
         """Run CI checks: parse, lint, inline tests."""
