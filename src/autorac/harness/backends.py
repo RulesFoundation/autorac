@@ -262,7 +262,7 @@ class AgentSDKBackend(EncoderBackend):
     the cosilico-claude plugin via the SDK's plugins option.
     """
 
-    # Default path to cosilico-claude plugin (relative to CosilicoAI)
+    # Default path to cosilico-claude plugin (sibling directory)
     DEFAULT_PLUGIN_PATH = (
         Path(__file__).parent.parent.parent.parent.parent / "cosilico-claude"
     )

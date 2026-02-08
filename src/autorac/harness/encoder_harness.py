@@ -103,7 +103,7 @@ class EncoderConfig:
             # Try common locations
             candidates = [
                 self.rac_us_path.parent / "cosilico-claude",
-                Path.home() / "CosilicoAI" / "cosilico-claude",
+                Path.home() / "RulesFoundation" / "cosilico-claude",
                 Path.home() / ".claude" / "plugins" / "cosilico-claude",
             ]
             for candidate in candidates:
@@ -296,16 +296,6 @@ Score each dimension from 1-10. Output ONLY valid JSON:
 
         Uses the cosilico:RAC Encoder agent from the plugin.
         """
-        # Derive variable name from citation for fallback
-        var_name = (
-            citation.replace("USC", "")
-            .replace("(", "_")
-            .replace(")", "")
-            .replace(" ", "_")
-            .lower()
-        )
-        var_name = re.sub(r"_+", "_", var_name).strip("_")
-
         # Use the cosilico plugin's encoder agent
         prompt = f"""Encode {citation} into RAC format.
 
@@ -347,6 +337,16 @@ Use the Write tool to create the .rac file at the specified path.
 
         except Exception as e:
             print(f"Warning: Failed to encode: {e}")
+
+            # Derive variable name from citation for fallback
+            var_name = (
+                citation.replace("USC", "")
+                .replace("(", "_")
+                .replace(")", "")
+                .replace(" ", "_")
+                .lower()
+            )
+            var_name = re.sub(r"_+", "_", var_name).strip("_")
 
             # Return a minimal valid RAC structure as fallback
             fallback = f'''text: """
@@ -436,35 +436,28 @@ Output ONLY valid JSON array:
             else:
                 raise ValueError("No JSON array found in output")
 
-            suggestions = []
-            for item in data:
-                suggestions.append(
-                    AgentSuggestion(
-                        category=item.get("category", "documentation"),
-                        description=item.get("description", ""),
-                        predicted_impact=item.get("predicted_impact", "medium"),
-                        specific_change=item.get("specific_change"),
-                    )
+            return [
+                AgentSuggestion(
+                    category=item.get("category", "documentation"),
+                    description=item.get("description", ""),
+                    predicted_impact=item.get("predicted_impact", "medium"),
+                    specific_change=item.get("specific_change"),
                 )
-
-            return suggestions
+                for item in data
+            ]
 
         except Exception as e:
             print(f"Warning: Failed to get suggestions: {e}")
 
-            # Return basic suggestions based on failures
-            suggestions = []
-            for name, result in failures:
-                suggestions.append(
-                    AgentSuggestion(
-                        category="validator",
-                        description=f"{name} failed: {result.error or 'unknown'}",
-                        predicted_impact="medium",
-                        specific_change=None,
-                    )
+            return [
+                AgentSuggestion(
+                    category="validator",
+                    description=f"{name} failed: {result.error or 'unknown'}",
+                    predicted_impact="medium",
+                    specific_change=None,
                 )
-
-            return suggestions
+                for name, result in failures
+            ]
 
 
 def run_encoding_experiment(

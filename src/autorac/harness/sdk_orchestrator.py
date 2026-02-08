@@ -593,32 +593,6 @@ Write .rac files to the output path. Run tests after each file."""
 
         return run
 
-    def _extract_oracle_context(self, result: str) -> dict:
-        """Extract structured oracle results from validator output."""
-        context = {
-            "pe_match": None,
-            "taxsim_match": None,
-            "discrepancies": [],
-        }
-
-        # Simple extraction - look for percentages
-        import re
-
-        pe_match = re.search(r"PolicyEngine[:\s]+(\d+(?:\.\d+)?)\s*%", result, re.I)
-        if pe_match:
-            context["pe_match"] = float(pe_match.group(1))
-
-        taxsim_match = re.search(r"TAXSIM[:\s]+(\d+(?:\.\d+)?)\s*%", result, re.I)
-        if taxsim_match:
-            context["taxsim_match"] = float(taxsim_match.group(1))
-
-        # Extract discrepancy lines
-        for line in result.split("\n"):
-            if "discrepancy" in line.lower() or "differs" in line.lower():
-                context["discrepancies"].append({"description": line.strip()})
-
-        return context
-
     def _format_oracle_summary(self, context: dict) -> str:
         """Format oracle context for reviewer prompts."""
         parts = []

@@ -201,7 +201,7 @@ def fetch_runs_from_supabase(
 # Transcript Sync (from PostToolUse hook local DB to Supabase)
 # ============================================================================
 
-TRANSCRIPT_DB = Path.home() / "CosilicoAI" / "autorac" / "transcripts.db"
+TRANSCRIPT_DB = Path.home() / "RulesFoundation" / "autorac" / "transcripts.db"
 
 
 def sync_transcripts_to_supabase(
@@ -284,7 +284,7 @@ def sync_transcripts_to_supabase(
     }
 
 
-EXPERIMENTS_DB = Path.home() / "CosilicoAI" / "autorac" / "experiments.db"
+EXPERIMENTS_DB = Path.home() / "RulesFoundation" / "autorac" / "experiments.db"
 
 
 def sync_sdk_sessions_to_supabase(

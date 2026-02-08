@@ -25,7 +25,7 @@ from .harness.experiment_db import (
 from .harness.validator_pipeline import ValidatorPipeline
 
 # Default DB path - can be overridden with --db
-DEFAULT_DB = Path.home() / "CosilicoAI" / "autorac" / "experiments.db"
+DEFAULT_DB = Path.home() / "RulesFoundation" / "autorac" / "experiments.db"
 
 
 def main():
@@ -107,7 +107,7 @@ def main():
     statute_parser.add_argument(
         "--xml-path",
         type=Path,
-        default=Path.home() / "CosilicoAI" / "arch" / "data" / "uscode",
+        default=Path.home() / "RulesFoundation" / "atlas" / "data" / "uscode",
         help="Path to USC XML files",
     )
 
@@ -125,7 +125,7 @@ def main():
     init_parser.add_argument(
         "--output",
         type=Path,
-        default=Path.home() / "CosilicoAI" / "rac-us" / "statute",
+        default=Path.home() / "RulesFoundation" / "rac-us" / "statute",
         help="Output directory for .rac files",
     )
     init_parser.add_argument(
@@ -141,7 +141,7 @@ def main():
     coverage_parser.add_argument(
         "--path",
         type=Path,
-        default=Path.home() / "CosilicoAI" / "rac-us" / "statute",
+        default=Path.home() / "RulesFoundation" / "rac-us" / "statute",
         help="Path to statute directory",
     )
 
@@ -195,7 +195,7 @@ def main():
     encode_parser.add_argument(
         "--output",
         type=Path,
-        default=Path.home() / "CosilicoAI" / "rac-us" / "statute",
+        default=Path.home() / "RulesFoundation" / "rac-us" / "statute",
         help="Output directory for .rac files",
     )
     encode_parser.add_argument(
@@ -342,8 +342,8 @@ def cmd_validate(args):
         rac_us = rac_us.parent
 
     if rac_us.name != "rac-us":
-        rac_us = Path.home() / "CosilicoAI" / "rac-us"
-        rac_path = Path.home() / "CosilicoAI" / "rac"
+        rac_us = Path.home() / "RulesFoundation" / "rac-us"
+        rac_path = Path.home() / "RulesFoundation" / "rac"
     else:
         rac_path = rac_us.parent / "rac"
 
@@ -467,7 +467,6 @@ def cmd_compile(args):
         ir = engine_compile([engine_module], as_of=as_of)
 
         var_names = list(ir.variables.keys())
-        list(ir.entities.keys()) if hasattr(ir, "entities") else []
 
         if args.execute:
             # Execute with empty data
@@ -483,7 +482,7 @@ def cmd_compile(args):
                 "variable_count": len(var_names),
             }
             if args.execute:
-                output["scalars"] = {k: v for k, v in scalars.items()}
+                output["scalars"] = scalars
             print(json.dumps(output, indent=2, default=str))
         else:
             print(f"Compiled: {args.file}")
@@ -640,13 +639,13 @@ def cmd_log(args):
     if args.predicted:
         p = json.loads(args.predicted)
         predicted_scores = PredictedScores(
-            rac=p.get("rac", 0),
-            formula=p.get("formula", 0),
-            param=p.get("param", 0),
-            integration=p.get("integration", 0),
-            iterations=p.get("iterations", 1),
-            time_minutes=p.get("time", 0),
-            confidence=p.get("confidence", 0.5),
+            rac_reviewer=float(p.get("rac", p.get("rac_reviewer", 0))),
+            formula_reviewer=float(p.get("formula", p.get("formula_reviewer", 0))),
+            parameter_reviewer=float(p.get("param", p.get("parameter_reviewer", 0))),
+            integration_reviewer=float(
+                p.get("integration", p.get("integration_reviewer", 0))
+            ),
+            confidence=float(p.get("confidence", 0.5)),
         )
 
     # Read RAC content
@@ -657,7 +656,7 @@ def cmd_log(args):
     run = EncodingRun(
         citation=args.citation,
         file_path=str(args.file),
-        predicted_scores=predicted_scores,
+        predicted=predicted_scores,
         iterations=iterations,
         total_duration_ms=args.duration,
         final_scores=final_scores,
@@ -675,7 +674,7 @@ def cmd_log(args):
         print(f"  Session: {args.session}")
     if predicted_scores:
         print(
-            f"  Predicted: RAC {predicted_scores.rac}/10 | Formula {predicted_scores.formula}/10 | Param {predicted_scores.param}/10 | Iter {predicted_scores.iterations}"
+            f"  Predicted: RAC {predicted_scores.rac_reviewer}/10 | Formula {predicted_scores.formula_reviewer}/10 | Param {predicted_scores.parameter_reviewer}/10"
         )
     if final_scores:
         print(
@@ -739,7 +738,7 @@ def cmd_calibration(args):
     runs = db.get_recent_runs(limit=args.limit)
 
     # Filter to runs with predictions
-    runs_with_pred = [r for r in runs if r.predicted_scores and r.final_scores]
+    runs_with_pred = [r for r in runs if r.predicted and r.final_scores]
 
     if not runs_with_pred:
         print("No runs with both predictions and actual scores yet.")
@@ -751,61 +750,43 @@ def cmd_calibration(args):
     print()
 
     # Calculate per-dimension errors
-    errors = {"rac": [], "formula": [], "param": [], "integration": []}
-    iter_errors = []
-    time_errors = []
+    dimensions = {
+        "rac_reviewer": [],
+        "formula_reviewer": [],
+        "parameter_reviewer": [],
+        "integration_reviewer": [],
+    }
 
     for run in runs_with_pred:
-        p = run.predicted_scores
+        p = run.predicted
         a = run.final_scores
 
-        errors["rac"].append(p.rac - a.rac_reviewer)
-        errors["formula"].append(p.formula - a.formula_reviewer)
-        errors["param"].append(p.param - a.parameter_reviewer)
-        errors["integration"].append(p.integration - a.integration_reviewer)
-
-        # Iteration prediction error
-        iter_errors.append(p.iterations - run.iterations_needed)
-
-        # Time prediction error (in minutes)
-        actual_time = run.total_duration_ms / 60000
-        if p.time_minutes > 0:
-            time_errors.append(p.time_minutes - actual_time)
+        dimensions["rac_reviewer"].append(p.rac_reviewer - a.rac_reviewer)
+        dimensions["formula_reviewer"].append(p.formula_reviewer - a.formula_reviewer)
+        dimensions["parameter_reviewer"].append(
+            p.parameter_reviewer - a.parameter_reviewer
+        )
+        dimensions["integration_reviewer"].append(
+            p.integration_reviewer - a.integration_reviewer
+        )
 
     # Print dimension calibration
     print("Dimension Calibration (predicted - actual):")
     print("-" * 50)
-    print(f"{'Dimension':<15} {'Mean Err':>10} {'Bias':>10} {'MAE':>10}")
+    print(f"{'Dimension':<25} {'Mean Err':>10} {'Bias':>10} {'MAE':>10}")
     print("-" * 50)
 
-    for dim, errs in errors.items():
+    for dim, errs in dimensions.items():
         if errs:
             mean_err = sum(errs) / len(errs)
-            bias = "over" if mean_err > 0.5 else "under" if mean_err < -0.5 else "good"
+            if mean_err > 0.5:
+                bias = "over"
+            elif mean_err < -0.5:
+                bias = "under"
+            else:
+                bias = "good"
             mae = sum(abs(e) for e in errs) / len(errs)
-            print(f"{dim:<15} {mean_err:>+10.1f} {bias:>10} {mae:>10.1f}")
-
-    print()
-
-    # Print iteration calibration
-    if iter_errors:
-        mean_iter_err = sum(iter_errors) / len(iter_errors)
-        iter_bias = (
-            "over"
-            if mean_iter_err > 0.3
-            else "under"
-            if mean_iter_err < -0.3
-            else "good"
-        )
-        print(f"Iteration prediction: mean error {mean_iter_err:+.1f} ({iter_bias})")
-
-    # Print time calibration
-    if time_errors:
-        mean_time_err = sum(time_errors) / len(time_errors)
-        time_bias = (
-            "over" if mean_time_err > 2 else "under" if mean_time_err < -2 else "good"
-        )
-        print(f"Time prediction: mean error {mean_time_err:+.1f} min ({time_bias})")
+            print(f"{dim:<25} {mean_err:>+10.1f} {bias:>10} {mae:>10.1f}")
 
     print()
 
@@ -816,9 +797,14 @@ def cmd_calibration(args):
     print("-" * 70)
 
     for run in runs_with_pred[-10:]:  # Last 10
-        p = run.predicted_scores
+        p = run.predicted
         a = run.final_scores
-        pred_avg = (p.rac + p.formula + p.param + p.integration) / 4
+        pred_avg = (
+            p.rac_reviewer
+            + p.formula_reviewer
+            + p.parameter_reviewer
+            + p.integration_reviewer
+        ) / 4
         act_avg = (
             a.rac_reviewer
             + a.formula_reviewer
@@ -908,7 +894,6 @@ def cmd_statute(args):
         pattern = rf'<{tag}[^>]*identifier="([^"]+)"[^>]*>'
 
         for match in re.finditer(pattern, xml):
-            match.start()
             ident = match.group(1)
 
             # Find closing tag
@@ -932,7 +917,6 @@ def cmd_statute(args):
     # Extract subsections
     for sub_id, sub_xml in extract_element(xml_section, "subsection"):
         sub_letter = sub_id.split("/")[-1]
-        re.search(r"<num[^>]*>(.*?)</num>", sub_xml)
         sub_head = re.search(r"<heading[^>]*>(.*?)</heading>", sub_xml, re.DOTALL)
         sub_content = re.search(r"<content>(.*?)</content>", sub_xml, re.DOTALL)
 
@@ -1158,11 +1142,11 @@ def cmd_init(args):
 
     # Use local USC XML
     xml_path = (
-        Path.home() / "CosilicoAI" / "arch" / "data" / "uscode" / f"usc{title}.xml"
+        Path.home() / "RulesFoundation" / "atlas" / "data" / "uscode" / f"usc{title}.xml"
     )
     if not xml_path.exists():
         print(f"USC XML not found: {xml_path}")
-        print("Run: cd ~/CosilicoAI/arch && python scripts/download_usc.py")
+        print("Run: cd ~/RulesFoundation/atlas && python scripts/download_usc.py")
         sys.exit(1)
 
     print(f"Parsing {xml_path}...")
