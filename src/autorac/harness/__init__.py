@@ -1,32 +1,40 @@
 # Encoding Harness
 # Feedback loop for AI-assisted statute encoding
 
-from .experiment_db import (
-    ExperimentDB,
-    EncodingRun,
-    ComplexityFactors,
-    IterationError,
-    Iteration,
-    FinalScores,
-    PredictedScores,
-)
-from .validator_pipeline import (
-    ValidatorPipeline,
-    ValidationResult,
-    PipelineResult,
-    validate_file,
-)
 from .backends import (
-    EncoderBackend,
-    ClaudeCodeBackend,
     AgentSDKBackend,
+    ClaudeCodeBackend,
+    EncoderBackend,
     EncoderRequest,
     EncoderResponse,
     PredictionScores,
 )
-
-# Note: encoder_harness and metrics need updating for new journey-based model
-# They still use the old prediction-based approach
+from .experiment_db import (
+    ActualScores,
+    AgentSuggestion,
+    ComplexityFactors,
+    EncodingRun,
+    ExperimentDB,
+    FinalScores,
+    Iteration,
+    IterationError,
+    PredictedScores,
+    create_run,
+)
+from .metrics import (
+    CalibrationMetrics,
+    CalibrationSnapshot,
+    compute_calibration,
+    get_calibration_trend,
+    print_calibration_report,
+    save_calibration_snapshot,
+)
+from .validator_pipeline import (
+    PipelineResult,
+    ValidationResult,
+    ValidatorPipeline,
+    validate_file,
+)
 
 __all__ = [
     # Experiment DB
@@ -37,6 +45,9 @@ __all__ = [
     "Iteration",
     "FinalScores",
     "PredictedScores",
+    "ActualScores",
+    "AgentSuggestion",
+    "create_run",
     # Validator Pipeline
     "ValidatorPipeline",
     "ValidationResult",
@@ -49,4 +60,11 @@ __all__ = [
     "EncoderRequest",
     "EncoderResponse",
     "PredictionScores",
+    # Calibration Metrics
+    "CalibrationMetrics",
+    "CalibrationSnapshot",
+    "compute_calibration",
+    "print_calibration_report",
+    "save_calibration_snapshot",
+    "get_calibration_trend",
 ]

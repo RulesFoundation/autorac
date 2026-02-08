@@ -15,14 +15,15 @@ import re
 import subprocess
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, List
+from typing import List, Optional
 
 
 @dataclass
 class EncoderRequest:
     """Input for an encoding operation."""
+
     citation: str
     statute_text: str
     output_path: Path
@@ -34,6 +35,7 @@ class EncoderRequest:
 @dataclass
 class TokenUsage:
     """Token usage from an encoding operation."""
+
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
@@ -47,15 +49,16 @@ class TokenUsage:
     def estimated_cost_usd(self) -> float:
         """Rough cost estimate (Opus pricing as of 2025)."""
         return (
-            self.input_tokens * 15 / 1_000_000 +
-            self.output_tokens * 75 / 1_000_000 +
-            self.cache_read_tokens * 1.875 / 1_000_000
+            self.input_tokens * 15 / 1_000_000
+            + self.output_tokens * 75 / 1_000_000
+            + self.cache_read_tokens * 1.875 / 1_000_000
         )
 
 
 @dataclass
 class EncoderResponse:
     """Output from an encoding operation."""
+
     rac_content: str
     success: bool
     error: Optional[str] = None
@@ -66,6 +69,7 @@ class EncoderResponse:
 @dataclass
 class PredictionScores:
     """Predicted scores from the encoder."""
+
     rac_reviewer: float = 7.0
     formula_reviewer: float = 7.0
     parameter_reviewer: float = 7.0
@@ -144,8 +148,8 @@ Use the Write tool to create the .rac file at the specified path.
             rac_content = output
 
         # Clean up markdown code blocks
-        rac_content = re.sub(r'^```\w*\n', '', rac_content)
-        rac_content = re.sub(r'\n```$', '', rac_content)
+        rac_content = re.sub(r"^```\w*\n", "", rac_content)
+        rac_content = re.sub(r"\n```$", "", rac_content)
         rac_content = rac_content.strip()
 
         return EncoderResponse(
@@ -162,7 +166,7 @@ Use the Write tool to create the .rac file at the specified path.
 Citation: {citation}
 
 Statute Text:
-{statute_text[:2000]}{'...' if len(statute_text) > 2000 else ''}
+{statute_text[:2000]}{"..." if len(statute_text) > 2000 else ""}
 
 Score each dimension from 1-10. Output ONLY valid JSON:
 {{
@@ -185,7 +189,7 @@ Score each dimension from 1-10. Output ONLY valid JSON:
             )
 
             # Parse JSON from output
-            json_match = re.search(r'\{[^{}]*\}', output, re.DOTALL)
+            json_match = re.search(r"\{[^{}]*\}", output, re.DOTALL)
             if json_match:
                 data = json.loads(json_match.group())
             else:
@@ -202,7 +206,7 @@ Score each dimension from 1-10. Output ONLY valid JSON:
                 confidence=float(data.get("confidence", 0.5)),
             )
 
-        except Exception as e:
+        except Exception:
             # Return defaults on error
             return PredictionScores(confidence=0.3)
 
@@ -239,7 +243,10 @@ Score each dimension from 1-10. Output ONLY valid JSON:
         except subprocess.TimeoutExpired:
             return f"Timeout after {timeout}s", 1
         except FileNotFoundError:
-            return "Claude CLI not found - install with: npm install -g @anthropic-ai/claude-code", 1
+            return (
+                "Claude CLI not found - install with: npm install -g @anthropic-ai/claude-code",
+                1,
+            )
         except Exception as e:
             return f"Error running Claude CLI: {e}", 1
 
@@ -256,7 +263,9 @@ class AgentSDKBackend(EncoderBackend):
     """
 
     # Default path to cosilico-claude plugin (relative to CosilicoAI)
-    DEFAULT_PLUGIN_PATH = Path(__file__).parent.parent.parent.parent.parent / "cosilico-claude"
+    DEFAULT_PLUGIN_PATH = (
+        Path(__file__).parent.parent.parent.parent.parent / "cosilico-claude"
+    )
 
     def __init__(
         self,
@@ -268,7 +277,9 @@ class AgentSDKBackend(EncoderBackend):
         if not self.api_key:
             raise ValueError("ANTHROPIC_API_KEY required for AgentSDKBackend")
         self.model = model
-        self.plugin_path = Path(plugin_path) if plugin_path else self.DEFAULT_PLUGIN_PATH
+        self.plugin_path = (
+            Path(plugin_path) if plugin_path else self.DEFAULT_PLUGIN_PATH
+        )
 
         if not self.plugin_path.exists():
             raise ValueError(f"Plugin path does not exist: {self.plugin_path}")
@@ -287,7 +298,7 @@ class AgentSDKBackend(EncoderBackend):
 
         try:
             # Import here to avoid dependency if not using SDK backend
-            from claude_agent_sdk import query, ClaudeAgentOptions
+            from claude_agent_sdk import ClaudeAgentOptions, query
 
             prompt = f"""Encode {request.citation} into RAC format.
 
@@ -331,7 +342,9 @@ Use the Write tool to create the .rac file at the specified path.
                         input_tokens=getattr(usage, "input_tokens", 0),
                         output_tokens=getattr(usage, "output_tokens", 0),
                         cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0),
-                        cache_creation_tokens=getattr(usage, "cache_creation_input_tokens", 0),
+                        cache_creation_tokens=getattr(
+                            usage, "cache_creation_input_tokens", 0
+                        ),
                     )
 
             duration_ms = int((time.time() - start) * 1000)

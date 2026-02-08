@@ -4,20 +4,22 @@ Supabase sync for autorac encoding runs.
 Syncs local SQLite experiment DB to Supabase for the public dashboard.
 """
 
-import os
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from supabase import create_client, Client
+from supabase import Client, create_client
 
 
 def get_supabase_client() -> Client:
     """Get Supabase client using environment variables."""
     url = os.environ.get("COSILICO_SUPABASE_URL")
     # Try service role key first (for writes), fall back to anon key (reads only)
-    key = os.environ.get("COSILICO_SUPABASE_SECRET_KEY") or os.environ.get("COSILICO_SUPABASE_ANON_KEY")
+    key = os.environ.get("COSILICO_SUPABASE_SECRET_KEY") or os.environ.get(
+        "COSILICO_SUPABASE_ANON_KEY"
+    )
 
     if not url or not key:
         raise ValueError(
@@ -44,12 +46,13 @@ def sync_run_to_supabase(
     Returns:
         True if sync succeeded
     """
-    from .harness.experiment_db import EncodingRun  # Avoid circular import
 
     # Validate data_source - this is a hard requirement to prevent fake data
-    valid_sources = {'reviewer_agent', 'ci_only', 'mock', 'manual_estimate'}
+    valid_sources = {"reviewer_agent", "ci_only", "mock", "manual_estimate"}
     if data_source not in valid_sources:
-        raise ValueError(f"data_source must be one of {valid_sources}, got: {data_source}")
+        raise ValueError(
+            f"data_source must be one of {valid_sources}, got: {data_source}"
+        )
 
     if client is None:
         client = get_supabase_client()
@@ -81,7 +84,7 @@ def sync_run_to_supabase(
                         "fix_applied": e.fix_applied,
                     }
                     for e in it.errors
-                ]
+                ],
             }
             for it in run.iterations
         ],
@@ -126,7 +129,9 @@ def sync_run_to_supabase(
         return False
 
 
-def sync_all_runs(db_path: Path, data_source: str, client: Optional[Client] = None) -> dict:
+def sync_all_runs(
+    db_path: Path, data_source: str, client: Optional[Client] = None
+) -> dict:
     """
     Sync all runs from local SQLite to Supabase.
 
@@ -245,18 +250,22 @@ def sync_transcripts_to_supabase(
                 "prompt": row["prompt"],
                 "description": row["description"],
                 "response_summary": row["response_summary"],
-                "transcript": json.loads(row["transcript"]) if row["transcript"] else None,
+                "transcript": json.loads(row["transcript"])
+                if row["transcript"]
+                else None,
                 "message_count": row["message_count"],
                 "created_at": row["created_at"],
             }
 
-            result = client.schema("rac").table("agent_transcripts").upsert(data).execute()
+            result = (
+                client.schema("rac").table("agent_transcripts").upsert(data).execute()
+            )
 
             if result.data:
                 # Mark as uploaded
                 conn.execute(
                     "UPDATE agent_transcripts SET uploaded_at = ? WHERE id = ?",
-                    (datetime.now().isoformat(), row["id"])
+                    (datetime.now().isoformat(), row["id"]),
                 )
                 conn.commit()
                 synced += 1
@@ -320,7 +329,7 @@ def sync_sdk_sessions_to_supabase(
             # Get events for this session
             events = conn.execute(
                 "SELECT * FROM session_events WHERE session_id = ? ORDER BY sequence",
-                (session["id"],)
+                (session["id"],),
             ).fetchall()
 
             # Build session data
@@ -346,8 +355,12 @@ def sync_sdk_sessions_to_supabase(
                     "timestamp": e["timestamp"],
                     "event_type": e["event_type"],
                     "tool_name": e["tool_name"],
-                    "content": e["content"][:10000] if e["content"] else None,  # Truncate large content
-                    "metadata": json.loads(e["metadata_json"]) if e["metadata_json"] else None,
+                    "content": e["content"][:10000]
+                    if e["content"]
+                    else None,  # Truncate large content
+                    "metadata": json.loads(e["metadata_json"])
+                    if e["metadata_json"]
+                    else None,
                 }
                 for e in events
             ]
@@ -357,7 +370,7 @@ def sync_sdk_sessions_to_supabase(
 
             # Upsert events (in batches of 100)
             for i in range(0, len(events_data), 100):
-                batch = events_data[i:i+100]
+                batch = events_data[i : i + 100]
                 client.schema("rac").table("sdk_session_events").upsert(batch).execute()
 
             synced += 1
@@ -432,20 +445,28 @@ if __name__ == "__main__":
         data_source = sys.argv[3]
         print(f"Syncing runs from {db_path} with data_source={data_source}...")
         stats = sync_all_runs(db_path, data_source)
-        print(f"Done! {stats['synced']} synced, {stats['failed']} failed of {stats['total']} total")
+        print(
+            f"Done! {stats['synced']} synced, {stats['failed']} failed of {stats['total']} total"
+        )
 
     elif cmd == "transcripts":
         session_id = sys.argv[2] if len(sys.argv) > 2 else None
-        print(f"Syncing transcripts{f' for session {session_id}' if session_id else ''}...")
+        print(
+            f"Syncing transcripts{f' for session {session_id}' if session_id else ''}..."
+        )
         stats = sync_transcripts_to_supabase(session_id)
-        print(f"Done! {stats['synced']} synced, {stats['failed']} failed of {stats['total']} total")
+        print(
+            f"Done! {stats['synced']} synced, {stats['failed']} failed of {stats['total']} total"
+        )
 
     elif cmd == "stats":
         stats = get_local_transcript_stats()
         if not stats.get("exists"):
             print("No local transcript database found")
         else:
-            print(f"Local transcripts: {stats['total']} total, {stats['unsynced']} unsynced")
+            print(
+                f"Local transcripts: {stats['total']} total, {stats['unsynced']} unsynced"
+            )
             print(f"By agent type: {stats['by_type']}")
 
     else:

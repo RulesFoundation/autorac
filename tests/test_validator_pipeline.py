@@ -8,24 +8,22 @@ Tests cover:
 4. Parallel execution
 """
 
-import pytest
-import tempfile
-import json
-from pathlib import Path
-from unittest.mock import patch, MagicMock
-import subprocess
-
 # Add src to path for imports
 import sys
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from autorac import (
-    ValidatorPipeline,
-    ValidationResult,
     PipelineResult,
+    ValidationResult,
+    ValidatorPipeline,
     validate_file,
 )
-
 
 # Fixtures
 
@@ -93,8 +91,10 @@ class TestCIValidator:
         result = pipeline._run_ci(invalid_file)
 
         assert result.passed is False
-        assert any("parse" in issue.lower() or "error" in issue.lower()
-                   for issue in result.issues)
+        assert any(
+            "parse" in issue.lower() or "error" in issue.lower()
+            for issue in result.issues
+        )
 
     def test_ci_reports_test_failures(self, pipeline, temp_dirs):
         """CI should report test failures from inline tests."""
@@ -146,7 +146,9 @@ class TestReviewerAgents:
         assert isinstance(result, ValidationResult)
         assert result.validator_name == "formula-reviewer"
 
-    def test_parameter_reviewer_returns_validation_result(self, pipeline, temp_rac_file):
+    def test_parameter_reviewer_returns_validation_result(
+        self, pipeline, temp_rac_file
+    ):
         """Parameter reviewer should return ValidationResult."""
         result = pipeline._run_reviewer("parameter-reviewer", temp_rac_file)
 
@@ -257,7 +259,7 @@ class TestParallelExecution:
         )
 
         # Mock a failing validator
-        with patch.object(pipeline, '_run_ci', side_effect=Exception("Test error")):
+        with patch.object(pipeline, "_run_ci", side_effect=Exception("Test error")):
             result = pipeline.validate(temp_rac_file)
 
             assert "ci" in result.results
@@ -278,12 +280,12 @@ class TestPipelineIntegration:
         actual_scores = result.to_actual_scores()
 
         # Should have all expected fields
-        assert hasattr(actual_scores, 'rac_reviewer')
-        assert hasattr(actual_scores, 'formula_reviewer')
-        assert hasattr(actual_scores, 'parameter_reviewer')
-        assert hasattr(actual_scores, 'ci_pass')
-        assert hasattr(actual_scores, 'policyengine_match')
-        assert hasattr(actual_scores, 'taxsim_match')
+        assert hasattr(actual_scores, "rac_reviewer")
+        assert hasattr(actual_scores, "formula_reviewer")
+        assert hasattr(actual_scores, "parameter_reviewer")
+        assert hasattr(actual_scores, "ci_pass")
+        assert hasattr(actual_scores, "policyengine_match")
+        assert hasattr(actual_scores, "taxsim_match")
 
     def test_validate_file_convenience_function(self, temp_rac_file):
         """validate_file() should work as standalone function."""

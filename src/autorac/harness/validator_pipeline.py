@@ -14,19 +14,20 @@ Oracles run BEFORE LLM reviewers because:
 Uses Claude Code CLI (subprocess) for reviewer agents - cheaper than direct API.
 """
 
+import json
 import os
 import re
 import subprocess
 import sys
-import json
 import time
-import yaml
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Callable, Any
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Optional
 
-from .experiment_db import FinalScores, ExperimentDB
+import yaml
+
+from .experiment_db import ActualScores, ExperimentDB
 
 
 def run_claude_code(
@@ -137,6 +138,7 @@ Output your review as JSON:
 @dataclass
 class ValidationResult:
     """Result from a single validator."""
+
     validator_name: str
     passed: bool
     score: Optional[float] = None  # 0-10 for reviewers, 0-1 for oracles
@@ -149,21 +151,45 @@ class ValidationResult:
 @dataclass
 class PipelineResult:
     """Aggregated results from all validators."""
+
     results: dict[str, ValidationResult]
     total_duration_ms: int
     all_passed: bool
-    oracle_context: dict = field(default_factory=dict)  # Context passed to LLM reviewers
+    oracle_context: dict = field(
+        default_factory=dict
+    )  # Context passed to LLM reviewers
 
-    def to_actual_scores(self) -> FinalScores:
-        """Convert to FinalScores for experiment DB."""
-        return FinalScores(
-            rac_reviewer=self.results.get("rac_reviewer", ValidationResult("", False)).score or 0.0,
-            formula_reviewer=self.results.get("formula_reviewer", ValidationResult("", False)).score or 0.0,
-            parameter_reviewer=self.results.get("parameter_reviewer", ValidationResult("", False)).score or 0.0,
-            integration_reviewer=self.results.get("integration_reviewer", ValidationResult("", False)).score or 0.0,
-            policyengine_match=self.results.get("policyengine", ValidationResult("", False)).score,
+    def to_actual_scores(self) -> ActualScores:
+        """Convert to ActualScores for experiment DB."""
+        ci_result = self.results.get("ci", ValidationResult("", False))
+        return ActualScores(
+            rac_reviewer=self.results.get(
+                "rac_reviewer", ValidationResult("", False)
+            ).score
+            or 0.0,
+            formula_reviewer=self.results.get(
+                "formula_reviewer", ValidationResult("", False)
+            ).score
+            or 0.0,
+            parameter_reviewer=self.results.get(
+                "parameter_reviewer", ValidationResult("", False)
+            ).score
+            or 0.0,
+            integration_reviewer=self.results.get(
+                "integration_reviewer", ValidationResult("", False)
+            ).score
+            or 0.0,
+            ci_pass=ci_result.passed,
+            ci_error=ci_result.error,
+            policyengine_match=self.results.get(
+                "policyengine", ValidationResult("", False)
+            ).score,
             taxsim_match=self.results.get("taxsim", ValidationResult("", False)).score,
-            oracle_context=self.oracle_context,
+            reviewer_issues=[
+                issue
+                for name, result in self.results.items()
+                for issue in (result.issues or [])
+            ],
         )
 
     @property
@@ -191,7 +217,9 @@ class ValidatorPipeline:
         self.experiment_db = experiment_db
         self.session_id = session_id
 
-    def _log_event(self, event_type: str, content: str = "", metadata: Optional[dict] = None):
+    def _log_event(
+        self, event_type: str, content: str = "", metadata: Optional[dict] = None
+    ):
         """Log a validation event if session tracking is enabled."""
         if self.experiment_db and self.session_id:
             self.experiment_db.log_event(
@@ -202,9 +230,10 @@ class ValidatorPipeline:
             )
 
     def validate(self, rac_file: Path) -> PipelineResult:
-        """Run 3-tier validation on a RAC file.
+        """Run 4-tier validation on a RAC file.
 
         Tiers run in order:
+        0. Compile check - can the .rac file compile to engine IR?
         1. CI checks (instant) - parse, lint, inline tests, rac pytest validation
         2. Oracles (fast, ~10s) - PolicyEngine + TAXSIM comparison data
         3. LLM reviewers (uses oracle context) - diagnose issues
@@ -215,20 +244,53 @@ class ValidatorPipeline:
         start = time.time()
         results = {}
 
+        # Tier 0: Compile check (fast, catches structural errors early)
+        self._log_event(
+            "validation_compile_start",
+            f"Starting compilation check for {rac_file.name}",
+        )
+        compile_start = time.time()
+        results["compile"] = self._run_compile_check(rac_file)
+        self._log_event(
+            "validation_compile_end",
+            "Compilation check complete",
+            {
+                "passed": results["compile"].passed,
+                "issues": results["compile"].issues,
+                "duration_ms": int((time.time() - compile_start) * 1000),
+            },
+        )
+
         # Tier 1: CI checks (instant, blocks further validation if fails)
-        self._log_event("validation_ci_start", f"Starting CI validation for {rac_file.name}")
+        self._log_event(
+            "validation_ci_start", f"Starting CI validation for {rac_file.name}"
+        )
         ci_start = time.time()
-        results["ci"] = self._run_ci(rac_file)
-        self._log_event("validation_ci_end", f"CI validation complete", {
-            "passed": results["ci"].passed,
-            "issues": results["ci"].issues,
-            "duration_ms": int((time.time() - ci_start) * 1000),
-        })
+        try:
+            results["ci"] = self._run_ci(rac_file)
+        except Exception as e:
+            results["ci"] = ValidationResult(
+                validator_name="ci",
+                passed=False,
+                error=str(e),
+                issues=[str(e)],
+            )
+        self._log_event(
+            "validation_ci_end",
+            "CI validation complete",
+            {
+                "passed": results["ci"].passed,
+                "issues": results["ci"].issues,
+                "duration_ms": int((time.time() - ci_start) * 1000),
+            },
+        )
 
         # Tier 2: Oracles (parallel, fast, generates comparison context)
         oracle_context = {}
         if self.enable_oracles:
-            self._log_event("validation_oracle_start", "Starting oracle validation (PE + TAXSIM)")
+            self._log_event(
+                "validation_oracle_start", "Starting oracle validation (PE + TAXSIM)"
+            )
             oracle_start = time.time()
 
             oracle_validators = {
@@ -238,8 +300,7 @@ class ValidatorPipeline:
 
             with ThreadPoolExecutor(max_workers=2) as executor:
                 futures = {
-                    executor.submit(fn): name
-                    for name, fn in oracle_validators.items()
+                    executor.submit(fn): name for name, fn in oracle_validators.items()
                 }
 
                 for future in as_completed(futures):
@@ -266,29 +327,44 @@ class ValidatorPipeline:
                             "error": str(e),
                         }
 
-            self._log_event("validation_oracle_end", "Oracle validation complete", {
-                "oracle_context": oracle_context,
-                "duration_ms": int((time.time() - oracle_start) * 1000),
-            })
+            self._log_event(
+                "validation_oracle_end",
+                "Oracle validation complete",
+                {
+                    "oracle_context": oracle_context,
+                    "duration_ms": int((time.time() - oracle_start) * 1000),
+                },
+            )
 
         # Tier 3: LLM reviewers (parallel, use oracle context)
-        self._log_event("validation_llm_start", "Starting LLM reviewers with oracle context", {
-            "oracle_context_summary": {k: v.get("score") for k, v in oracle_context.items()},
-        })
+        self._log_event(
+            "validation_llm_start",
+            "Starting LLM reviewers with oracle context",
+            {
+                "oracle_context_summary": {
+                    k: v.get("score") for k, v in oracle_context.items()
+                },
+            },
+        )
         llm_start = time.time()
 
         llm_validators = {
-            "rac_reviewer": lambda: self._run_reviewer("rac-reviewer", rac_file, oracle_context),
-            "formula_reviewer": lambda: self._run_reviewer("Formula Reviewer", rac_file, oracle_context),
-            "parameter_reviewer": lambda: self._run_reviewer("Parameter Reviewer", rac_file, oracle_context),
-            "integration_reviewer": lambda: self._run_reviewer("Integration Reviewer", rac_file, oracle_context),
+            "rac_reviewer": lambda: self._run_reviewer(
+                "rac-reviewer", rac_file, oracle_context
+            ),
+            "formula_reviewer": lambda: self._run_reviewer(
+                "Formula Reviewer", rac_file, oracle_context
+            ),
+            "parameter_reviewer": lambda: self._run_reviewer(
+                "Parameter Reviewer", rac_file, oracle_context
+            ),
+            "integration_reviewer": lambda: self._run_reviewer(
+                "Integration Reviewer", rac_file, oracle_context
+            ),
         }
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = {
-                executor.submit(fn): name
-                for name, fn in llm_validators.items()
-            }
+            futures = {executor.submit(fn): name for name, fn in llm_validators.items()}
 
             for future in as_completed(futures):
                 name = futures[future]
@@ -301,10 +377,16 @@ class ValidatorPipeline:
                         error=str(e),
                     )
 
-        self._log_event("validation_llm_end", "LLM reviewers complete", {
-            "scores": {k: results[k].score for k in llm_validators.keys() if k in results},
-            "duration_ms": int((time.time() - llm_start) * 1000),
-        })
+        self._log_event(
+            "validation_llm_end",
+            "LLM reviewers complete",
+            {
+                "scores": {
+                    k: results[k].score for k in llm_validators.keys() if k in results
+                },
+                "duration_ms": int((time.time() - llm_start) * 1000),
+            },
+        )
 
         total_duration = int((time.time() - start) * 1000)
         all_passed = all(r.passed for r in results.values())
@@ -316,6 +398,60 @@ class ValidatorPipeline:
             oracle_context=oracle_context,
         )
 
+    def _run_compile_check(self, rac_file: Path) -> ValidationResult:
+        """Tier 0: Compile check — can the .rac file compile to engine IR?
+
+        Parses the v2 .rac file, converts it to engine format, and compiles
+        to IR. Catches type errors, missing dependencies, and circular
+        references earlier than CI.
+        """
+        start = time.time()
+        issues = []
+
+        try:
+            from datetime import date
+
+            from rac.dsl_parser import parse_dsl
+            from rac.engine import compile as engine_compile
+            from rac.engine.converter import convert_v2_to_engine_module
+
+            # Step 1: Parse v2 format
+            rac_content = rac_file.read_text()
+            v2_module = parse_dsl(rac_content)
+
+            # Step 2: Convert to engine module
+            # Derive module_path from file path (e.g., statute/26/32 -> 26/32)
+            module_path = rac_file.stem
+            engine_module = convert_v2_to_engine_module(
+                v2_module, module_path=module_path
+            )
+
+            # Step 3: Compile to IR
+            ir = engine_compile([engine_module], as_of=date.today())
+
+            duration = int((time.time() - start) * 1000)
+            var_count = len(ir.variables)
+
+            return ValidationResult(
+                validator_name="compile",
+                passed=True,
+                issues=[],
+                duration_ms=duration,
+                raw_output=f"Successfully compiled {var_count} variables to engine IR",
+            )
+
+        except Exception as e:
+            duration = int((time.time() - start) * 1000)
+            issues.append(f"Compilation failed: {e}")
+
+            return ValidationResult(
+                validator_name="compile",
+                passed=False,
+                issues=issues,
+                duration_ms=duration,
+                error=str(e),
+            )
+
     def _run_ci(self, rac_file: Path) -> ValidationResult:
         """Run CI checks: parse, lint, inline tests."""
         start = time.time()
@@ -324,13 +460,17 @@ class ValidatorPipeline:
         # 1. Parse check
         try:
             result = subprocess.run(
-                [sys.executable, "-c", f"""
+                [
+                    sys.executable,
+                    "-c",
+                    f"""
 import sys
 sys.path.insert(0, '{self.rac_path}/src')
 from rac.dsl_parser import parse_file
 parse_file('{rac_file}')
 print('PARSE_OK')
-"""],
+""",
+                ],
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -345,19 +485,25 @@ print('PARSE_OK')
         # 2. Run inline tests
         try:
             result = subprocess.run(
-                [sys.executable, "-c", f"""
+                [
+                    sys.executable,
+                    "-c",
+                    f"""
 import sys
 sys.path.insert(0, '{self.rac_path}/src')
 from rac.test_runner import run_tests_for_file
 report = run_tests_for_file('{rac_file}')
 print(f'TESTS:{{report.passed}}/{{report.total}}')
-"""],
+""",
+                ],
                 capture_output=True,
                 text=True,
                 timeout=60,
             )
             if "TESTS:" in result.stdout:
-                test_line = [l for l in result.stdout.split("\n") if "TESTS:" in l][0]
+                test_line = [
+                    line for line in result.stdout.split("\n") if "TESTS:" in line
+                ][0]
                 passed, total = test_line.split(":")[1].split("/")
                 if int(passed) < int(total):
                     issues.append(f"Tests failed: {passed}/{total}")
@@ -372,8 +518,9 @@ print(f'TESTS:{{report.passed}}/{{report.total}}')
         try:
             # Set STATUTE_DIR to a temp dir containing just this file
             # so pytest parametrization picks up only this file
-            import tempfile
             import shutil
+            import tempfile
+
             with tempfile.TemporaryDirectory() as tmpdir:
                 # Copy the file to temp dir
                 tmp_file = Path(tmpdir) / rac_file.name
@@ -381,9 +528,12 @@ print(f'TESTS:{{report.passed}}/{{report.total}}')
 
                 result = subprocess.run(
                     [
-                        sys.executable, "-m", "pytest",
+                        sys.executable,
+                        "-m",
+                        "pytest",
                         f"{self.rac_path}/tests/rac_validation/",
-                        "-v", "--tb=short",
+                        "-v",
+                        "--tb=short",
                         f"-k={rac_file.stem}",  # Filter to just this file
                     ],
                     capture_output=True,
@@ -472,7 +622,7 @@ print(f'TESTS:{{report.passed}}/{{report.total}}')
                 oracle_section += f"\n### {oracle_name.upper()}\n"
                 oracle_section += f"- Score: {ctx.get('score', 'N/A')}\n"
                 oracle_section += f"- Passed: {ctx.get('passed', 'N/A')}\n"
-                if ctx.get('issues'):
+                if ctx.get("issues"):
                     oracle_section += f"- Issues: {', '.join(ctx['issues'][:3])}\n"
 
         prompt = f"""Review this RAC file for: {review_focus}
@@ -480,7 +630,7 @@ print(f'TESTS:{{report.passed}}/{{report.total}}')
 File: {rac_file}
 
 Content:
-{rac_content[:3000]}{'...' if len(rac_content) > 3000 else ''}
+{rac_content[:3000]}{"..." if len(rac_content) > 3000 else ""}
 {oracle_section}
 If oracle validators show discrepancies, investigate WHY the encoding differs from consensus.
 
@@ -502,7 +652,7 @@ Output ONLY valid JSON:
             )
 
             # Parse JSON from output
-            json_match = re.search(r'\{[^{}]*\}', output, re.DOTALL)
+            json_match = re.search(r"\{[^{}]*\}", output, re.DOTALL)
             if json_match:
                 data = json.loads(json_match.group())
             else:
@@ -528,7 +678,7 @@ Output ONLY valid JSON:
             return ValidationResult(
                 validator_name=reviewer_type,
                 passed=True,  # Fail open when CLI errors
-                score=8.0,    # Placeholder
+                score=8.0,  # Placeholder
                 issues=[f"Reviewer error: {e}"],
                 duration_ms=duration,
                 error=str(e),
@@ -575,6 +725,7 @@ Output ONLY valid JSON:
             # Import PolicyEngine if available
             try:
                 from policyengine_us import Simulation
+
                 pe_available = True
             except ImportError:
                 pe_available = False
@@ -584,7 +735,7 @@ Output ONLY valid JSON:
                 return ValidationResult(
                     validator_name="policyengine",
                     passed=True,  # Pass when PE not available
-                    score=0.95,   # Placeholder
+                    score=0.95,  # Placeholder
                     issues=["PolicyEngine not installed - using placeholder"],
                     duration_ms=duration,
                 )
@@ -611,7 +762,9 @@ Output ONLY valid JSON:
                                 matches += 1
                     total += 1
                 except Exception as test_error:
-                    issues.append(f"Test '{test.get('name', 'unknown')}' failed: {test_error}")
+                    issues.append(
+                        f"Test '{test.get('name', 'unknown')}' failed: {test_error}"
+                    )
                     total += 1
 
             score = matches / total if total > 0 else 0.0
@@ -631,7 +784,7 @@ Output ONLY valid JSON:
             return ValidationResult(
                 validator_name="policyengine",
                 passed=True,  # Fail open
-                score=0.95,   # Placeholder
+                score=0.95,  # Placeholder
                 issues=[f"PolicyEngine validation error: {e}"],
                 duration_ms=duration,
                 error=str(e),
@@ -704,7 +857,9 @@ Output ONLY valid JSON:
                         taxsim_result = self._parse_taxsim_output(response.text)
                         expected = test.get("expect")
 
-                        if expected is not None and self._values_match(taxsim_result, expected):
+                        if expected is not None and self._values_match(
+                            taxsim_result, expected
+                        ):
                             matches += 1
 
                     total += 1
@@ -713,7 +868,9 @@ Output ONLY valid JSON:
                     issues.append(f"TAXSIM request failed: {req_error}")
                     total += 1
                 except Exception as test_error:
-                    issues.append(f"Test '{test.get('name', 'unknown')}' failed: {test_error}")
+                    issues.append(
+                        f"Test '{test.get('name', 'unknown')}' failed: {test_error}"
+                    )
                     total += 1
 
             score = matches / total if total > 0 else 0.0
@@ -743,7 +900,7 @@ Output ONLY valid JSON:
             return ValidationResult(
                 validator_name="taxsim",
                 passed=True,  # Fail open
-                score=0.92,   # Placeholder
+                score=0.92,  # Placeholder
                 issues=[f"TAXSIM validation error: {e}"],
                 duration_ms=duration,
                 error=str(e),
@@ -768,9 +925,7 @@ Output ONLY valid JSON:
         try:
             # Find tests section in RAC content
             tests_match = re.search(
-                r'tests:\s*\n((?:\s+-.*\n?)+)',
-                rac_content,
-                re.MULTILINE
+                r"tests:\s*\n((?:\s+-.*\n?)+)", rac_content, re.MULTILINE
             )
 
             if tests_match:
@@ -784,7 +939,7 @@ Output ONLY valid JSON:
             test_blocks = re.findall(
                 r'-\s*name:\s*["\']([^"\']+)["\'].*?expect:\s*(\S+)',
                 rac_content,
-                re.DOTALL
+                re.DOTALL,
             )
             for name, expect in test_blocks:
                 tests.append({"name": name, "expect": expect, "inputs": {}})
@@ -795,19 +950,9 @@ Output ONLY valid JSON:
         """Build PolicyEngine situation dictionary from test inputs."""
         # Default situation structure
         situation = {
-            "people": {
-                "person": {}
-            },
-            "tax_units": {
-                "tax_unit": {
-                    "members": ["person"]
-                }
-            },
-            "households": {
-                "household": {
-                    "members": ["person"]
-                }
-            }
+            "people": {"person": {}},
+            "tax_units": {"tax_unit": {"members": ["person"]}},
+            "households": {"household": {"members": ["person"]}},
         }
 
         # Map inputs to PE variables
@@ -833,27 +978,14 @@ Output ONLY valid JSON:
         # TAXSIM input mapping
         # See: https://taxsim.nber.org/taxsim35/
 
-        taxsim_fields = {
-            "year": "1",      # Tax year
-            "state": "2",     # State code (0 = no state)
-            "mstat": "3",     # Marital status (1=single, 2=joint)
-            "page": "4",      # Age of primary taxpayer
-            "sage": "5",      # Age of spouse
-            "depx": "6",      # Number of dependents
-            "pwages": "7",    # Primary wages
-            "swages": "8",    # Spouse wages
-            "psemp": "9",     # Primary self-employment
-            "ssemp": "10",    # Spouse self-employment
-        }
-
         # Build input line
         values = ["0"] * 27  # TAXSIM expects 27 fields
 
         # Set defaults
-        values[0] = "1"      # taxsimid
-        values[1] = "2024"   # year
-        values[2] = "0"      # state
-        values[3] = "1"      # marital status (single)
+        values[0] = "1"  # taxsimid
+        values[1] = "2024"  # year
+        values[2] = "0"  # state
+        values[3] = "1"  # marital status (single)
 
         # Map inputs
         mapped = False
@@ -890,7 +1022,9 @@ Output ONLY valid JSON:
             pass
         return None
 
-    def _values_match(self, actual: Any, expected: Any, tolerance: float = 0.01) -> bool:
+    def _values_match(
+        self, actual: Any, expected: Any, tolerance: float = 0.01
+    ) -> bool:
         """Check if two values match within tolerance."""
         try:
             actual_float = float(actual) if actual is not None else 0.0

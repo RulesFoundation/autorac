@@ -4,19 +4,28 @@ Tests for encoder backend abstraction.
 TDD: Write tests first, then implement the backends.
 """
 
-import pytest
+import os
 from pathlib import Path
-from unittest.mock import Mock, patch, AsyncMock
-from dataclasses import dataclass
+from unittest.mock import Mock, patch
+
+import pytest
 
 # Import what we're going to build
 from autorac.harness.backends import (
-    EncoderBackend,
-    ClaudeCodeBackend,
     AgentSDKBackend,
+    ClaudeCodeBackend,
+    EncoderBackend,
     EncoderRequest,
     EncoderResponse,
 )
+
+
+@pytest.fixture(autouse=True)
+def mock_sdk_env(tmp_path):
+    """Provide API key and valid plugin path for AgentSDKBackend tests."""
+    with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
+        with patch.object(AgentSDKBackend, "DEFAULT_PLUGIN_PATH", tmp_path):
+            yield
 
 
 class TestEncoderBackendInterface:
@@ -70,7 +79,7 @@ class TestClaudeCodeBackend:
                 returncode=0,
             )
 
-            resp = backend.encode(
+            backend.encode(
                 EncoderRequest(
                     citation="26 USC 1",
                     statute_text="Test statute",
@@ -85,9 +94,7 @@ class TestClaudeCodeBackend:
 
     def test_encode_uses_plugin_agent(self):
         """encode() uses the cosilico:RAC Encoder agent."""
-        backend = ClaudeCodeBackend(
-            plugin_dir=Path("/path/to/plugins")
-        )
+        backend = ClaudeCodeBackend(plugin_dir=Path("/path/to/plugins"))
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = Mock(
@@ -141,6 +148,7 @@ class TestAgentSDKBackend:
         with patch.dict("os.environ", {}, clear=True):
             # Remove API key from env
             import os
+
             if "ANTHROPIC_API_KEY" in os.environ:
                 del os.environ["ANTHROPIC_API_KEY"]
 
@@ -155,11 +163,17 @@ class TestAgentSDKBackend:
         # Patch at the backend module level where the import happens
         with patch.dict("sys.modules", {"claude_agent_sdk": Mock()}):
             import sys
+
             mock_sdk = sys.modules["claude_agent_sdk"]
 
-            # Mock async generator
+            # Mock async generator — use spec to limit attributes
+            # so hasattr(message, "usage") returns False
+            class MockMessage:
+                def __init__(self, result):
+                    self.result = result
+
             async def mock_gen():
-                yield Mock(result="variable test:\n  entity: TaxUnit")
+                yield MockMessage(result="variable test:\n  entity: TaxUnit")
 
             mock_sdk.query = Mock(return_value=mock_gen())
             mock_sdk.ClaudeAgentOptions = Mock()
@@ -216,6 +230,7 @@ class TestAgentSDKBackend:
             concurrent_count += 1
             max_seen = max(max_seen, concurrent_count)
             import asyncio
+
             await asyncio.sleep(0.01)  # Simulate work
             concurrent_count -= 1
             return EncoderResponse(

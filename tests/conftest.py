@@ -2,26 +2,25 @@
 Pytest fixtures for autorac tests.
 """
 
-import pytest
-import tempfile
 import sys
+import tempfile
 from pathlib import Path
-from datetime import datetime
-from unittest.mock import Mock, MagicMock
-from typing import Optional
+from unittest.mock import Mock
+
+import pytest
 
 # Add src to path for imports - make src accessible as 'autorac'
 src_path = str(Path(__file__).parent.parent / "src")
 sys.path.insert(0, src_path)
 
 from autorac import (
-    ExperimentDB,
+    ActualScores,
     EncodingRun,
-    PredictedScores,
-    ValidatorPipeline,
-    ValidationResult,
-    PipelineResult,
+    ExperimentDB,
     FinalScores,
+    PipelineResult,
+    PredictedScores,
+    ValidationResult,
 )
 
 
@@ -42,13 +41,28 @@ def experiment_db(temp_db_path):
 def sample_predicted_scores():
     """Sample predicted scores for testing."""
     return PredictedScores(
-        rac=7.5,
-        formula=7.0,
-        param=8.0,
-        integration=7.5,
-        iterations=1,
-        time_minutes=5.0,
+        rac_reviewer=7.5,
+        formula_reviewer=7.0,
+        parameter_reviewer=8.0,
+        integration_reviewer=7.5,
+        ci_pass=True,
+        policyengine_match=0.90,
+        taxsim_match=0.85,
         confidence=0.6,
+    )
+
+
+@pytest.fixture
+def sample_actual_scores():
+    """Sample actual scores for testing."""
+    return ActualScores(
+        rac_reviewer=8.0,
+        formula_reviewer=6.5,
+        parameter_reviewer=7.5,
+        integration_reviewer=8.0,
+        ci_pass=True,
+        policyengine_match=0.88,
+        taxsim_match=0.82,
     )
 
 
@@ -66,7 +80,7 @@ def sample_final_scores():
 
 
 @pytest.fixture
-def sample_encoding_run(sample_predicted_scores, sample_final_scores):
+def sample_encoding_run(sample_predicted_scores, sample_actual_scores):
     """Create a sample encoding run."""
     run = EncodingRun(
         file_path="/path/to/statute.rac",
@@ -76,8 +90,8 @@ def sample_encoding_run(sample_predicted_scores, sample_final_scores):
         rac_content="# EITC variable\nvariable EarnedIncome:\n  dtype: Money\n",
         statute_text="Sample statute text for EITC",
     )
-    run.predicted_scores = sample_predicted_scores
-    run.final_scores = sample_final_scores
+    run.predicted = sample_predicted_scores
+    run.actual = sample_actual_scores
     run.total_duration_ms = 4500
     return run
 
@@ -211,12 +225,11 @@ def mock_agent():
     """Create a mock agent for testing encoder harness."""
     mock = Mock()
     mock.predict.return_value = PredictedScores(
-        rac=8.0,
-        formula=7.5,
-        param=8.5,
-        integration=8.0,
-        iterations=1,
-        time_minutes=5.0,
+        rac_reviewer=8.0,
+        formula_reviewer=7.5,
+        parameter_reviewer=8.5,
+        integration_reviewer=8.0,
+        ci_pass=True,
         confidence=0.7,
     )
     mock.encode.return_value = "# Encoded content\n"
