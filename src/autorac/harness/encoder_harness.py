@@ -11,25 +11,22 @@ The harness orchestrates:
 Uses Claude Code CLI (subprocess) for agent calls - cheaper than direct API.
 """
 
-import subprocess
 import json
-import time
-import os
 import re
+import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Callable
-from datetime import datetime
+from typing import Optional
 
 from .experiment_db import (
-    ExperimentDB,
-    EncodingRun,
-    PredictedScores,
-    FinalScores,
     AgentSuggestion,
+    EncodingRun,
+    ExperimentDB,
+    PredictedScores,
     create_run,
 )
-from .validator_pipeline import ValidatorPipeline, PipelineResult
+from .validator_pipeline import PipelineResult, ValidatorPipeline
 
 
 def run_claude_code(
@@ -80,7 +77,10 @@ def run_claude_code(
     except subprocess.TimeoutExpired:
         return f"Timeout after {timeout}s", 1
     except FileNotFoundError:
-        return "Claude CLI not found - install with: npm install -g @anthropic-ai/claude-code", 1
+        return (
+            "Claude CLI not found - install with: npm install -g @anthropic-ai/claude-code",
+            1,
+        )
     except Exception as e:
         return f"Error running Claude CLI: {e}", 1
 
@@ -88,6 +88,7 @@ def run_claude_code(
 @dataclass
 class EncoderConfig:
     """Configuration for the encoder harness."""
+
     rac_us_path: Path
     rac_path: Path
     db_path: Path = Path("experiments.db")
@@ -161,9 +162,7 @@ class EncoderHarness:
         validation_duration = int((time.time() - validation_start) * 1000)
 
         # Step 4: Get suggestions
-        suggestions = self._get_suggestions(
-            citation, rac_content, validation_result
-        )
+        suggestions = self._get_suggestions(citation, rac_content, validation_result)
 
         # Step 5: Log everything
         run = create_run(
@@ -223,9 +222,7 @@ class EncoderHarness:
 
         return iterations
 
-    def _get_predictions(
-        self, citation: str, statute_text: str
-    ) -> PredictedScores:
+    def _get_predictions(self, citation: str, statute_text: str) -> PredictedScores:
         """
         Ask Claude Code to predict scores before encoding.
 
@@ -236,7 +233,7 @@ class EncoderHarness:
 Citation: {citation}
 
 Statute Text:
-{statute_text[:2000]}{'...' if len(statute_text) > 2000 else ''}
+{statute_text[:2000]}{"..." if len(statute_text) > 2000 else ""}
 
 Score each dimension from 1-10. Output ONLY valid JSON:
 {{
@@ -261,7 +258,7 @@ Score each dimension from 1-10. Output ONLY valid JSON:
             )
 
             # Parse JSON from output
-            json_match = re.search(r'\{[^{}]*\}', output, re.DOTALL)
+            json_match = re.search(r"\{[^{}]*\}", output, re.DOTALL)
             if json_match:
                 data = json.loads(json_match.group())
             else:
@@ -273,8 +270,12 @@ Score each dimension from 1-10. Output ONLY valid JSON:
                 parameter_reviewer=float(data.get("parameter_reviewer", 7.0)),
                 integration_reviewer=float(data.get("integration_reviewer", 7.0)),
                 ci_pass=bool(data.get("ci_pass", True)),
-                policyengine_match=float(data.get("policyengine_match", 0.85)) if data.get("policyengine_match") is not None else None,
-                taxsim_match=float(data.get("taxsim_match", 0.85)) if data.get("taxsim_match") is not None else None,
+                policyengine_match=float(data.get("policyengine_match", 0.85))
+                if data.get("policyengine_match") is not None
+                else None,
+                taxsim_match=float(data.get("taxsim_match", 0.85))
+                if data.get("taxsim_match") is not None
+                else None,
                 confidence=float(data.get("confidence", 0.5)),
             )
 
@@ -289,17 +290,21 @@ Score each dimension from 1-10. Output ONLY valid JSON:
                 confidence=0.3,
             )
 
-    def _encode(
-        self, citation: str, statute_text: str, output_path: Path
-    ) -> str:
+    def _encode(self, citation: str, statute_text: str, output_path: Path) -> str:
         """
         Invoke Claude Code to encode the statute to RAC format.
 
         Uses the cosilico:RAC Encoder agent from the plugin.
         """
         # Derive variable name from citation for fallback
-        var_name = citation.replace("USC", "").replace("(", "_").replace(")", "").replace(" ", "_").lower()
-        var_name = re.sub(r'_+', '_', var_name).strip('_')
+        var_name = (
+            citation.replace("USC", "")
+            .replace("(", "_")
+            .replace(")", "")
+            .replace(" ", "_")
+            .lower()
+        )
+        var_name = re.sub(r"_+", "_", var_name).strip("_")
 
         # Use the cosilico plugin's encoder agent
         prompt = f"""Encode {citation} into RAC format.
@@ -330,8 +335,8 @@ Use the Write tool to create the .rac file at the specified path.
                 rac_content = output
 
             # Clean up any markdown code blocks if present
-            rac_content = re.sub(r'^```\w*\n', '', rac_content)
-            rac_content = re.sub(r'\n```$', '', rac_content)
+            rac_content = re.sub(r"^```\w*\n", "", rac_content)
+            rac_content = re.sub(r"\n```$", "", rac_content)
             rac_content = rac_content.strip()
 
             # Ensure output directory exists and write
@@ -396,7 +401,9 @@ variable {var_name}:
             score_str = f" (score: {result.score})" if result.score is not None else ""
             error_str = f" - {result.error}" if result.error else ""
             issues_str = f" Issues: {result.issues}" if result.issues else ""
-            validation_summary.append(f"  {name}: {status}{score_str}{error_str}{issues_str}")
+            validation_summary.append(
+                f"  {name}: {status}{score_str}{error_str}{issues_str}"
+            )
 
         prompt = f"""Analyze encoding attempt for {citation} and suggest framework improvements.
 
@@ -423,7 +430,7 @@ Output ONLY valid JSON array:
             )
 
             # Parse JSON array from output
-            json_match = re.search(r'\[[\s\S]*\]', output)
+            json_match = re.search(r"\[[\s\S]*\]", output)
             if json_match:
                 data = json.loads(json_match.group())
             else:
@@ -431,12 +438,14 @@ Output ONLY valid JSON array:
 
             suggestions = []
             for item in data:
-                suggestions.append(AgentSuggestion(
-                    category=item.get("category", "documentation"),
-                    description=item.get("description", ""),
-                    predicted_impact=item.get("predicted_impact", "medium"),
-                    specific_change=item.get("specific_change"),
-                ))
+                suggestions.append(
+                    AgentSuggestion(
+                        category=item.get("category", "documentation"),
+                        description=item.get("description", ""),
+                        predicted_impact=item.get("predicted_impact", "medium"),
+                        specific_change=item.get("specific_change"),
+                    )
+                )
 
             return suggestions
 
@@ -446,12 +455,14 @@ Output ONLY valid JSON array:
             # Return basic suggestions based on failures
             suggestions = []
             for name, result in failures:
-                suggestions.append(AgentSuggestion(
-                    category="validator",
-                    description=f"{name} failed: {result.error or 'unknown'}",
-                    predicted_impact="medium",
-                    specific_change=None,
-                ))
+                suggestions.append(
+                    AgentSuggestion(
+                        category="validator",
+                        description=f"{name} failed: {result.error or 'unknown'}",
+                        predicted_impact="medium",
+                        specific_change=None,
+                    )
+                )
 
             return suggestions
 

@@ -2,7 +2,6 @@
 Tests for the experiment database.
 """
 
-import pytest
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -11,12 +10,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from autorac import (
-    ExperimentDB,
-    EncodingRun,
-    PredictedScores,
-    FinalScores,
-    ActualScores,
     AgentSuggestion,
+    ExperimentDB,
     create_run,
 )
 
@@ -80,7 +75,7 @@ class TestExperimentDBInit:
 
     def test_creates_database_file(self, temp_db_path):
         """Test that database file is created."""
-        db = ExperimentDB(temp_db_path)
+        ExperimentDB(temp_db_path)
         assert temp_db_path.exists()
 
     def test_creates_tables(self, experiment_db, temp_db_path):
@@ -143,9 +138,7 @@ class TestLogAndRetrieveRuns:
         assert retrieved.predicted.ci_pass == sample_predicted_scores.ci_pass
         assert retrieved.predicted.confidence == sample_predicted_scores.confidence
 
-    def test_log_run_with_actual_scores(
-        self, experiment_db, sample_actual_scores
-    ):
+    def test_log_run_with_actual_scores(self, experiment_db, sample_actual_scores):
         """Test logging a run with actual scores."""
         run = create_run(
             file_path="/path/to/file.rac",
@@ -362,18 +355,14 @@ class TestSessionLogging:
     def test_start_session_with_custom_id(self, experiment_db):
         """Test that start_session accepts custom session_id."""
         session = experiment_db.start_session(
-            model="test-model",
-            cwd="/tmp",
-            session_id="custom-123"
+            model="test-model", cwd="/tmp", session_id="custom-123"
         )
         assert session.id == "custom-123"
 
     def test_get_session_retrieves_by_id(self, experiment_db):
         """Test that get_session retrieves session by ID."""
         experiment_db.start_session(
-            model="opus-4.5",
-            cwd="/workspace",
-            session_id="retrieve-test"
+            model="opus-4.5", cwd="/workspace", session_id="retrieve-test"
         )
 
         retrieved = experiment_db.get_session("retrieve-test")
@@ -395,7 +384,7 @@ class TestSessionLogging:
             session_id="event-test",
             event_type="agent_start",
             content="Test prompt",
-            metadata={"agent_type": "encoder"}
+            metadata={"agent_type": "encoder"},
         )
 
         assert event.sequence == 1
@@ -406,14 +395,10 @@ class TestSessionLogging:
         experiment_db.start_session(session_id="events-test")
 
         experiment_db.log_event(
-            session_id="events-test",
-            event_type="agent_start",
-            content="Starting"
+            session_id="events-test", event_type="agent_start", content="Starting"
         )
         experiment_db.log_event(
-            session_id="events-test",
-            event_type="agent_end",
-            content="Done"
+            session_id="events-test", event_type="agent_end", content="Done"
         )
 
         events = experiment_db.get_session_events("events-test")
@@ -426,10 +411,7 @@ class TestSessionLogging:
         experiment_db.start_session(session_id="count-test")
 
         for i in range(3):
-            experiment_db.log_event(
-                session_id="count-test",
-                event_type=f"event_{i}"
-            )
+            experiment_db.log_event(session_id="count-test", event_type=f"event_{i}")
 
         session = experiment_db.get_session("count-test")
         assert session.event_count == 3

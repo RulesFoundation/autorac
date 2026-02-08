@@ -2,27 +2,28 @@
 Tests for calibration metrics.
 """
 
-import pytest
 import sys
-import tempfile
 from datetime import datetime
 from pathlib import Path
+
+import pytest
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from autorac import (
-    ExperimentDB,
-    PredictedScores,
     ActualScores,
-    create_run,
     CalibrationMetrics,
     CalibrationSnapshot,
+    ExperimentDB,
+    PredictedScores,
     compute_calibration,
+    create_run,
+    get_calibration_trend,
     print_calibration_report,
     save_calibration_snapshot,
-    get_calibration_trend,
 )
+
 # Private function import for testing internals
 from autorac.harness.metrics import _compute_metric
 
@@ -269,7 +270,7 @@ class TestCalibrationTrend:
         """Test saving and retrieving calibration trends."""
         # First need to initialize the calibration_snapshots table
         # by creating the experiment db
-        db = ExperimentDB(temp_db_path)
+        ExperimentDB(temp_db_path)
 
         # Create a snapshot and save it
         snapshot = CalibrationSnapshot(
@@ -301,7 +302,7 @@ class TestCalibrationTrend:
         """Test that trend limit works correctly."""
         import time
 
-        db = ExperimentDB(temp_db_path)
+        ExperimentDB(temp_db_path)
 
         # Create multiple snapshots
         for i in range(5):
@@ -328,7 +329,9 @@ class TestCalibrationTrend:
         trend = get_calibration_trend(temp_db_path, "rac_reviewer", limit=3)
         assert len(trend) == 3
 
-    def test_get_calibration_trend_nonexistent_metric(self, temp_db_path, experiment_db):
+    def test_get_calibration_trend_nonexistent_metric(
+        self, temp_db_path, experiment_db
+    ):
         """Test getting trend for non-existent metric."""
         trend = get_calibration_trend(temp_db_path, "nonexistent_metric")
         assert trend == []

@@ -5,19 +5,22 @@ the compile/benchmark CLI commands, and the encoder harness
 compilation feedback.
 """
 
+import sys
 import tempfile
-import time
-from datetime import date
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from autorac.harness.validator_pipeline import ValidatorPipeline, ValidationResult
+import importlib.util
 
+HAS_RAC_ENGINE = importlib.util.find_spec("rac.engine") is not None
+
+pytestmark = pytest.mark.skipif(not HAS_RAC_ENGINE, reason="rac.engine not installed")
+
+from autorac.harness.validator_pipeline import ValidationResult, ValidatorPipeline
 
 # =========================================================================
 # Tier 0: Compilation Check in Validator Pipeline
@@ -136,8 +139,8 @@ parameter rate:
             execution_order.append("ci")
             return original_ci(f)
 
-        with patch.object(pipeline, '_run_compile_check', side_effect=tracked_compile):
-            with patch.object(pipeline, '_run_ci', side_effect=tracked_ci):
+        with patch.object(pipeline, "_run_compile_check", side_effect=tracked_compile):
+            with patch.object(pipeline, "_run_ci", side_effect=tracked_ci):
                 pipeline.validate(rac_file)
 
         assert execution_order.index("compile") < execution_order.index("ci")
@@ -169,7 +172,10 @@ variable tax:
         assert result.passed is True
         # The raw_output should mention successful compilation
         if result.raw_output:
-            assert "compiled" in result.raw_output.lower() or "success" in result.raw_output.lower()
+            assert (
+                "compiled" in result.raw_output.lower()
+                or "success" in result.raw_output.lower()
+            )
 
 
 # =========================================================================
@@ -182,16 +188,16 @@ class TestCompileCLI:
 
     def test_compile_command_exists(self):
         """The compile subcommand should be registered."""
-        from autorac.cli import main
         import argparse
 
         # Parse with compile command — should not raise
         # We test by importing and checking the parser setup
         parser = argparse.ArgumentParser()
-        subparsers = parser.add_subparsers(dest="command")
+        parser.add_subparsers(dest="command")
 
         # Re-import to check compile is registered
         from autorac.cli import main as cli_main
+
         # The main function builds its own parser, so we just verify it
         # doesn't crash when called with --help (indirectly)
         assert callable(cli_main)
@@ -218,6 +224,7 @@ variable tax:
 """)
 
         from autorac.cli import cmd_compile
+
         # Create a mock args object
         args = MagicMock()
         args.file = rac_file
@@ -226,7 +233,7 @@ variable tax:
         args.execute = False
 
         # Should not raise
-        with patch('sys.exit') as mock_exit:
+        with patch("sys.exit") as mock_exit:
             cmd_compile(args)
             # Success exits with 0 or doesn't exit
             if mock_exit.called:
@@ -252,7 +259,7 @@ variable broken:
         args.json = False
         args.execute = False
 
-        with patch('sys.exit') as mock_exit:
+        with patch("sys.exit") as mock_exit:
             cmd_compile(args)
             if mock_exit.called:
                 assert mock_exit.call_args[0][0] == 1
@@ -286,7 +293,7 @@ variable tax:
         args.json = False
         args.execute = True
 
-        with patch('sys.exit') as mock_exit:
+        with patch("sys.exit") as mock_exit:
             cmd_compile(args)
             if mock_exit.called:
                 assert mock_exit.call_args[0][0] == 0
@@ -300,9 +307,10 @@ parameter rate:
     2024-01-01: 0.10
 """)
 
-        from autorac.cli import cmd_compile
         import io
         from contextlib import redirect_stdout
+
+        from autorac.cli import cmd_compile
 
         args = MagicMock()
         args.file = rac_file
@@ -312,11 +320,12 @@ parameter rate:
 
         output = io.StringIO()
         with redirect_stdout(output):
-            with patch('sys.exit'):
+            with patch("sys.exit"):
                 cmd_compile(args)
 
         # Output should be valid JSON
         import json
+
         output_str = output.getvalue().strip()
         if output_str:
             data = json.loads(output_str)
@@ -353,9 +362,10 @@ variable tax:
   formula: income * rate
 """)
 
-        from autorac.cli import cmd_benchmark
         import io
         from contextlib import redirect_stdout
+
+        from autorac.cli import cmd_benchmark
 
         args = MagicMock()
         args.file = rac_file
@@ -365,7 +375,7 @@ variable tax:
 
         output = io.StringIO()
         with redirect_stdout(output):
-            with patch('sys.exit'):
+            with patch("sys.exit"):
                 cmd_benchmark(args)
 
         output_str = output.getvalue()

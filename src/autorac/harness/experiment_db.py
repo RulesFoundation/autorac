@@ -12,35 +12,35 @@ Schema includes:
 - Full session transcripts
 """
 
-import sqlite3
+import hashlib
 import json
 import os
-import hashlib
+import sqlite3
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Literal
-import uuid
-
+from typing import Literal, Optional
 
 # Artifact types for SCD2 tracking
 ArtifactType = Literal[
-    "plugin",           # cosilico Claude Code plugin
-    "rac_spec",         # RAC_SPEC.md
-    "encoder_prompt",   # encoder agent system prompt
+    "plugin",  # cosilico Claude Code plugin
+    "rac_spec",  # RAC_SPEC.md
+    "encoder_prompt",  # encoder agent system prompt
     "reviewer_prompt",  # reviewer agent prompts
-    "test_runner",      # test runner version
+    "test_runner",  # test runner version
 ]
 
 
 @dataclass
 class ArtifactVersion:
     """A versioned artifact (SCD2 pattern)."""
+
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:12])
     artifact_type: str = ""  # ArtifactType
-    content_hash: str = ""   # SHA-256 of content for quick comparison
+    content_hash: str = ""  # SHA-256 of content for quick comparison
     version_label: str = ""  # e.g., "0.2.1" or git commit hash
-    content: str = ""        # Full content (may be large)
+    content: str = ""  # Full content (may be large)
     effective_from: datetime = field(default_factory=datetime.now)
     effective_to: Optional[datetime] = None  # None = current version
     metadata: dict = field(default_factory=dict)  # Extra info (file paths, etc.)
@@ -54,6 +54,7 @@ class ArtifactVersion:
 @dataclass
 class TokenUsage:
     """Token usage for a session or run."""
+
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
@@ -68,9 +69,9 @@ class TokenUsage:
         """Rough cost estimate (Opus pricing as of 2025)."""
         # $15/M input, $75/M output, $1.875/M cache read
         return (
-            self.input_tokens * 15 / 1_000_000 +
-            self.output_tokens * 75 / 1_000_000 +
-            self.cache_read_tokens * 1.875 / 1_000_000
+            self.input_tokens * 15 / 1_000_000
+            + self.output_tokens * 75 / 1_000_000
+            + self.cache_read_tokens * 1.875 / 1_000_000
         )
 
 
@@ -97,6 +98,7 @@ EventType = Literal[
 @dataclass
 class SessionEvent:
     """A single event in a session transcript."""
+
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:12])
     session_id: str = ""
     sequence: int = 0
@@ -110,6 +112,7 @@ class SessionEvent:
 @dataclass
 class Session:
     """A full Claude Code session transcript."""
+
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     run_id: Optional[str] = None  # FK to EncodingRun if this is an encoding session
     started_at: datetime = field(default_factory=datetime.now)
@@ -123,6 +126,7 @@ class Session:
 @dataclass
 class ComplexityFactors:
     """Upfront analysis of statute complexity."""
+
     cross_references: list[str] = field(default_factory=list)  # ["1402(a)", "164(f)"]
     has_nested_structure: bool = False
     has_numeric_thresholds: bool = False
@@ -134,6 +138,7 @@ class ComplexityFactors:
 @dataclass
 class IterationError:
     """An error encountered during encoding."""
+
     error_type: str  # "parse", "test", "import", "style", "other"
     message: str
     variable: Optional[str] = None  # Which variable failed, if applicable
@@ -143,6 +148,7 @@ class IterationError:
 @dataclass
 class Iteration:
     """A single encoding attempt."""
+
     attempt: int
     duration_ms: int
     errors: list[IterationError] = field(default_factory=list)
@@ -152,6 +158,7 @@ class Iteration:
 @dataclass
 class OracleResult:
     """Detailed result from an oracle validator."""
+
     name: str  # "policyengine" or "taxsim"
     score: Optional[float] = None  # Match rate 0-1
     passed: bool = False
@@ -164,6 +171,7 @@ class OracleResult:
 @dataclass
 class FinalScores:
     """Scores from validators after CI passes."""
+
     rac_reviewer: float = 0.0
     formula_reviewer: float = 0.0
     parameter_reviewer: float = 0.0
@@ -171,12 +179,15 @@ class FinalScores:
     policyengine_match: Optional[float] = None
     taxsim_match: Optional[float] = None
     # Detailed oracle context (passed to LLM reviewers)
-    oracle_context: dict = field(default_factory=dict)  # {oracle_name: OracleResult as dict}
+    oracle_context: dict = field(
+        default_factory=dict
+    )  # {oracle_name: OracleResult as dict}
 
 
 @dataclass
 class PredictedScores:
     """Upfront predictions for calibration tracking."""
+
     # Dimension scores (0-10)
     rac_reviewer: float = 0.0
     formula_reviewer: float = 0.0
@@ -193,6 +204,7 @@ class PredictedScores:
 @dataclass
 class ActualScores:
     """Actual scores from validation after encoding."""
+
     # Dimension scores (0-10)
     rac_reviewer: float = 0.0
     formula_reviewer: float = 0.0
@@ -209,6 +221,7 @@ class ActualScores:
 @dataclass
 class AgentSuggestion:
     """Suggestion from agent for framework improvement."""
+
     category: str = "documentation"  # documentation, validation, tooling, etc.
     description: str = ""
     predicted_impact: str = "medium"  # low, medium, high
@@ -218,6 +231,7 @@ class AgentSuggestion:
 @dataclass
 class EncodingRun:
     """A complete encoding run from start to finish."""
+
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     timestamp: datetime = field(default_factory=datetime.now)
 
@@ -472,9 +486,17 @@ class ExperimentDB:
         # =====================================================================
         # Add token usage columns to sessions (migration)
         # =====================================================================
-        for col in ['input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_creation_tokens', 'estimated_cost_usd']:
+        for col in [
+            "input_tokens",
+            "output_tokens",
+            "cache_read_tokens",
+            "cache_creation_tokens",
+            "estimated_cost_usd",
+        ]:
             try:
-                cursor.execute(f"ALTER TABLE sessions ADD COLUMN {col} INTEGER DEFAULT 0")
+                cursor.execute(
+                    f"ALTER TABLE sessions ADD COLUMN {col} INTEGER DEFAULT 0"
+                )
             except sqlite3.OperationalError:
                 pass  # Column already exists
 
@@ -487,110 +509,125 @@ class ExperimentDB:
         cursor = conn.cursor()
 
         # Convert dataclasses to JSON
-        complexity_json = json.dumps({
-            "cross_references": run.complexity.cross_references,
-            "has_nested_structure": run.complexity.has_nested_structure,
-            "has_numeric_thresholds": run.complexity.has_numeric_thresholds,
-            "has_phase_in_out": run.complexity.has_phase_in_out,
-            "estimated_variables": run.complexity.estimated_variables,
-            "estimated_parameters": run.complexity.estimated_parameters,
-        })
-
-        iterations_json = json.dumps([
+        complexity_json = json.dumps(
             {
-                "attempt": it.attempt,
-                "duration_ms": it.duration_ms,
-                "success": it.success,
-                "errors": [
-                    {
-                        "error_type": e.error_type,
-                        "message": e.message,
-                        "variable": e.variable,
-                        "fix_applied": e.fix_applied,
-                    }
-                    for e in it.errors
-                ]
+                "cross_references": run.complexity.cross_references,
+                "has_nested_structure": run.complexity.has_nested_structure,
+                "has_numeric_thresholds": run.complexity.has_numeric_thresholds,
+                "has_phase_in_out": run.complexity.has_phase_in_out,
+                "estimated_variables": run.complexity.estimated_variables,
+                "estimated_parameters": run.complexity.estimated_parameters,
             }
-            for it in run.iterations
-        ])
+        )
+
+        iterations_json = json.dumps(
+            [
+                {
+                    "attempt": it.attempt,
+                    "duration_ms": it.duration_ms,
+                    "success": it.success,
+                    "errors": [
+                        {
+                            "error_type": e.error_type,
+                            "message": e.message,
+                            "variable": e.variable,
+                            "fix_applied": e.fix_applied,
+                        }
+                        for e in it.errors
+                    ],
+                }
+                for it in run.iterations
+            ]
+        )
 
         final_scores_json = None
         if run.final_scores:
-            final_scores_json = json.dumps({
-                "rac_reviewer": run.final_scores.rac_reviewer,
-                "formula_reviewer": run.final_scores.formula_reviewer,
-                "parameter_reviewer": run.final_scores.parameter_reviewer,
-                "integration_reviewer": run.final_scores.integration_reviewer,
-                "policyengine_match": run.final_scores.policyengine_match,
-                "taxsim_match": run.final_scores.taxsim_match,
-                "oracle_context": run.final_scores.oracle_context,
-            })
+            final_scores_json = json.dumps(
+                {
+                    "rac_reviewer": run.final_scores.rac_reviewer,
+                    "formula_reviewer": run.final_scores.formula_reviewer,
+                    "parameter_reviewer": run.final_scores.parameter_reviewer,
+                    "integration_reviewer": run.final_scores.integration_reviewer,
+                    "policyengine_match": run.final_scores.policyengine_match,
+                    "taxsim_match": run.final_scores.taxsim_match,
+                    "oracle_context": run.final_scores.oracle_context,
+                }
+            )
 
         predicted_scores_json = None
         if run.predicted:
-            predicted_scores_json = json.dumps({
-                "rac_reviewer": run.predicted.rac_reviewer,
-                "formula_reviewer": run.predicted.formula_reviewer,
-                "parameter_reviewer": run.predicted.parameter_reviewer,
-                "integration_reviewer": run.predicted.integration_reviewer,
-                "ci_pass": run.predicted.ci_pass,
-                "policyengine_match": run.predicted.policyengine_match,
-                "taxsim_match": run.predicted.taxsim_match,
-                "confidence": run.predicted.confidence,
-            })
+            predicted_scores_json = json.dumps(
+                {
+                    "rac_reviewer": run.predicted.rac_reviewer,
+                    "formula_reviewer": run.predicted.formula_reviewer,
+                    "parameter_reviewer": run.predicted.parameter_reviewer,
+                    "integration_reviewer": run.predicted.integration_reviewer,
+                    "ci_pass": run.predicted.ci_pass,
+                    "policyengine_match": run.predicted.policyengine_match,
+                    "taxsim_match": run.predicted.taxsim_match,
+                    "confidence": run.predicted.confidence,
+                }
+            )
 
         actual_scores_json = None
         if run.actual:
-            actual_scores_json = json.dumps({
-                "rac_reviewer": run.actual.rac_reviewer,
-                "formula_reviewer": run.actual.formula_reviewer,
-                "parameter_reviewer": run.actual.parameter_reviewer,
-                "integration_reviewer": run.actual.integration_reviewer,
-                "ci_pass": run.actual.ci_pass,
-                "ci_error": run.actual.ci_error,
-                "policyengine_match": run.actual.policyengine_match,
-                "taxsim_match": run.actual.taxsim_match,
-                "reviewer_issues": run.actual.reviewer_issues,
-            })
+            actual_scores_json = json.dumps(
+                {
+                    "rac_reviewer": run.actual.rac_reviewer,
+                    "formula_reviewer": run.actual.formula_reviewer,
+                    "parameter_reviewer": run.actual.parameter_reviewer,
+                    "integration_reviewer": run.actual.integration_reviewer,
+                    "ci_pass": run.actual.ci_pass,
+                    "ci_error": run.actual.ci_error,
+                    "policyengine_match": run.actual.policyengine_match,
+                    "taxsim_match": run.actual.taxsim_match,
+                    "reviewer_issues": run.actual.reviewer_issues,
+                }
+            )
 
         suggestions_json = None
         if run.suggestions:
-            suggestions_json = json.dumps([
-                {
-                    "category": s.category,
-                    "description": s.description,
-                    "predicted_impact": s.predicted_impact,
-                    "specific_change": s.specific_change,
-                }
-                for s in run.suggestions
-            ])
+            suggestions_json = json.dumps(
+                [
+                    {
+                        "category": s.category,
+                        "description": s.description,
+                        "predicted_impact": s.predicted_impact,
+                        "specific_change": s.specific_change,
+                    }
+                    for s in run.suggestions
+                ]
+            )
 
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT OR REPLACE INTO encoding_runs
             (id, timestamp, citation, file_path, complexity_json, iterations_json,
              total_duration_ms, final_scores_json, agent_type, agent_model, rac_content,
              predicted_scores_json, session_id, iteration, parent_run_id,
              actual_scores_json, suggestions_json)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            run.id,
-            run.timestamp.isoformat(),
-            run.citation,
-            run.file_path,
-            complexity_json,
-            iterations_json,
-            run.total_duration_ms,
-            final_scores_json,
-            run.agent_type,
-            run.agent_model,
-            run.rac_content,
-            predicted_scores_json,
-            run.session_id,
-            run.iteration,
-            run.parent_run_id,
-            actual_scores_json,
-            suggestions_json,
-        ))
+        """,
+            (
+                run.id,
+                run.timestamp.isoformat(),
+                run.citation,
+                run.file_path,
+                complexity_json,
+                iterations_json,
+                run.total_duration_ms,
+                final_scores_json,
+                run.agent_type,
+                run.agent_model,
+                run.rac_content,
+                predicted_scores_json,
+                run.session_id,
+                run.iteration,
+                run.parent_run_id,
+                actual_scores_json,
+                suggestions_json,
+            ),
+        )
 
         conn.commit()
         conn.close()
@@ -617,8 +654,7 @@ class ExperimentDB:
         cursor = conn.cursor()
 
         cursor.execute(
-            "SELECT * FROM encoding_runs ORDER BY timestamp DESC LIMIT ?",
-            (limit,)
+            "SELECT * FROM encoding_runs ORDER BY timestamp DESC LIMIT ?", (limit,)
         )
         rows = cursor.fetchall()
         conn.close()
@@ -632,7 +668,7 @@ class ExperimentDB:
 
         cursor.execute(
             "SELECT * FROM encoding_runs WHERE citation = ? ORDER BY timestamp DESC",
-            (citation,)
+            (citation,),
         )
         rows = cursor.fetchall()
         conn.close()
@@ -644,21 +680,23 @@ class ExperimentDB:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        actual_scores_json = json.dumps({
-            "rac_reviewer": actual.rac_reviewer,
-            "formula_reviewer": actual.formula_reviewer,
-            "parameter_reviewer": actual.parameter_reviewer,
-            "integration_reviewer": actual.integration_reviewer,
-            "ci_pass": actual.ci_pass,
-            "ci_error": actual.ci_error,
-            "policyengine_match": actual.policyengine_match,
-            "taxsim_match": actual.taxsim_match,
-            "reviewer_issues": actual.reviewer_issues,
-        })
+        actual_scores_json = json.dumps(
+            {
+                "rac_reviewer": actual.rac_reviewer,
+                "formula_reviewer": actual.formula_reviewer,
+                "parameter_reviewer": actual.parameter_reviewer,
+                "integration_reviewer": actual.integration_reviewer,
+                "ci_pass": actual.ci_pass,
+                "ci_error": actual.ci_error,
+                "policyengine_match": actual.policyengine_match,
+                "taxsim_match": actual.taxsim_match,
+                "reviewer_issues": actual.reviewer_issues,
+            }
+        )
 
         cursor.execute(
             "UPDATE encoding_runs SET actual_scores_json = ? WHERE id = ?",
-            (actual_scores_json, run_id)
+            (actual_scores_json, run_id),
         )
 
         conn.commit()
@@ -698,7 +736,9 @@ class ExperimentDB:
         total = sum(error_counts.values())
         return {
             "counts": error_counts,
-            "percentages": {k: v/total*100 if total > 0 else 0 for k, v in error_counts.items()},
+            "percentages": {
+                k: v / total * 100 if total > 0 else 0 for k, v in error_counts.items()
+            },
             "total_runs": len(runs),
             "total_errors": total,
         }
@@ -713,12 +753,16 @@ class ExperimentDB:
             iteration_counts[n] = iteration_counts.get(n, 0) + 1
 
         total = len(runs)
-        avg = sum(n * c for n, c in iteration_counts.items()) / total if total > 0 else 0
+        avg = (
+            sum(n * c for n, c in iteration_counts.items()) / total if total > 0 else 0
+        )
 
         return {
             "distribution": iteration_counts,
             "average": avg,
-            "first_try_rate": iteration_counts.get(1, 0) / total * 100 if total > 0 else 0,
+            "first_try_rate": iteration_counts.get(1, 0) / total * 100
+            if total > 0
+            else 0,
             "total_runs": total,
         }
 
@@ -726,8 +770,19 @@ class ExperimentDB:
         """Convert database row to EncodingRun."""
         # Handle various schema versions (11, 13, or 17 columns)
         if len(row) == 11:
-            (id, timestamp, citation, file_path, complexity_json, iterations_json,
-             total_duration_ms, final_scores_json, agent_type, agent_model, rac_content) = row
+            (
+                id,
+                timestamp,
+                citation,
+                file_path,
+                complexity_json,
+                iterations_json,
+                total_duration_ms,
+                final_scores_json,
+                agent_type,
+                agent_model,
+                rac_content,
+            ) = row
             predicted_scores_json = None
             session_id = None
             iteration = 1
@@ -735,18 +790,45 @@ class ExperimentDB:
             actual_scores_json = None
             suggestions_json = None
         elif len(row) == 13:
-            (id, timestamp, citation, file_path, complexity_json, iterations_json,
-             total_duration_ms, final_scores_json, agent_type, agent_model, rac_content,
-             predicted_scores_json, session_id) = row
+            (
+                id,
+                timestamp,
+                citation,
+                file_path,
+                complexity_json,
+                iterations_json,
+                total_duration_ms,
+                final_scores_json,
+                agent_type,
+                agent_model,
+                rac_content,
+                predicted_scores_json,
+                session_id,
+            ) = row
             iteration = 1
             parent_run_id = None
             actual_scores_json = None
             suggestions_json = None
         else:
-            (id, timestamp, citation, file_path, complexity_json, iterations_json,
-             total_duration_ms, final_scores_json, agent_type, agent_model, rac_content,
-             predicted_scores_json, session_id, iteration, parent_run_id,
-             actual_scores_json, suggestions_json) = row
+            (
+                id,
+                timestamp,
+                citation,
+                file_path,
+                complexity_json,
+                iterations_json,
+                total_duration_ms,
+                final_scores_json,
+                agent_type,
+                agent_model,
+                rac_content,
+                predicted_scores_json,
+                session_id,
+                iteration,
+                parent_run_id,
+                actual_scores_json,
+                suggestions_json,
+            ) = row
 
         # Parse complexity
         c = json.loads(complexity_json) if complexity_json else {}
@@ -772,12 +854,14 @@ class ExperimentDB:
                     )
                     for e in it_data.get("errors", [])
                 ]
-                iterations.append(Iteration(
-                    attempt=it_data["attempt"],
-                    duration_ms=it_data["duration_ms"],
-                    errors=errors,
-                    success=it_data.get("success", False),
-                ))
+                iterations.append(
+                    Iteration(
+                        attempt=it_data["attempt"],
+                        duration_ms=it_data["duration_ms"],
+                        errors=errors,
+                        success=it_data.get("success", False),
+                    )
+                )
 
         # Parse final scores
         final_scores = None
@@ -801,7 +885,9 @@ class ExperimentDB:
                 rac_reviewer=p.get("rac_reviewer", p.get("rac", 0)),
                 formula_reviewer=p.get("formula_reviewer", p.get("formula", 0)),
                 parameter_reviewer=p.get("parameter_reviewer", p.get("param", 0)),
-                integration_reviewer=p.get("integration_reviewer", p.get("integration", 0)),
+                integration_reviewer=p.get(
+                    "integration_reviewer", p.get("integration", 0)
+                ),
                 ci_pass=p.get("ci_pass", True),
                 policyengine_match=p.get("policyengine_match"),
                 taxsim_match=p.get("taxsim_match"),
@@ -828,12 +914,14 @@ class ExperimentDB:
         suggestions = []
         if suggestions_json:
             for s_data in json.loads(suggestions_json):
-                suggestions.append(AgentSuggestion(
-                    category=s_data.get("category", "documentation"),
-                    description=s_data.get("description", ""),
-                    predicted_impact=s_data.get("predicted_impact", "medium"),
-                    specific_change=s_data.get("specific_change"),
-                ))
+                suggestions.append(
+                    AgentSuggestion(
+                        category=s_data.get("category", "documentation"),
+                        description=s_data.get("description", ""),
+                        predicted_impact=s_data.get("predicted_impact", "medium"),
+                        specific_change=s_data.get("specific_change"),
+                    )
+                )
 
         return EncodingRun(
             id=id,
@@ -859,7 +947,9 @@ class ExperimentDB:
     # Session Logging Methods
     # =========================================================================
 
-    def start_session(self, model: str = "", cwd: str = "", session_id: str = None) -> Session:
+    def start_session(
+        self, model: str = "", cwd: str = "", session_id: str = None
+    ) -> Session:
         """Start a new session and return it."""
         session = Session(
             model=model,
@@ -872,10 +962,13 @@ class ExperimentDB:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT INTO sessions (id, started_at, model, cwd, event_count, total_tokens)
             VALUES (?, ?, ?, ?, 0, 0)
-        """, (session.id, session.started_at.isoformat(), session.model, session.cwd))
+        """,
+            (session.id, session.started_at.isoformat(), session.model, session.cwd),
+        )
 
         conn.commit()
         conn.close()
@@ -887,9 +980,12 @@ class ExperimentDB:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(
+            """
             UPDATE sessions SET ended_at = ? WHERE id = ?
-        """, (datetime.now().isoformat(), session_id))
+        """,
+            (datetime.now().isoformat(), session_id),
+        )
 
         conn.commit()
         conn.close()
@@ -909,7 +1005,7 @@ class ExperimentDB:
         # Get next sequence number
         cursor.execute(
             "SELECT COALESCE(MAX(sequence), 0) + 1 FROM session_events WHERE session_id = ?",
-            (session_id,)
+            (session_id,),
         )
         sequence = cursor.fetchone()[0]
 
@@ -922,24 +1018,30 @@ class ExperimentDB:
             metadata=metadata or {},
         )
 
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT INTO session_events (id, session_id, sequence, timestamp, event_type, tool_name, content, metadata_json)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            event.id,
-            event.session_id,
-            event.sequence,
-            event.timestamp.isoformat(),
-            event.event_type,
-            event.tool_name,
-            event.content,
-            json.dumps(event.metadata),
-        ))
+        """,
+            (
+                event.id,
+                event.session_id,
+                event.sequence,
+                event.timestamp.isoformat(),
+                event.event_type,
+                event.tool_name,
+                event.content,
+                json.dumps(event.metadata),
+            ),
+        )
 
         # Update event count
-        cursor.execute("""
+        cursor.execute(
+            """
             UPDATE sessions SET event_count = event_count + 1 WHERE id = ?
-        """, (session_id,))
+        """,
+            (session_id,),
+        )
 
         conn.commit()
         conn.close()
@@ -974,28 +1076,35 @@ class ExperimentDB:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT id, session_id, sequence, timestamp, event_type, tool_name, content, metadata_json
             FROM session_events
             WHERE session_id = ?
             ORDER BY sequence
-        """, (session_id,))
+        """,
+            (session_id,),
+        )
 
         rows = cursor.fetchall()
         conn.close()
 
         events = []
         for row in rows:
-            events.append(SessionEvent(
-                id=row[0],
-                session_id=row[1],
-                sequence=row[2],
-                timestamp=datetime.fromisoformat(row[3]) if row[3] else datetime.now(),
-                event_type=row[4] or "",
-                tool_name=row[5],
-                content=row[6] or "",
-                metadata=json.loads(row[7]) if row[7] else {},
-            ))
+            events.append(
+                SessionEvent(
+                    id=row[0],
+                    session_id=row[1],
+                    sequence=row[2],
+                    timestamp=datetime.fromisoformat(row[3])
+                    if row[3]
+                    else datetime.now(),
+                    event_type=row[4] or "",
+                    tool_name=row[5],
+                    content=row[6] or "",
+                    metadata=json.loads(row[7]) if row[7] else {},
+                )
+            )
 
         return events
 
@@ -1004,25 +1113,32 @@ class ExperimentDB:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT * FROM sessions ORDER BY started_at DESC LIMIT ?
-        """, (limit,))
+        """,
+            (limit,),
+        )
 
         rows = cursor.fetchall()
         conn.close()
 
         sessions = []
         for row in rows:
-            sessions.append(Session(
-                id=row[0],
-                run_id=row[1],
-                started_at=datetime.fromisoformat(row[2]) if row[2] else datetime.now(),
-                ended_at=datetime.fromisoformat(row[3]) if row[3] else None,
-                model=row[4] or "",
-                cwd=row[5] or "",
-                event_count=row[6] or 0,
-                total_tokens=row[7] or 0,
-            ))
+            sessions.append(
+                Session(
+                    id=row[0],
+                    run_id=row[1],
+                    started_at=datetime.fromisoformat(row[2])
+                    if row[2]
+                    else datetime.now(),
+                    ended_at=datetime.fromisoformat(row[3]) if row[3] else None,
+                    model=row[4] or "",
+                    cwd=row[5] or "",
+                    event_count=row[6] or 0,
+                    total_tokens=row[7] or 0,
+                )
+            )
 
         return sessions
 
@@ -1090,10 +1206,13 @@ class ExperimentDB:
         cursor = conn.cursor()
 
         # Check if this exact version already exists
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT id, version_label, effective_from FROM artifact_versions
             WHERE artifact_type = ? AND content_hash = ? AND effective_to IS NULL
-        """, (artifact_type, content_hash))
+        """,
+            (artifact_type, content_hash),
+        )
         existing = cursor.fetchone()
 
         if existing:
@@ -1111,11 +1230,14 @@ class ExperimentDB:
 
         # Close any existing current version
         now = datetime.now()
-        cursor.execute("""
+        cursor.execute(
+            """
             UPDATE artifact_versions
             SET effective_to = ?
             WHERE artifact_type = ? AND effective_to IS NULL
-        """, (now.isoformat(), artifact_type))
+        """,
+            (now.isoformat(), artifact_type),
+        )
 
         # Create new version
         version = ArtifactVersion(
@@ -1128,36 +1250,44 @@ class ExperimentDB:
             metadata=metadata or {},
         )
 
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT INTO artifact_versions
             (id, artifact_type, content_hash, version_label, content, effective_from, effective_to, metadata_json)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            version.id,
-            version.artifact_type,
-            version.content_hash,
-            version.version_label,
-            version.content,
-            version.effective_from.isoformat(),
-            None,
-            json.dumps(version.metadata),
-        ))
+        """,
+            (
+                version.id,
+                version.artifact_type,
+                version.content_hash,
+                version.version_label,
+                version.content,
+                version.effective_from.isoformat(),
+                None,
+                json.dumps(version.metadata),
+            ),
+        )
 
         conn.commit()
         conn.close()
 
         return version
 
-    def get_current_artifact_version(self, artifact_type: str) -> Optional[ArtifactVersion]:
+    def get_current_artifact_version(
+        self, artifact_type: str
+    ) -> Optional[ArtifactVersion]:
         """Get the current (effective_to IS NULL) version of an artifact."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT id, artifact_type, content_hash, version_label, content, effective_from, effective_to, metadata_json
             FROM artifact_versions
             WHERE artifact_type = ? AND effective_to IS NULL
-        """, (artifact_type,))
+        """,
+            (artifact_type,),
+        )
 
         row = cursor.fetchone()
         conn.close()
@@ -1181,12 +1311,15 @@ class ExperimentDB:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT id, artifact_type, content_hash, version_label, content, effective_from, effective_to, metadata_json
             FROM artifact_versions
             WHERE artifact_type = ?
             ORDER BY effective_from DESC
-        """, (artifact_type,))
+        """,
+            (artifact_type,),
+        )
 
         rows = cursor.fetchall()
         conn.close()
@@ -1205,16 +1338,21 @@ class ExperimentDB:
             for row in rows
         ]
 
-    def link_run_to_artifacts(self, run_id: str, artifact_version_ids: list[str]) -> None:
+    def link_run_to_artifacts(
+        self, run_id: str, artifact_version_ids: list[str]
+    ) -> None:
         """Link a run to the artifact versions that were active during encoding."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
         for av_id in artifact_version_ids:
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT OR IGNORE INTO run_artifacts (run_id, artifact_version_id)
                 VALUES (?, ?)
-            """, (run_id, av_id))
+            """,
+                (run_id, av_id),
+            )
 
         conn.commit()
         conn.close()
@@ -1232,10 +1370,13 @@ class ExperimentDB:
 
         # Link to run
         for av_id in current_ids:
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT OR IGNORE INTO run_artifacts (run_id, artifact_version_id)
                 VALUES (?, ?)
-            """, (run_id, av_id))
+            """,
+                (run_id, av_id),
+            )
 
         conn.commit()
         conn.close()
@@ -1247,13 +1388,16 @@ class ExperimentDB:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT av.id, av.artifact_type, av.content_hash, av.version_label, av.content,
                    av.effective_from, av.effective_to, av.metadata_json
             FROM artifact_versions av
             JOIN run_artifacts ra ON av.id = ra.artifact_version_id
             WHERE ra.run_id = ?
-        """, (run_id,))
+        """,
+            (run_id,),
+        )
 
         rows = cursor.fetchall()
         conn.close()
@@ -1286,12 +1430,13 @@ class ExperimentDB:
 
         # Estimate cost (Opus pricing)
         estimated_cost = (
-            input_tokens * 15 / 1_000_000 +
-            output_tokens * 75 / 1_000_000 +
-            cache_read_tokens * 1.875 / 1_000_000
+            input_tokens * 15 / 1_000_000
+            + output_tokens * 75 / 1_000_000
+            + cache_read_tokens * 1.875 / 1_000_000
         )
 
-        cursor.execute("""
+        cursor.execute(
+            """
             UPDATE sessions
             SET input_tokens = ?,
                 output_tokens = ?,
@@ -1300,20 +1445,24 @@ class ExperimentDB:
                 total_tokens = ?,
                 estimated_cost_usd = ?
             WHERE id = ?
-        """, (
-            input_tokens,
-            output_tokens,
-            cache_read_tokens,
-            cache_creation_tokens,
-            input_tokens + output_tokens,
-            estimated_cost,
-            session_id,
-        ))
+        """,
+            (
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_creation_tokens,
+                input_tokens + output_tokens,
+                estimated_cost,
+                session_id,
+            ),
+        )
 
         conn.commit()
         conn.close()
 
-    def snapshot_plugin(self, plugin_path: Path, version_label: str = "") -> ArtifactVersion:
+    def snapshot_plugin(
+        self, plugin_path: Path, version_label: str = ""
+    ) -> ArtifactVersion:
         """
         Snapshot the entire cosilico plugin as a single artifact.
         Concatenates all agent, skill, command, and hook files.
@@ -1337,7 +1486,9 @@ class ExperimentDB:
         plugin_json = plugin_path / "plugin.json"
         if plugin_json.exists():
             file_list.insert(0, "plugin.json")
-            content_parts.insert(0, f"=== plugin.json ===\n{plugin_json.read_text()}\n\n")
+            content_parts.insert(
+                0, f"=== plugin.json ===\n{plugin_json.read_text()}\n\n"
+            )
 
         full_content = "".join(content_parts)
 
@@ -1348,7 +1499,9 @@ class ExperimentDB:
             metadata={"files": file_list, "path": str(plugin_path)},
         )
 
-    def snapshot_rac_spec(self, spec_path: Path, version_label: str = "") -> ArtifactVersion:
+    def snapshot_rac_spec(
+        self, spec_path: Path, version_label: str = ""
+    ) -> ArtifactVersion:
         """Snapshot the RAC_SPEC.md file."""
         content = spec_path.read_text() if spec_path.exists() else ""
 

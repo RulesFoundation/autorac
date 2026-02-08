@@ -8,19 +8,19 @@ Measures how well agents predict their own performance:
 - Trend analysis over time
 """
 
-import json
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
-import sqlite3
 from pathlib import Path
+from typing import Optional
 
-from .experiment_db import ExperimentDB, PredictedScores, ActualScores
+from .experiment_db import ExperimentDB
 
 
 @dataclass
 class CalibrationMetrics:
     """Calibration metrics for a specific score type."""
+
     metric_name: str = ""
     n_samples: int = 0
     predicted_mean: float = 0.0
@@ -34,6 +34,7 @@ class CalibrationMetrics:
 @dataclass
 class CalibrationSnapshot:
     """Point-in-time calibration across all metrics."""
+
     timestamp: datetime = field(default_factory=datetime.now)
     metrics: dict[str, CalibrationMetrics] = field(default_factory=dict)
     total_runs: int = 0
@@ -122,7 +123,12 @@ def compute_calibration(
 
     for pred, actual in data:
         # Numeric dimensions
-        for dim in ["rac_reviewer", "formula_reviewer", "parameter_reviewer", "integration_reviewer"]:
+        for dim in [
+            "rac_reviewer",
+            "formula_reviewer",
+            "parameter_reviewer",
+            "integration_reviewer",
+        ]:
             pred_val = getattr(pred, dim, None)
             act_val = getattr(actual, dim, None)
             if pred_val is not None and act_val is not None:
@@ -175,7 +181,9 @@ def print_calibration_report(snapshot: CalibrationSnapshot) -> str:
         return "\n".join(lines)
 
     # Header
-    lines.append(f"{'Metric':<25} {'N':>5} {'Pred':>7} {'Actual':>7} {'Bias':>7} {'MSE':>7}")
+    lines.append(
+        f"{'Metric':<25} {'N':>5} {'Pred':>7} {'Actual':>7} {'Bias':>7} {'MSE':>7}"
+    )
     lines.append("-" * 60)
 
     for name, m in sorted(snapshot.metrics.items()):
@@ -216,19 +224,22 @@ def save_calibration_snapshot(
     """)
 
     for name, m in snapshot.metrics.items():
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT INTO calibration_snapshots (
                 id, timestamp, metric_name, predicted_mean, actual_mean, mse, n_samples
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            f"{snapshot.timestamp.isoformat()}_{name}",
-            snapshot.timestamp.isoformat(),
-            name,
-            m.predicted_mean,
-            m.actual_mean,
-            m.mse,
-            m.n_samples,
-        ))
+        """,
+            (
+                f"{snapshot.timestamp.isoformat()}_{name}",
+                snapshot.timestamp.isoformat(),
+                name,
+                m.predicted_mean,
+                m.actual_mean,
+                m.mse,
+                m.n_samples,
+            ),
+        )
 
     conn.commit()
     conn.close()
@@ -261,18 +272,18 @@ def get_calibration_trend(
     """)
     conn.commit()
 
-    cursor.execute("""
+    cursor.execute(
+        """
         SELECT timestamp, predicted_mean, actual_mean
         FROM calibration_snapshots
         WHERE metric_name = ?
         ORDER BY timestamp DESC
         LIMIT ?
-    """, (metric_name, limit))
+    """,
+        (metric_name, limit),
+    )
 
     rows = cursor.fetchall()
     conn.close()
 
-    return [
-        (datetime.fromisoformat(ts), pred, actual)
-        for ts, pred, actual in rows
-    ]
+    return [(datetime.fromisoformat(ts), pred, actual) for ts, pred, actual in rows]

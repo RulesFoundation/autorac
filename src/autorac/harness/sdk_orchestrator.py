@@ -7,14 +7,12 @@ Logs EVERYTHING: every message, tool call, response, token counts.
 This is the scientific-grade orchestrator for calibration experiments.
 """
 
-import asyncio
-import json
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
-from typing import Optional, List, AsyncIterator
 from enum import Enum
+from pathlib import Path
+from typing import List, Optional
 
 from .experiment_db import ExperimentDB, TokenUsage
 from .validator_pipeline import ValidatorPipeline
@@ -31,6 +29,7 @@ class Phase(Enum):
 @dataclass
 class AgentMessage:
     """A single message in an agent conversation."""
+
     role: str  # "user", "assistant", "tool_use", "tool_result"
     content: str
     timestamp: datetime = field(default_factory=datetime.utcnow)
@@ -44,6 +43,7 @@ class AgentMessage:
 @dataclass
 class AgentRun:
     """Complete record of a single agent invocation."""
+
     agent_type: str
     prompt: str
     phase: Phase
@@ -59,6 +59,7 @@ class AgentRun:
 @dataclass
 class OrchestratorRun:
     """Complete record of an orchestration run."""
+
     citation: str
     session_id: str
     started_at: datetime = field(default_factory=datetime.utcnow)
@@ -78,7 +79,9 @@ class OrchestratorRun:
     total_cost_usd: float = 0.0
 
 
-def _summarize_tool_call(tool_name: str, tool_input: Optional[dict], tool_output: Optional[str]) -> str:
+def _summarize_tool_call(
+    tool_name: str, tool_input: Optional[dict], tool_output: Optional[str]
+) -> str:
     """Generate a human-readable summary of a tool call."""
     if not tool_name:
         return ""
@@ -92,14 +95,18 @@ def _summarize_tool_call(tool_name: str, tool_input: Optional[dict], tool_output
         elif tool_name == "Write":
             path = tool_input.get("file_path", "unknown")
             content = tool_input.get("content", "")
-            lines = content.count('\n') + 1 if content else 0
+            lines = content.count("\n") + 1 if content else 0
             input_str = f"'{path.split('/')[-1]}' ({lines} lines)"
         elif tool_name == "Edit":
             path = tool_input.get("file_path", "unknown")
             input_str = f"'{path.split('/')[-1]}'"
         elif tool_name == "Grep":
             pattern = tool_input.get("pattern", "")
-            input_str = f"pattern='{pattern[:30]}...'" if len(pattern) > 30 else f"pattern='{pattern}'"
+            input_str = (
+                f"pattern='{pattern[:30]}...'"
+                if len(pattern) > 30
+                else f"pattern='{pattern}'"
+            )
         elif tool_name == "Glob":
             pattern = tool_input.get("pattern", "")
             input_str = f"'{pattern}'"
@@ -130,22 +137,23 @@ def _summarize_thinking(content: str) -> Optional[str]:
 
     # Look for thinking tags
     import re
-    thinking_match = re.search(r'<thinking>([\s\S]*?)</thinking>', content)
+
+    thinking_match = re.search(r"<thinking>([\s\S]*?)</thinking>", content)
     if thinking_match:
         thinking = thinking_match.group(1).strip()
         # Get first sentence or first 100 chars
-        first_sentence = re.split(r'[.!?\n]', thinking)[0].strip()
+        first_sentence = re.split(r"[.!?\n]", thinking)[0].strip()
         if first_sentence:
-            return first_sentence[:150] + ('...' if len(first_sentence) > 150 else '')
+            return first_sentence[:150] + ("..." if len(first_sentence) > 150 else "")
 
     # Look for reasoning patterns
-    for prefix in ['I need to', 'Let me', 'First,', 'The statute', 'This section']:
+    for prefix in ["I need to", "Let me", "First,", "The statute", "This section"]:
         if prefix.lower() in content.lower()[:500]:
             idx = content.lower().find(prefix.lower())
-            snippet = content[idx:idx+150]
-            first_sentence = re.split(r'[.!?\n]', snippet)[0].strip()
+            snippet = content[idx : idx + 150]
+            first_sentence = re.split(r"[.!?\n]", snippet)[0].strip()
             if first_sentence:
-                return first_sentence + ('...' if len(first_sentence) > 100 else '')
+                return first_sentence + ("..." if len(first_sentence) > 100 else "")
 
     return None
 
@@ -164,10 +172,14 @@ def _summarize_assistant_message(content: str) -> str:
         return f"Code block response ({len(content):,} chars)"
 
     # Get first meaningful line
-    lines = [l.strip() for l in content.split('\n') if l.strip() and not l.startswith('#')]
+    lines = [
+        line.strip()
+        for line in content.split("\n")
+        if line.strip() and not line.startswith("#")
+    ]
     if lines:
         first = lines[0][:100]
-        return first + ('...' if len(lines[0]) > 100 else '')
+        return first + ("..." if len(lines[0]) > 100 else "")
 
     return f"Response ({len(content):,} chars)"
 
@@ -211,12 +223,16 @@ class SDKOrchestrator:
         experiment_db: Optional[ExperimentDB] = None,
     ):
         import os
+
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not self.api_key:
             raise ValueError("ANTHROPIC_API_KEY required")
 
         self.model = model
-        self.plugin_path = plugin_path or Path(__file__).parent.parent.parent.parent.parent / "cosilico-claude"
+        self.plugin_path = (
+            plugin_path
+            or Path(__file__).parent.parent.parent.parent.parent / "cosilico-claude"
+        )
         self.experiment_db = experiment_db
 
     def _load_agent_prompt(self, agent_key: str) -> str:
@@ -259,7 +275,7 @@ class SDKOrchestrator:
             encode_prompt = f"""Encode {citation} into RAC format.
 
 Output path: {output_path}
-{f'Statute text: {statute_text[:5000]}' if statute_text else 'Fetch statute text as needed.'}
+{f"Statute text: {statute_text[:5000]}" if statute_text else "Fetch statute text as needed."}
 
 ## CRITICAL RULES (violations = encoding failure):
 
@@ -287,7 +303,10 @@ Write .rac files to the output path. Run tests after each file."""
                 run.files_created = [str(f) for f in output_path.rglob("*.rac")]
 
             # Phase 3: Oracle validation (use actual ValidatorPipeline, not LLM agent)
-            print(f"\n[{datetime.utcnow().strftime('%H:%M:%S')}] ORACLE: ValidatorPipeline (PE + TAXSIM)", flush=True)
+            print(
+                f"\n[{datetime.utcnow().strftime('%H:%M:%S')}] ORACLE: ValidatorPipeline (PE + TAXSIM)",
+                flush=True,
+            )
             oracle_start = time.time()
 
             # Find RAC files to validate
@@ -302,7 +321,9 @@ Write .rac files to the output path. Run tests after each file."""
             if rac_files:
                 # Use ValidatorPipeline for actual oracle validation
                 pipeline = ValidatorPipeline(
-                    rac_us_path=output_path.parent.parent if "statute" in str(output_path) else output_path,
+                    rac_us_path=output_path.parent.parent
+                    if "statute" in str(output_path)
+                    else output_path,
                     rac_path=Path(__file__).parent.parent.parent.parent / "rac",
                     enable_oracles=True,
                     max_workers=2,
@@ -333,15 +354,24 @@ Write .rac files to the output path. Run tests after each file."""
 
                 # Average scores across files
                 if pe_scores:
-                    oracle_context["pe_match"] = sum(pe_scores) / len(pe_scores) * 100  # Convert to percentage
+                    oracle_context["pe_match"] = (
+                        sum(pe_scores) / len(pe_scores) * 100
+                    )  # Convert to percentage
                 if taxsim_scores:
-                    oracle_context["taxsim_match"] = sum(taxsim_scores) / len(taxsim_scores) * 100
-                oracle_context["discrepancies"] = [{"description": issue} for issue in all_issues[:10]]
+                    oracle_context["taxsim_match"] = (
+                        sum(taxsim_scores) / len(taxsim_scores) * 100
+                    )
+                oracle_context["discrepancies"] = [
+                    {"description": issue} for issue in all_issues[:10]
+                ]
             else:
                 print("  No RAC files found to validate", flush=True)
 
             oracle_duration = time.time() - oracle_start
-            print(f"  DONE: PE={oracle_context.get('pe_match', 'N/A')}%, TAXSIM={oracle_context.get('taxsim_match', 'N/A')}% ({oracle_duration:.1f}s)", flush=True)
+            print(
+                f"  DONE: PE={oracle_context.get('pe_match', 'N/A')}%, TAXSIM={oracle_context.get('taxsim_match', 'N/A')}% ({oracle_duration:.1f}s)",
+                flush=True,
+            )
 
             run.oracle_pe_match = oracle_context.get("pe_match")
             run.oracle_taxsim_match = oracle_context.get("taxsim_match")
@@ -367,7 +397,9 @@ Write .rac files to the output path. Run tests after each file."""
             # Phase 5: Report (computed, not an agent)
             run.ended_at = datetime.utcnow()
             run.total_tokens = self._sum_tokens(run.agent_runs)
-            run.total_cost_usd = run.total_tokens.estimated_cost_usd if run.total_tokens else 0.0
+            run.total_cost_usd = (
+                run.total_tokens.estimated_cost_usd if run.total_tokens else 0.0
+            )
 
             # Log to experiment DB if available
             if self.experiment_db:
@@ -389,8 +421,8 @@ Write .rac files to the output path. Run tests after each file."""
         model: str,
     ) -> AgentRun:
         """Run a single agent and capture everything."""
-        from claude_agent_sdk import query, ClaudeAgentOptions
-        import sys
+
+        from claude_agent_sdk import ClaudeAgentOptions, query
 
         agent_type = self.AGENTS.get(agent_key, agent_key)
 
@@ -409,7 +441,10 @@ Write .rac files to the output path. Run tests after each file."""
 
         # ALWAYS print phase start with timestamp
         start_time = datetime.utcnow()
-        print(f"\n[{start_time.strftime('%H:%M:%S')}] {phase.value.upper()}: {agent_type}", flush=True)
+        print(
+            f"\n[{start_time.strftime('%H:%M:%S')}] {phase.value.upper()}: {agent_type}",
+            flush=True,
+        )
         print(f"  Model: {model}", flush=True)
 
         try:
@@ -449,23 +484,33 @@ Write .rac files to the output path. Run tests after each file."""
                                     msg.tool_name = block.name
                                     print(f"  Tool: {block.name}", flush=True)
                                 if hasattr(block, "input"):
-                                    msg.tool_input = block.input if isinstance(block.input, dict) else {"raw": str(block.input)}
+                                    msg.tool_input = (
+                                        block.input
+                                        if isinstance(block.input, dict)
+                                        else {"raw": str(block.input)}
+                                    )
                                 # Generate summary
                                 msg.summary = _summarize_tool_call(
-                                    msg.tool_name,
-                                    msg.tool_input,
-                                    None
+                                    msg.tool_name, msg.tool_input, None
                                 )
                             elif block_type == "ToolResultBlock":
                                 # Tool result content
                                 if hasattr(block, "content"):
                                     result_text = str(block.content)[:5000]
-                                    text_parts.append(f"[Tool Result: {len(result_text)} chars]")
+                                    text_parts.append(
+                                        f"[Tool Result: {len(result_text)} chars]"
+                                    )
                                     msg.tool_output = result_text
-                        msg.content = "\n".join(text_parts) if text_parts else str(content)[:10000]
+                        msg.content = (
+                            "\n".join(text_parts)
+                            if text_parts
+                            else str(content)[:10000]
+                        )
                         # Generate thinking summary if we have text
                         if text_parts and not msg.summary:
-                            msg.summary = _summarize_thinking("\n".join(text_parts)) or _summarize_assistant_message("\n".join(text_parts))
+                            msg.summary = _summarize_thinking(
+                                "\n".join(text_parts)
+                            ) or _summarize_assistant_message("\n".join(text_parts))
                     else:
                         msg.content = str(content)[:10000]
                 elif hasattr(event, "result"):
@@ -484,7 +529,9 @@ Write .rac files to the output path. Run tests after each file."""
 
                 # Generate summary if not already set
                 if not msg.summary and msg.tool_name:
-                    msg.summary = _summarize_tool_call(msg.tool_name, msg.tool_input, msg.tool_output)
+                    msg.summary = _summarize_tool_call(
+                        msg.tool_name, msg.tool_input, msg.tool_output
+                    )
 
                 # Capture tokens from ResultMessage (final event has real data)
                 if event_type == "ResultMessage" and hasattr(event, "usage"):
@@ -509,7 +556,10 @@ Write .rac files to the output path. Run tests after each file."""
                         run.total_cost = event.total_cost_usd
 
                     # Print final token summary
-                    print(f"  Tokens: {in_tok + cache_create:,} in (+{cache_read:,} cache), {out_tok:,} out", flush=True)
+                    print(
+                        f"  Tokens: {in_tok + cache_create:,} in (+{cache_read:,} cache), {out_tok:,} out",
+                        flush=True,
+                    )
                     if hasattr(event, "total_cost_usd"):
                         print(f"  Cost: ${event.total_cost_usd:.4f}", flush=True)
 
@@ -525,7 +575,10 @@ Write .rac files to the output path. Run tests after each file."""
             # Print phase summary
             duration = (run.ended_at - start_time).total_seconds()
             total_cost = run.total_tokens.estimated_cost_usd
-            print(f"  DONE: {total_input:,} in + {total_output:,} out = ${total_cost:.4f} ({duration:.1f}s)", flush=True)
+            print(
+                f"  DONE: {total_input:,} in + {total_output:,} out = ${total_cost:.4f} ({duration:.1f}s)",
+                flush=True,
+            )
 
         except Exception as e:
             run.error = str(e)
@@ -533,7 +586,10 @@ Write .rac files to the output path. Run tests after each file."""
             print(f"  ERROR: {e}", flush=True)
             # Still print whatever tokens we captured
             if total_input or total_output:
-                print(f"  Partial tokens: {total_input:,} in + {total_output:,} out", flush=True)
+                print(
+                    f"  Partial tokens: {total_input:,} in + {total_output:,} out",
+                    flush=True,
+                )
 
         return run
 
@@ -547,17 +603,18 @@ Write .rac files to the output path. Run tests after each file."""
 
         # Simple extraction - look for percentages
         import re
-        pe_match = re.search(r'PolicyEngine[:\s]+(\d+(?:\.\d+)?)\s*%', result, re.I)
+
+        pe_match = re.search(r"PolicyEngine[:\s]+(\d+(?:\.\d+)?)\s*%", result, re.I)
         if pe_match:
             context["pe_match"] = float(pe_match.group(1))
 
-        taxsim_match = re.search(r'TAXSIM[:\s]+(\d+(?:\.\d+)?)\s*%', result, re.I)
+        taxsim_match = re.search(r"TAXSIM[:\s]+(\d+(?:\.\d+)?)\s*%", result, re.I)
         if taxsim_match:
             context["taxsim_match"] = float(taxsim_match.group(1))
 
         # Extract discrepancy lines
-        for line in result.split('\n'):
-            if 'discrepancy' in line.lower() or 'differs' in line.lower():
+        for line in result.split("\n"):
+            if "discrepancy" in line.lower() or "differs" in line.lower():
                 context["discrepancies"].append({"description": line.strip()})
 
         return context
@@ -591,7 +648,9 @@ Write .rac files to the output path. Run tests after each file."""
             return
 
         # Create session
-        self.experiment_db.start_session(model=self.model, cwd=str(Path.cwd()), session_id=run.session_id)
+        self.experiment_db.start_session(
+            model=self.model, cwd=str(Path.cwd()), session_id=run.session_id
+        )
 
         # Log each agent run as events
         for agent_run in run.agent_runs:
@@ -603,7 +662,7 @@ Write .rac files to the output path. Run tests after each file."""
                 metadata={
                     "agent_type": agent_run.agent_type,
                     "phase": agent_run.phase.value,
-                }
+                },
             )
 
             # Log each message
@@ -617,25 +676,37 @@ Write .rac files to the output path. Run tests after each file."""
                         "agent_type": agent_run.agent_type,
                         "summary": msg.summary,  # Human-readable summary
                         "tool_input": msg.tool_input,
-                        "tool_output": msg.tool_output[:1000] if msg.tool_output else None,
+                        "tool_output": msg.tool_output[:1000]
+                        if msg.tool_output
+                        else None,
                         "tokens": {
                             "input": msg.tokens.input_tokens if msg.tokens else 0,
                             "output": msg.tokens.output_tokens if msg.tokens else 0,
-                        } if msg.tokens else None,
-                    }
+                        }
+                        if msg.tokens
+                        else None,
+                    },
                 )
 
             # Calculate phase cost
-            phase_cost = agent_run.total_tokens.estimated_cost_usd if agent_run.total_tokens else 0
+            phase_cost = (
+                agent_run.total_tokens.estimated_cost_usd
+                if agent_run.total_tokens
+                else 0
+            )
 
             # Generate phase summary
             tool_counts = {}
             for msg in agent_run.messages:
                 if msg.tool_name:
                     tool_counts[msg.tool_name] = tool_counts.get(msg.tool_name, 0) + 1
-            tools_summary = ", ".join(f"{t}×{c}" for t, c in sorted(tool_counts.items(), key=lambda x: -x[1]))
+            tools_summary = ", ".join(
+                f"{t}×{c}" for t, c in sorted(tool_counts.items(), key=lambda x: -x[1])
+            )
 
-            phase_summary = f"{agent_run.phase.value.upper()}: {len(agent_run.messages)} events"
+            phase_summary = (
+                f"{agent_run.phase.value.upper()}: {len(agent_run.messages)} events"
+            )
             if tools_summary:
                 phase_summary += f" ({tools_summary})"
             if phase_cost > 0:
@@ -654,10 +725,12 @@ Write .rac files to the output path. Run tests after each file."""
                     "total_tokens": {
                         "input": agent_run.total_tokens.input_tokens,
                         "output": agent_run.total_tokens.output_tokens,
-                    } if agent_run.total_tokens else None,
+                    }
+                    if agent_run.total_tokens
+                    else None,
                     "cost_usd": phase_cost,
                     "tools_used": tool_counts,
-                }
+                },
             )
 
         # Update session totals
@@ -674,21 +747,29 @@ Write .rac files to the output path. Run tests after each file."""
         lines = [
             f"# Encoding Report: {run.citation}",
             f"Session: {run.session_id}",
-            f"Duration: {(run.ended_at - run.started_at).total_seconds():.1f}s" if run.ended_at else "In progress",
+            f"Duration: {(run.ended_at - run.started_at).total_seconds():.1f}s"
+            if run.ended_at
+            else "In progress",
             "",
             "## Oracle Match Rates",
-            f"- PolicyEngine: {run.oracle_pe_match}%" if run.oracle_pe_match else "- PolicyEngine: N/A",
-            f"- TAXSIM: {run.oracle_taxsim_match}%" if run.oracle_taxsim_match else "- TAXSIM: N/A",
+            f"- PolicyEngine: {run.oracle_pe_match}%"
+            if run.oracle_pe_match
+            else "- PolicyEngine: N/A",
+            f"- TAXSIM: {run.oracle_taxsim_match}%"
+            if run.oracle_taxsim_match
+            else "- TAXSIM: N/A",
             "",
             "## Files Created",
         ]
         for f in run.files_created:
             lines.append(f"- {f}")
 
-        lines.extend([
-            "",
-            "## Agent Runs",
-        ])
+        lines.extend(
+            [
+                "",
+                "## Agent Runs",
+            ]
+        )
         for agent_run in run.agent_runs:
             cost = agent_run.total_cost
             tokens = agent_run.total_tokens
@@ -705,12 +786,14 @@ Write .rac files to the output path. Run tests after each file."""
                 lines.append(f"- {agent_run.phase.value}: {agent_run.agent_type}")
 
         if run.total_tokens:
-            lines.extend([
-                "",
-                "## Totals",
-                f"- Input tokens: {run.total_tokens.input_tokens:,}",
-                f"- Output tokens: {run.total_tokens.output_tokens:,}",
-                f"- Total cost: ${run.total_cost_usd:.4f}",
-            ])
+            lines.extend(
+                [
+                    "",
+                    "## Totals",
+                    f"- Input tokens: {run.total_tokens.input_tokens:,}",
+                    f"- Output tokens: {run.total_tokens.output_tokens:,}",
+                    f"- Total cost: ${run.total_cost_usd:.4f}",
+                ]
+            )
 
         return "\n".join(lines)

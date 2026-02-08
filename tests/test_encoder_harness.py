@@ -7,22 +7,22 @@ These tests verify:
 3. _get_suggestions() analyzes validation failures and returns improvements
 """
 
-import pytest
 import json
+import sys
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import Mock, patch
 
-import sys
+import pytest
+
 src_path = str(Path(__file__).parent.parent / "src")
 sys.path.insert(0, src_path)
 
 from autorac.harness.encoder_harness import (
-    EncoderHarness,
     EncoderConfig,
+    EncoderHarness,
     run_claude_code,
 )
-from autorac.harness.experiment_db import PredictedScores, AgentSuggestion
 from autorac.harness.validator_pipeline import PipelineResult, ValidationResult
 
 
@@ -46,12 +46,8 @@ class TestRunClaudeCode:
 
     def test_returns_output_and_returncode(self):
         """Test that function returns tuple of (output, returncode)."""
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = Mock(
-                stdout="test output",
-                stderr="",
-                returncode=0
-            )
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = Mock(stdout="test output", stderr="", returncode=0)
 
             output, code = run_claude_code("test prompt")
 
@@ -61,7 +57,8 @@ class TestRunClaudeCode:
     def test_handles_timeout(self):
         """Test timeout handling."""
         import subprocess
-        with patch('subprocess.run') as mock_run:
+
+        with patch("subprocess.run") as mock_run:
             mock_run.side_effect = subprocess.TimeoutExpired(cmd="claude", timeout=60)
 
             output, code = run_claude_code("test", timeout=60)
@@ -71,7 +68,7 @@ class TestRunClaudeCode:
 
     def test_handles_missing_cli(self):
         """Test handling when claude CLI is not installed."""
-        with patch('subprocess.run') as mock_run:
+        with patch("subprocess.run") as mock_run:
             mock_run.side_effect = FileNotFoundError()
 
             output, code = run_claude_code("test")
@@ -87,19 +84,21 @@ class TestGetPredictions:
         """Test that valid JSON predictions are correctly parsed."""
         harness = EncoderHarness(temp_config)
 
-        prediction_json = json.dumps({
-            "rac_reviewer": 8.5,
-            "formula_reviewer": 7.0,
-            "parameter_reviewer": 8.0,
-            "integration_reviewer": 7.5,
-            "ci_pass": True,
-            "policyengine_match": 0.92,
-            "taxsim_match": 0.88,
-            "confidence": 0.75,
-            "reasoning": "Simple statute with clear calculation"
-        })
+        prediction_json = json.dumps(
+            {
+                "rac_reviewer": 8.5,
+                "formula_reviewer": 7.0,
+                "parameter_reviewer": 8.0,
+                "integration_reviewer": 7.5,
+                "ci_pass": True,
+                "policyengine_match": 0.92,
+                "taxsim_match": 0.88,
+                "confidence": 0.75,
+                "reasoning": "Simple statute with clear calculation",
+            }
+        )
 
-        with patch('autorac.harness.encoder_harness.run_claude_code') as mock_claude:
+        with patch("autorac.harness.encoder_harness.run_claude_code") as mock_claude:
             mock_claude.return_value = (prediction_json, 0)
 
             result = harness._get_predictions("26 USC 32", "Sample statute")
@@ -113,7 +112,7 @@ class TestGetPredictions:
         """Test that CLI failures return conservative defaults."""
         harness = EncoderHarness(temp_config)
 
-        with patch('autorac.harness.encoder_harness.run_claude_code') as mock_claude:
+        with patch("autorac.harness.encoder_harness.run_claude_code") as mock_claude:
             mock_claude.return_value = ("Error: something went wrong", 1)
 
             result = harness._get_predictions("26 USC 32", "Sample statute")
@@ -134,7 +133,7 @@ class TestGetPredictions:
 
 These scores reflect the moderate complexity of this statute."""
 
-        with patch('autorac.harness.encoder_harness.run_claude_code') as mock_claude:
+        with patch("autorac.harness.encoder_harness.run_claude_code") as mock_claude:
             mock_claude.return_value = (wrapped_response, 0)
 
             result = harness._get_predictions("26 USC 24", "Child tax credit text")
@@ -169,7 +168,7 @@ variable sample_var:
       expect: 0
 '''
 
-        with patch('autorac.harness.encoder_harness.run_claude_code') as mock_claude:
+        with patch("autorac.harness.encoder_harness.run_claude_code") as mock_claude:
             mock_claude.return_value = (expected_rac, 0)
 
             output_path = temp_config.rac_us_path / "test.rac"
@@ -192,7 +191,7 @@ variable test:
   dtype: Money
 ```'''
 
-        with patch('autorac.harness.encoder_harness.run_claude_code') as mock_claude:
+        with patch("autorac.harness.encoder_harness.run_claude_code") as mock_claude:
             mock_claude.return_value = (response_with_markdown, 0)
 
             output_path = temp_config.rac_us_path / "test.rac"
@@ -206,7 +205,7 @@ variable test:
         """Test that output directory is created if it doesn't exist."""
         harness = EncoderHarness(temp_config)
 
-        with patch('autorac.harness.encoder_harness.run_claude_code') as mock_claude:
+        with patch("autorac.harness.encoder_harness.run_claude_code") as mock_claude:
             mock_claude.return_value = ("text: test", 0)
 
             output_path = temp_config.rac_us_path / "nested" / "dir" / "test.rac"
@@ -218,7 +217,7 @@ variable test:
         """Test that a valid fallback is returned on CLI failure."""
         harness = EncoderHarness(temp_config)
 
-        with patch('autorac.harness.encoder_harness.run_claude_code') as mock_claude:
+        with patch("autorac.harness.encoder_harness.run_claude_code") as mock_claude:
             mock_claude.side_effect = Exception("CLI error")
 
             output_path = temp_config.rac_us_path / "fallback.rac"
@@ -256,31 +255,37 @@ class TestGetSuggestions:
 
         failing_result = PipelineResult(
             results={
-                "ci": ValidationResult("ci", False, None, ["Parse error"], 100, error="Parse error"),
+                "ci": ValidationResult(
+                    "ci", False, None, ["Parse error"], 100, error="Parse error"
+                ),
             },
             total_duration_ms=100,
             all_passed=False,
         )
 
-        suggestions_json = json.dumps([
-            {
-                "category": "documentation",
-                "description": "Add clearer examples for formula syntax",
-                "predicted_impact": "high",
-                "specific_change": "Add section on conditionals"
-            },
-            {
-                "category": "agent_prompt",
-                "description": "Emphasize no markdown formatting",
-                "predicted_impact": "medium",
-                "specific_change": None
-            }
-        ])
+        suggestions_json = json.dumps(
+            [
+                {
+                    "category": "documentation",
+                    "description": "Add clearer examples for formula syntax",
+                    "predicted_impact": "high",
+                    "specific_change": "Add section on conditionals",
+                },
+                {
+                    "category": "agent_prompt",
+                    "description": "Emphasize no markdown formatting",
+                    "predicted_impact": "medium",
+                    "specific_change": None,
+                },
+            ]
+        )
 
-        with patch('autorac.harness.encoder_harness.run_claude_code') as mock_claude:
+        with patch("autorac.harness.encoder_harness.run_claude_code") as mock_claude:
             mock_claude.return_value = (suggestions_json, 0)
 
-            result = harness._get_suggestions("26 USC 32", "rac content", failing_result)
+            result = harness._get_suggestions(
+                "26 USC 32", "rac content", failing_result
+            )
 
             assert len(result) == 2
             assert result[0].category == "documentation"
@@ -293,17 +298,28 @@ class TestGetSuggestions:
 
         failing_result = PipelineResult(
             results={
-                "ci": ValidationResult("ci", False, None, ["Parse error"], 100, error="Parse error"),
-                "rac_reviewer": ValidationResult("rac_reviewer", False, 4.0, ["Missing imports"], 500, error="Missing imports"),
+                "ci": ValidationResult(
+                    "ci", False, None, ["Parse error"], 100, error="Parse error"
+                ),
+                "rac_reviewer": ValidationResult(
+                    "rac_reviewer",
+                    False,
+                    4.0,
+                    ["Missing imports"],
+                    500,
+                    error="Missing imports",
+                ),
             },
             total_duration_ms=600,
             all_passed=False,
         )
 
-        with patch('autorac.harness.encoder_harness.run_claude_code') as mock_claude:
+        with patch("autorac.harness.encoder_harness.run_claude_code") as mock_claude:
             mock_claude.side_effect = Exception("CLI error")
 
-            result = harness._get_suggestions("26 USC 32", "rac content", failing_result)
+            result = harness._get_suggestions(
+                "26 USC 32", "rac content", failing_result
+            )
 
             assert len(result) == 2
             assert all(s.category == "validator" for s in result)
@@ -316,14 +332,16 @@ class TestEncodeWithFeedback:
         """Test the full encode-validate-log cycle."""
         harness = EncoderHarness(temp_config)
 
-        prediction_json = json.dumps({
-            "rac_reviewer": 8.0,
-            "formula_reviewer": 7.5,
-            "parameter_reviewer": 8.0,
-            "integration_reviewer": 7.5,
-            "ci_pass": True,
-            "confidence": 0.7
-        })
+        prediction_json = json.dumps(
+            {
+                "rac_reviewer": 8.0,
+                "formula_reviewer": 7.5,
+                "parameter_reviewer": 8.0,
+                "integration_reviewer": 7.5,
+                "ci_pass": True,
+                "confidence": 0.7,
+            }
+        )
 
         rac_content = '''text: """
 Test statute
@@ -338,18 +356,20 @@ variable test:
 '''
 
         # Mock run_claude_code for both encoder and validator
-        with patch('autorac.harness.encoder_harness.run_claude_code') as mock_encoder:
-            with patch('autorac.harness.validator_pipeline.run_claude_code') as mock_validator:
+        with patch("autorac.harness.encoder_harness.run_claude_code") as mock_encoder:
+            with patch(
+                "autorac.harness.validator_pipeline.run_claude_code"
+            ) as mock_validator:
                 # Encoder returns prediction then RAC content
                 mock_encoder.side_effect = [
                     (prediction_json, 0),  # _get_predictions
-                    (rac_content, 0),       # _encode
+                    (rac_content, 0),  # _encode
                 ]
 
                 # Validators return passing scores
                 mock_validator.return_value = (
                     '{"score": 8.0, "passed": true, "issues": [], "reasoning": "Good"}',
-                    0
+                    0,
                 )
 
                 output_path = temp_config.rac_us_path / "statute" / "26" / "1.rac"
