@@ -229,11 +229,21 @@ class SDKOrchestrator:
             raise ValueError("ANTHROPIC_API_KEY required")
 
         self.model = model
-        self.plugin_path = (
-            plugin_path
-            or Path(__file__).parent.parent.parent.parent.parent / "cosilico-claude"
-        )
+        self.plugin_path = plugin_path or self._find_plugin_path()
         self.experiment_db = experiment_db
+
+    @staticmethod
+    def _find_plugin_path() -> Path:
+        """Find the cosilico plugin, checking marketplace and sibling locations."""
+        candidates = [
+            Path.home() / ".claude" / "plugins" / "marketplaces" / "cosilico",
+            Path.home() / ".claude" / "plugins" / "cache" / "cosilico" / "cosilico",
+            Path(__file__).parent.parent.parent.parent.parent / "cosilico-claude",
+        ]
+        for p in candidates:
+            if (p / "agents").exists():
+                return p
+        return candidates[0]  # Default to marketplace path
 
     def _load_agent_prompt(self, agent_key: str) -> str:
         """Load the system prompt for an agent from the plugin."""
