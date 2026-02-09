@@ -7,6 +7,9 @@ Logs EVERYTHING: every message, tool call, response, token counts.
 This is the scientific-grade orchestrator for calibration experiments.
 """
 
+import asyncio
+import json
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -24,6 +27,25 @@ class Phase(Enum):
     ORACLE = "oracle"
     REVIEW = "review"
     REPORT = "report"
+
+
+@dataclass
+class SubsectionTask:
+    """A single subsection to encode."""
+
+    subsection_id: str  # "a", "b", "c"
+    title: str  # "Allowance of credit"
+    file_name: str  # "a.rac"
+    dependencies: list = field(default_factory=list)  # ["a"] for b.rac importing a.rac
+    wave: int = 0
+
+
+@dataclass
+class AnalyzerOutput:
+    """Parsed output from the statute analyzer."""
+
+    subsections: List[SubsectionTask] = field(default_factory=list)
+    raw_text: str = ""
 
 
 @dataclass
@@ -273,40 +295,61 @@ class SDKOrchestrator:
 
         try:
             # Phase 1: Analysis
+            analysis_prompt = f"""Analyze {citation}. Report: subsection tree, encoding order, dependencies.
+
+After your markdown analysis, include a machine-readable block:
+<!-- STRUCTURED_OUTPUT
+{{"subsections": [{{"id": "a", "title": "...", "disposition": "ENCODE", "file": "a.rac"}}, ...],
+ "dependencies": {{"b": ["a"], "d": ["a"]}},
+ "encoding_order": ["a", "c", "e", "f", "b", "d"]}}
+-->
+
+Use disposition "ENCODE" for subsections to encode, "SKIP" for those to omit.
+List dependencies as subsection IDs that must be encoded first."""
+
             analysis = await self._run_agent(
                 agent_key="analyzer",
-                prompt=f"Analyze {citation}. Report: subsection tree, encoding order, dependencies.",
+                prompt=analysis_prompt,
                 phase=Phase.ANALYSIS,
-                model=self.model,  # Use configured model
+                model=self.model,
             )
             run.agent_runs.append(analysis)
 
-            # Phase 2: Encoding
-            encode_prompt = f"""Encode {citation} into RAC format.
+            # Phase 2: Encoding (parallel per-subsection when analysis available)
+            if analysis.result:
+                encoding_runs = await self._run_encoding_parallel(
+                    citation, output_path, statute_text, analysis.result
+                )
+                run.agent_runs.extend(encoding_runs)
 
-Output path: {output_path}
-{f"Statute text: {statute_text[:5000]}" if statute_text else "Fetch statute text as needed."}
-
-## CRITICAL RULES (violations = encoding failure):
-
-1. **FILEPATH = CITATION** - File names MUST be subsection names:
-   - ✓ `statute/26/1/j.rac` for § 1(j)
-   - ✓ `statute/26/1/a.rac` for § 1(a)
-   - ❌ `formulas.rac`, `parameters.rac`, `variables.rac` - WRONG
-
-2. **One subsection per file** - Each .rac encodes exactly one statutory subsection
-
-3. **Only statute values** - No indexed/derived/computed values
-
-Write .rac files to the output path. Run tests after each file."""
-
-            encoding = await self._run_agent(
-                agent_key="encoder",
-                prompt=encode_prompt,
-                phase=Phase.ENCODING,
-                model=self.model,  # Use configured model
-            )
-            run.agent_runs.append(encoding)
+                if not encoding_runs:
+                    # Fallback: no subsections parsed, use single-agent
+                    print(
+                        "  No subsections parsed, falling back to single encoder",
+                        flush=True,
+                    )
+                    encode_prompt = self._build_fallback_encode_prompt(
+                        citation, output_path, statute_text
+                    )
+                    encoding = await self._run_agent(
+                        agent_key="encoder",
+                        prompt=encode_prompt,
+                        phase=Phase.ENCODING,
+                        model=self.model,
+                    )
+                    run.agent_runs.append(encoding)
+            else:
+                # Fallback: no analysis result
+                encode_prompt = self._build_fallback_encode_prompt(
+                    citation, output_path, statute_text
+                )
+                encoding = await self._run_agent(
+                    agent_key="encoder",
+                    prompt=encode_prompt,
+                    phase=Phase.ENCODING,
+                    model=self.model,
+                )
+                run.agent_runs.append(encoding)
 
             # Check what files were created
             if output_path.exists():
@@ -602,6 +645,450 @@ Write .rac files to the output path. Run tests after each file."""
                 )
 
         return run
+
+    def _parse_analyzer_output(self, analysis_text: str) -> AnalyzerOutput:
+        """Parse analyzer output into structured subsection tasks.
+
+        Two-layer parsing:
+        - Primary: JSON block in <!-- STRUCTURED_OUTPUT {...} --> tags
+        - Fallback: Regex on the markdown subsection table
+        """
+        result = AnalyzerOutput(raw_text=analysis_text)
+
+        if not analysis_text or not analysis_text.strip():
+            return result
+
+        # Primary: look for STRUCTURED_OUTPUT JSON block
+        json_match = re.search(
+            r"<!--\s*STRUCTURED_OUTPUT\s*\n(.*?)\n\s*-->",
+            analysis_text,
+            re.DOTALL,
+        )
+        if json_match:
+            try:
+                data = json.loads(json_match.group(1))
+                deps = data.get("dependencies", {})
+                for s in data.get("subsections", []):
+                    if s.get("disposition", "").upper() != "ENCODE":
+                        continue
+                    task = SubsectionTask(
+                        subsection_id=s["id"],
+                        title=s.get("title", ""),
+                        file_name=s.get("file", f"{s['id']}.rac"),
+                        dependencies=deps.get(s["id"], []),
+                    )
+                    result.subsections.append(task)
+                return result
+            except (json.JSONDecodeError, KeyError):
+                pass  # Fall through to markdown parsing
+
+        # Fallback: parse markdown table rows
+        # Pattern: | (subsection_id) | title | disposition | file |
+        row_pattern = re.compile(
+            r"\|\s*\((\w+)\)\s*\|\s*([^|]+?)\s*\|\s*(\w+)\s*\|\s*([^|]+?)\s*\|"
+        )
+        for m in row_pattern.finditer(analysis_text):
+            sub_id, title, disposition, file_name = (
+                m.group(1),
+                m.group(2).strip(),
+                m.group(3).strip(),
+                m.group(4).strip(),
+            )
+            if disposition.upper() != "ENCODE":
+                continue
+            task = SubsectionTask(
+                subsection_id=sub_id,
+                title=title,
+                file_name=file_name if file_name != "-" else f"{sub_id}.rac",
+                dependencies=[],
+            )
+            result.subsections.append(task)
+
+        return result
+
+    def _compute_waves(
+        self, tasks: List[SubsectionTask]
+    ) -> List[List[SubsectionTask]]:
+        """Topological sort into parallel batches (waves).
+
+        Subsections with no dependencies = wave 0.
+        Subsections depending only on wave 0 items = wave 1, etc.
+        """
+        if not tasks:
+            return []
+
+        task_map = {t.subsection_id: t for t in tasks}
+        assigned = set()
+        waves = []
+
+        while len(assigned) < len(tasks):
+            wave = []
+            for t in tasks:
+                if t.subsection_id in assigned:
+                    continue
+                # All deps must be in already-assigned set
+                if all(d in assigned for d in t.dependencies):
+                    t.wave = len(waves)
+                    wave.append(t)
+            if not wave:
+                # Remaining tasks have unsatisfiable deps — put them all in next wave
+                remaining = [
+                    t for t in tasks if t.subsection_id not in assigned
+                ]
+                for t in remaining:
+                    t.wave = len(waves)
+                waves.append(remaining)
+                break
+            assigned.update(t.subsection_id for t in wave)
+            waves.append(wave)
+
+        return waves
+
+    # DSL cheatsheet embedded in every encoder prompt to prevent
+    # edit-test-fail spirals from DSL misunderstanding
+    DSL_CHEATSHEET = """
+## RAC DSL quick reference
+
+### Declaration types
+- `parameter name:` — policy value with temporal `values:` dict
+- `variable name:` — computed value with `formula:` and `tests:`
+- `input name:` — user-provided value with `default:`
+- `enum Name:` — enumeration with `values:` list
+
+### Variable fields (all required unless noted)
+- `entity:` Person | TaxUnit | Household | Family
+- `period:` Year | Month | Day
+- `dtype:` Money | Rate | Boolean | Integer | String | Enum[Name]
+- `formula: |` — Python-like formula (see below)
+- `tests:` — list of `{name, period, inputs, expect}`
+- `imports:` — list of `path#variable` (optional)
+
+### Formula syntax
+**Allowed:** `if`/`elif`/`else`, `return`, `and`/`or`/`not`, `=` assignment
+**Operators:** `+`, `-`, `*`, `/`, `%`, `==`, `!=`, `<`, `>`, `<=`, `>=`
+**Built-in functions:** `min(a,b)`, `max(a,b)`, `abs(x)`, `floor(x)`, `ceil(x)`, `round(x,n)`, `clamp(x,lo,hi)`, `sum(...)`, `len(...)`
+**FORBIDDEN:** `for`/`while` loops, list comprehensions, `def`/`lambda`, `try`/`except`, `+=`, imports
+**Numeric literals:** ONLY -1, 0, 1, 2, 3 allowed. ALL other numbers must come from parameters.
+
+### Import syntax
+```yaml
+imports: [26/24/a#ctc_maximum, 26/24/b#ctc_phaseout as phaseout]
+```
+
+### Exemplar (complete variable with parameter and tests)
+```yaml
+parameter ctc_base_amount:
+  description: "Base credit per qualifying child per 26 USC 24(a)"
+  unit: USD
+  values:
+    2018-01-01: 2000
+
+input qualifying_child_count:
+  entity: TaxUnit
+  period: Year
+  dtype: Integer
+  default: 0
+
+variable ctc_maximum:
+  entity: TaxUnit
+  period: Year
+  dtype: Money
+  formula: |
+    return qualifying_child_count * ctc_base_amount
+  tests:
+    - name: "One child"
+      period: 2024-01
+      inputs:
+        qualifying_child_count: 1
+      expect: 2000
+    - name: "No children"
+      period: 2024-01
+      inputs:
+        qualifying_child_count: 0
+      expect: 0
+```
+"""
+
+    def _build_subsection_prompt(
+        self,
+        task: SubsectionTask,
+        citation: str,
+        output_path: Path,
+        statute_text: Optional[str] = None,
+    ) -> str:
+        """Build a focused encoding prompt for a single subsection.
+
+        Includes DSL cheatsheet and exemplar to prevent discovery overhead
+        and edit-test-fail spirals.
+        """
+        parts = [
+            f"Encode {citation} subsection ({task.subsection_id}) - "
+            f'"{task.title}" into RAC format.',
+            "",
+            f"Output: {output_path / task.file_name}",
+            f"Scope: ONLY this subsection. One file: {task.file_name}",
+            "",
+            "## CRITICAL RULES (violations = encoding failure):",
+            "",
+            "1. **FILEPATH = CITATION** - File names MUST be subsection names",
+            "2. **One subsection per file** - Each .rac encodes exactly one statutory subsection",
+            "3. **Only statute values** - No indexed/derived/computed values",
+            "",
+            "Write the .rac file to the output path. Run tests after writing.",
+        ]
+
+        if task.dependencies:
+            dep_files = ", ".join(f"{d}.rac" for d in task.dependencies)
+            parts.append("")
+            parts.append(
+                f"Note: This subsection depends on {dep_files} "
+                f"(already encoded). You may import from those files."
+            )
+
+        if statute_text:
+            parts.append("")
+            parts.append(f"Statute text:\n{statute_text[:5000]}")
+
+        # Append DSL cheatsheet + exemplar (prevents discovery overhead)
+        parts.append(self.DSL_CHEATSHEET)
+
+        return "\n".join(parts)
+
+    def _fetch_statute_text(
+        self,
+        citation: str,
+        xml_path: Optional[Path] = None,
+    ) -> Optional[str]:
+        """Pre-fetch statute text from local USC XML to avoid per-encoder discovery.
+
+        Returns the statute text as a string, or None if not available.
+        """
+        import html as html_mod
+
+        if xml_path is None:
+            xml_path = Path.home() / "RulesFoundation" / "atlas" / "data" / "uscode"
+
+        # Parse citation: "26 USC 24" or "26 USC 25A"
+        citation_clean = (
+            citation.upper().replace("USC", "").replace("§", "").strip()
+        )
+        parts = re.split(r"[\s/]+", citation_clean)
+        if len(parts) < 2:
+            return None
+
+        try:
+            title = int(parts[0])
+        except ValueError:
+            return None
+        section = parts[1]
+
+        xml_file = xml_path / f"usc{title}.xml"
+        if not xml_file.exists():
+            return None
+
+        try:
+            content = xml_file.read_text()
+        except Exception:
+            return None
+
+        identifier = f"/us/usc/t{title}/s{section}"
+        start_pattern = rf'<section[^>]*identifier="{re.escape(identifier)}"[^>]*>'
+        start_match = re.search(start_pattern, content)
+        if not start_match:
+            return None
+
+        # Find matching closing tag
+        start_pos = start_match.start()
+        depth = 0
+        end_pos = start_pos
+        i = start_pos
+        while i < len(content):
+            if content[i : i + 8] == "<section":
+                depth += 1
+            elif content[i : i + 10] == "</section>":
+                depth -= 1
+                if depth == 0:
+                    end_pos = i + 10
+                    break
+            i += 1
+
+        xml_section = content[start_pos:end_pos]
+
+        # Strip tags, preserve text
+        text = re.sub(r"<[^>]+>", " ", xml_section)
+        text = html_mod.unescape(text)
+        text = re.sub(r"\s+", " ", text).strip()
+
+        return text if text else None
+
+    def _batch_small_subsections(
+        self,
+        tasks: List[SubsectionTask],
+        max_batch: int = 4,
+    ) -> List[SubsectionTask]:
+        """Batch related small subsections to reduce per-encoder overhead.
+
+        Groups sibling subsections (same parent path) into batched tasks,
+        unless they have intra-group dependencies.
+        """
+        if len(tasks) <= 3:
+            return list(tasks)
+
+        # Group by parent path (e.g., "g/1", "g/3", "g/4" all have parent "g")
+        from collections import defaultdict
+
+        groups: dict = defaultdict(list)
+        for t in tasks:
+            parts = t.subsection_id.rsplit("/", 1)
+            parent = parts[0] if len(parts) > 1 else ""
+            groups[parent].append(t)
+
+        result = []
+        for parent, group in groups.items():
+            if len(group) < 2 or not parent:
+                # No batching: single items or top-level subsections
+                result.extend(group)
+                continue
+
+            # Check for intra-group dependencies
+            group_ids = {t.subsection_id for t in group}
+
+            # Partition: tasks with deps on group members go unbatched
+            batchable = []
+            unbatchable = []
+            for t in group:
+                has_internal_dep = any(d in group_ids for d in t.dependencies)
+                if has_internal_dep:
+                    unbatchable.append(t)
+                else:
+                    batchable.append(t)
+
+            # Create batches of up to max_batch
+            for i in range(0, len(batchable), max_batch):
+                chunk = batchable[i : i + max_batch]
+                if len(chunk) == 1:
+                    result.append(chunk[0])
+                else:
+                    # Merge into a single compound task
+                    merged_id = ",".join(t.subsection_id for t in chunk)
+                    merged_title = "; ".join(t.title for t in chunk)
+                    merged_files = ",".join(t.file_name for t in chunk)
+                    # Union of all dependencies (excluding batched members)
+                    merged_deps = list(
+                        set(
+                            d
+                            for t in chunk
+                            for d in t.dependencies
+                            if d not in group_ids
+                        )
+                    )
+                    result.append(
+                        SubsectionTask(
+                            subsection_id=merged_id,
+                            title=merged_title,
+                            file_name=merged_files,
+                            dependencies=merged_deps,
+                        )
+                    )
+
+            result.extend(unbatchable)
+
+        return result
+
+    def _build_analyzer_prompt(self, citation: str) -> str:
+        """Build the analysis prompt with structured output instructions."""
+        return f"""Analyze {citation}. Report: subsection tree, encoding order, dependencies.
+
+After your markdown analysis, include a machine-readable block:
+<!-- STRUCTURED_OUTPUT
+{{"subsections": [{{"id": "a", "title": "...", "disposition": "ENCODE", "file": "a.rac"}}, ...],
+ "dependencies": {{"b": ["a"], "d": ["a"]}},
+ "encoding_order": ["a", "c", "e", "f", "b", "d"]}}
+-->
+
+Valid dispositions:
+- "ENCODE" — subsection contains encodable rules (parameters, formulas, eligibility)
+- "SKIP" — subsection is definitional only or cross-references another section
+- "OBSOLETE" — subsection has been repealed, struck, or redesignated (do NOT encode)
+
+List dependencies as subsection IDs that must be encoded first.
+For small related subsections under the same parent (e.g., (g)(1), (g)(3), (g)(4)),
+consider whether they can share a single file."""
+
+    def _build_fallback_encode_prompt(
+        self,
+        citation: str,
+        output_path: Path,
+        statute_text: Optional[str],
+    ) -> str:
+        """Build encoding prompt for single-agent fallback (original behavior)."""
+        return f"""Encode {citation} into RAC format.
+
+Output path: {output_path}
+{f"Statute text: {statute_text[:5000]}" if statute_text else "Fetch statute text as needed."}
+
+## CRITICAL RULES (violations = encoding failure):
+
+1. **FILEPATH = CITATION** - File names MUST be subsection names:
+   - ✓ `statute/26/1/j.rac` for § 1(j)
+   - ✓ `statute/26/1/a.rac` for § 1(a)
+   - ❌ `formulas.rac`, `parameters.rac`, `variables.rac` - WRONG
+
+2. **One subsection per file** - Each .rac encodes exactly one statutory subsection
+
+3. **Only statute values** - No indexed/derived/computed values
+
+Write .rac files to the output path. Run tests after each file."""
+
+    async def _run_encoding_parallel(
+        self,
+        citation: str,
+        output_path: Path,
+        statute_text: Optional[str],
+        analysis_result: str,
+        max_concurrent: int = 5,
+    ) -> List[AgentRun]:
+        """Encode subsections in parallel waves, respecting dependencies."""
+        parsed = self._parse_analyzer_output(analysis_result)
+        if not parsed.subsections:
+            return []
+
+        waves = self._compute_waves(parsed.subsections)
+        semaphore = asyncio.Semaphore(max_concurrent)
+        all_runs: List[AgentRun] = []
+
+        for wave_idx, wave in enumerate(waves):
+            wave_ids = ", ".join(f"({t.subsection_id})" for t in wave)
+            print(
+                f"\n[{datetime.utcnow().strftime('%H:%M:%S')}] "
+                f"ENCODING WAVE {wave_idx}: {wave_ids}",
+                flush=True,
+            )
+
+            async def encode_one(task: SubsectionTask) -> AgentRun:
+                async with semaphore:
+                    prompt = self._build_subsection_prompt(
+                        task, citation, output_path, statute_text
+                    )
+                    return await self._run_agent(
+                        "encoder", prompt, Phase.ENCODING, self.model
+                    )
+
+            results = await asyncio.gather(
+                *[encode_one(t) for t in wave],
+                return_exceptions=True,
+            )
+
+            for i, r in enumerate(results):
+                if isinstance(r, Exception):
+                    print(
+                        f"  FAILED ({wave[i].subsection_id}): {r}",
+                        flush=True,
+                    )
+                else:
+                    all_runs.append(r)
+
+        return all_runs
 
     def _format_oracle_summary(self, context: dict) -> str:
         """Format oracle context for reviewer prompts."""
