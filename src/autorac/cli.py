@@ -199,7 +199,7 @@ def main():
         help="Output directory for .rac files",
     )
     encode_parser.add_argument(
-        "--model", default="claude-opus-4-5-20251101", help="Model to use for encoding"
+        "--model", default="claude-opus-4-6", help="Model to use for encoding"
     )
     encode_parser.add_argument("--db", type=Path, default=DEFAULT_DB)
 

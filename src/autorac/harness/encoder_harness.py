@@ -139,7 +139,7 @@ class EncoderHarness:
         statute_text: str,
         output_path: Path,
         agent_type: str = "autorac:encoder",
-        agent_model: str = "claude-opus-4-5-20251101",
+        agent_model: str = "claude-opus-4-6",
     ) -> tuple[EncodingRun, PipelineResult]:
         """
         Full encode-validate-log cycle.
@@ -189,7 +189,7 @@ class EncoderHarness:
         statute_text: str,
         output_path: Path,
         agent_type: str = "autorac:encoder",
-        agent_model: str = "claude-opus-4-5-20251101",
+        agent_model: str = "claude-opus-4-6",
     ) -> list[tuple[EncodingRun, PipelineResult]]:
         """
         Iteratively encode until all validators pass or max iterations.

@@ -21,6 +21,7 @@ from autorac.harness.sdk_orchestrator import (
     SDKOrchestrator,
     SubsectionTask,
 )
+from autorac.harness.experiment_db import TokenUsage
 
 # --- Constants for DSL cheatsheet / prompt enrichment tests ---
 
@@ -253,11 +254,12 @@ class TestRunEncodingParallel:
         call_order = []
 
         async def mock_run_agent(agent_key, prompt, phase, model):
-            # Extract subsection from prompt
-            for letter in "abcde":
-                if f"({letter})" in prompt:
-                    call_order.append(letter)
-                    break
+            # Extract subsection from prompt — match "subsection (X)"
+            import re
+
+            m = re.search(r"subsection \((\w+)\)", prompt)
+            if m:
+                call_order.append(m.group(1))
             return AgentRun(
                 agent_type="encoder",
                 prompt=prompt,
@@ -568,3 +570,194 @@ class TestSkipObsolete:
         assert hasattr(orchestrator, "_build_analyzer_prompt")
         prompt = orchestrator._build_analyzer_prompt("26 USC 24")
         assert "OBSOLETE" in prompt
+
+
+# --- Test FIX 6: Token cost estimation ---
+
+
+class TestTokenCostEstimation:
+    """Tests for accurate token cost estimation using current Opus 4.5 pricing."""
+
+    def test_estimated_cost_uses_current_opus_pricing(self):
+        """TokenUsage.estimated_cost_usd should use Opus 4.5 rates ($5/$25)."""
+        usage = TokenUsage(
+            input_tokens=1_000_000,
+            output_tokens=1_000_000,
+            cache_read_tokens=0,
+        )
+        # Opus 4.5: $5/M input + $25/M output = $30
+        assert abs(usage.estimated_cost_usd - 30.0) < 0.01
+
+    def test_estimated_cost_cache_read_rate(self):
+        """Cache read tokens priced at 10% of input rate ($0.50/M for Opus 4.5)."""
+        usage = TokenUsage(
+            input_tokens=0,
+            output_tokens=0,
+            cache_read_tokens=1_000_000,
+        )
+        # $0.50/M cache read
+        assert abs(usage.estimated_cost_usd - 0.50) < 0.01
+
+    def test_estimated_cost_cache_creation_rate(self):
+        """Cache creation tokens priced at 1.25x input rate ($6.25/M for Opus 4.5)."""
+        usage = TokenUsage(
+            input_tokens=0,
+            output_tokens=0,
+            cache_read_tokens=0,
+            cache_creation_tokens=1_000_000,
+        )
+        # $6.25/M cache creation
+        assert abs(usage.estimated_cost_usd - 6.25) < 0.01
+
+    def test_estimated_cost_realistic_agent_run(self):
+        """Verify against known SDK-reported cost from 26 USC 32 encoding."""
+        # From the EITC encoding run, first encoder:
+        # SDK reported $0.7496 for 43,362 in + 4,628 out + 692,251 cache_read
+        # The "in" figure includes both input_tokens and cache_creation_tokens
+        # but we can at least verify the order of magnitude is right
+        usage = TokenUsage(
+            input_tokens=43_362,
+            output_tokens=4_628,
+            cache_read_tokens=692_251,
+        )
+        estimated = usage.estimated_cost_usd
+        # Should be in the right ballpark (~$0.70-$1.00), not 3x off (~$2.30)
+        assert estimated < 1.5, f"Estimated ${estimated:.2f} is too high (was ~$2.30 with old rates)"
+        assert estimated > 0.3, f"Estimated ${estimated:.2f} is too low"
+
+    def test_orchestrator_prefers_sdk_cost(self, orchestrator):
+        """OrchestratorRun total should prefer SDK-reported costs over estimation."""
+        runs = [
+            AgentRun(
+                agent_type="encoder",
+                prompt="test",
+                phase=Phase.ENCODING,
+                total_cost=0.75,  # SDK-reported
+                total_tokens=TokenUsage(
+                    input_tokens=43_362,
+                    output_tokens=4_628,
+                    cache_read_tokens=692_251,
+                ),
+            ),
+            AgentRun(
+                agent_type="encoder",
+                prompt="test",
+                phase=Phase.ENCODING,
+                total_cost=1.30,  # SDK-reported
+                total_tokens=TokenUsage(
+                    input_tokens=60_000,
+                    output_tokens=8_000,
+                    cache_read_tokens=1_000_000,
+                ),
+            ),
+        ]
+        total = orchestrator._sum_cost(runs)
+        # Should be $0.75 + $1.30 = $2.05 (from SDK), not token-estimated
+        assert abs(total - 2.05) < 0.01
+
+    def test_orchestrator_falls_back_to_estimated(self, orchestrator):
+        """When SDK cost unavailable, falls back to token-based estimation."""
+        runs = [
+            AgentRun(
+                agent_type="encoder",
+                prompt="test",
+                phase=Phase.ENCODING,
+                total_cost=None,  # No SDK cost
+                total_tokens=TokenUsage(
+                    input_tokens=1_000_000,
+                    output_tokens=100_000,
+                ),
+            ),
+        ]
+        total = orchestrator._sum_cost(runs)
+        # Should use estimated: $5 + $2.50 = $7.50
+        assert total > 0
+        assert abs(total - 7.50) < 0.01
+
+
+# --- Test FIX 7: Incremental DB logging (crash-resilient) ---
+
+
+class TestIncrementalDBLogging:
+    """Tests that agent runs are logged to DB immediately, not batched at end."""
+
+    def test_log_agent_run_method_exists(self, orchestrator):
+        """Orchestrator should have a _log_agent_run method for incremental logging."""
+        assert hasattr(orchestrator, "_log_agent_run")
+        assert callable(orchestrator._log_agent_run)
+
+    def test_log_agent_run_writes_to_db(self, orchestrator, tmp_path):
+        """_log_agent_run should write agent data to experiment DB immediately."""
+        from autorac.harness.experiment_db import ExperimentDB
+
+        db = ExperimentDB(tmp_path / "test.db")
+        orchestrator.experiment_db = db
+
+        session_id = "test-session-001"
+        db.start_session(model="claude-opus-4-6", cwd="/tmp", session_id=session_id)
+
+        agent_run = AgentRun(
+            agent_type="encoder",
+            prompt="Encode 26 USC 24(a)",
+            phase=Phase.ENCODING,
+            total_cost=1.50,
+            total_tokens=TokenUsage(input_tokens=50_000, output_tokens=5_000),
+        )
+
+        orchestrator._log_agent_run(session_id, agent_run)
+
+        # Verify the event was written
+        events = db.get_session_events(session_id)
+        assert len(events) >= 2  # agent_start + agent_end at minimum
+        event_types = [e.event_type for e in events]
+        assert "agent_start" in event_types
+        assert "agent_end" in event_types
+
+    def test_log_agent_run_noop_without_db(self, orchestrator):
+        """_log_agent_run should silently no-op when no experiment_db is set."""
+        orchestrator.experiment_db = None
+        agent_run = AgentRun(
+            agent_type="encoder",
+            prompt="test",
+            phase=Phase.ENCODING,
+        )
+        # Should not raise
+        orchestrator._log_agent_run("fake-session", agent_run)
+
+    def test_session_created_at_encode_start(self, orchestrator, tmp_path):
+        """DB session should be created at the START of encode(), not the end."""
+        from autorac.harness.experiment_db import ExperimentDB
+
+        db = ExperimentDB(tmp_path / "test.db")
+        orchestrator.experiment_db = db
+
+        # Track when session is created vs when agent runs
+        created_sessions = []
+        original_start = db.start_session
+
+        def tracking_start(*args, **kwargs):
+            result = original_start(*args, **kwargs)
+            created_sessions.append(kwargs.get("session_id", args[2] if len(args) > 2 else None))
+            return result
+
+        db.start_session = tracking_start
+
+        # Mock _run_agent to avoid real API calls
+        async def mock_run_agent(agent_key, prompt, phase, model):
+            # Session should already exist by now
+            assert len(created_sessions) > 0, "DB session not created before first agent!"
+            return AgentRun(
+                agent_type=agent_key, prompt=prompt, phase=phase, result="ok"
+            )
+
+        orchestrator._run_agent = mock_run_agent
+
+        import asyncio
+        try:
+            asyncio.run(orchestrator.encode(
+                "26 USC 99", Path(tmp_path / "output"), statute_text="test"
+            ))
+        except Exception:
+            pass  # Expected - mock won't do real work
+
+        assert len(created_sessions) > 0, "Session was never created"

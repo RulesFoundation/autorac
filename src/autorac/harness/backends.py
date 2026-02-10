@@ -270,7 +270,7 @@ class AgentSDKBackend(EncoderBackend):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "claude-opus-4-5-20251101",
+        model: str = "claude-opus-4-6",
         plugin_path: Optional[Path] = None,
     ):
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")

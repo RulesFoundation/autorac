@@ -121,7 +121,7 @@ class TestComputeCalibration:
                 file_path=f"/path/to/file{i}.rac",
                 citation="26 USC 32",
                 agent_type="autorac:encoder",
-                agent_model="claude-opus-4-5-20251101",
+                agent_model="claude-opus-4-6",
                 rac_content="# content",
             )
             run.predicted = PredictedScores(
@@ -159,7 +159,7 @@ class TestComputeCalibration:
                 file_path=f"/path/to/file{i}.rac",
                 citation="26 USC 32",
                 agent_type="autorac:encoder",
-                agent_model="claude-opus-4-5-20251101",
+                agent_model="claude-opus-4-6",
                 rac_content="# content",
             )
             run.predicted = PredictedScores(
@@ -196,7 +196,7 @@ class TestComputeCalibration:
                 file_path=f"/path/to/file{i}.rac",
                 citation="26 USC 32",
                 agent_type="autorac:encoder",
-                agent_model="claude-opus-4-5-20251101",
+                agent_model="claude-opus-4-6",
                 rac_content="# content",
             )
             run.predicted = PredictedScores(
@@ -348,7 +348,7 @@ class TestSamplePredictedVsActualData:
                 file_path=f"/path/to/file{i}.rac",
                 citation="26 USC 32",
                 agent_type="autorac:encoder",
-                agent_model="claude-opus-4-5-20251101",
+                agent_model="claude-opus-4-6",
                 rac_content="# content",
             )
             # Small random-ish variation
@@ -381,7 +381,7 @@ class TestSamplePredictedVsActualData:
                 file_path=f"/path/to/file{i}.rac",
                 citation="26 USC 32",
                 agent_type="autorac:encoder",
-                agent_model="claude-opus-4-5-20251101",
+                agent_model="claude-opus-4-6",
                 rac_content="# content",
             )
             run.predicted = PredictedScores(
@@ -412,7 +412,7 @@ class TestSamplePredictedVsActualData:
                 file_path=f"/path/to/file{i}.rac",
                 citation="26 USC 32",
                 agent_type="autorac:encoder",
-                agent_model="claude-opus-4-5-20251101",
+                agent_model="claude-opus-4-6",
                 rac_content="# content",
             )
             run.predicted = PredictedScores(

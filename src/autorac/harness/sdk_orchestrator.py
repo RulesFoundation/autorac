@@ -240,7 +240,7 @@ class SDKOrchestrator:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "claude-opus-4-5-20251101",
+        model: str = "claude-opus-4-6",
         plugin_path: Optional[Path] = None,
         experiment_db: Optional[ExperimentDB] = None,
     ):
@@ -294,18 +294,20 @@ class SDKOrchestrator:
         )
 
         try:
+            # Create DB session FIRST so all agent data survives crashes
+            if self.experiment_db:
+                self.experiment_db.start_session(
+                    model=self.model,
+                    cwd=str(Path.cwd()),
+                    session_id=run.session_id,
+                )
+
+            # Pre-fetch statute text if not provided
+            if not statute_text:
+                statute_text = self._fetch_statute_text(citation)
+
             # Phase 1: Analysis
-            analysis_prompt = f"""Analyze {citation}. Report: subsection tree, encoding order, dependencies.
-
-After your markdown analysis, include a machine-readable block:
-<!-- STRUCTURED_OUTPUT
-{{"subsections": [{{"id": "a", "title": "...", "disposition": "ENCODE", "file": "a.rac"}}, ...],
- "dependencies": {{"b": ["a"], "d": ["a"]}},
- "encoding_order": ["a", "c", "e", "f", "b", "d"]}}
--->
-
-Use disposition "ENCODE" for subsections to encode, "SKIP" for those to omit.
-List dependencies as subsection IDs that must be encoded first."""
+            analysis_prompt = self._build_analyzer_prompt(citation)
 
             analysis = await self._run_agent(
                 agent_key="analyzer",
@@ -314,13 +316,16 @@ List dependencies as subsection IDs that must be encoded first."""
                 model=self.model,
             )
             run.agent_runs.append(analysis)
+            self._log_agent_run(run.session_id, analysis)
 
             # Phase 2: Encoding (parallel per-subsection when analysis available)
             if analysis.result:
                 encoding_runs = await self._run_encoding_parallel(
                     citation, output_path, statute_text, analysis.result
                 )
-                run.agent_runs.extend(encoding_runs)
+                for enc_run in encoding_runs:
+                    run.agent_runs.append(enc_run)
+                    self._log_agent_run(run.session_id, enc_run)
 
                 if not encoding_runs:
                     # Fallback: no subsections parsed, use single-agent
@@ -338,6 +343,7 @@ List dependencies as subsection IDs that must be encoded first."""
                         model=self.model,
                     )
                     run.agent_runs.append(encoding)
+                    self._log_agent_run(run.session_id, encoding)
             else:
                 # Fallback: no analysis result
                 encode_prompt = self._build_fallback_encode_prompt(
@@ -350,6 +356,7 @@ List dependencies as subsection IDs that must be encoded first."""
                     model=self.model,
                 )
                 run.agent_runs.append(encoding)
+                self._log_agent_run(run.session_id, encoding)
 
             # Check what files were created
             if output_path.exists():
@@ -446,13 +453,12 @@ List dependencies as subsection IDs that must be encoded first."""
                     model=self.model,  # Use configured model
                 )
                 run.agent_runs.append(review)
+                self._log_agent_run(run.session_id, review)
 
             # Phase 5: Report (computed, not an agent)
             run.ended_at = datetime.utcnow()
             run.total_tokens = self._sum_tokens(run.agent_runs)
-            run.total_cost_usd = (
-                run.total_tokens.estimated_cost_usd if run.total_tokens else 0.0
-            )
+            run.total_cost_usd = self._sum_cost(run.agent_runs)
 
             # Log to experiment DB if available
             if self.experiment_db:
@@ -1053,7 +1059,10 @@ Write .rac files to the output path. Run tests after each file."""
         if not parsed.subsections:
             return []
 
-        waves = self._compute_waves(parsed.subsections)
+        # Batch small sibling subsections to reduce per-encoder overhead
+        batched = self._batch_small_subsections(parsed.subsections)
+
+        waves = self._compute_waves(batched)
         semaphore = asyncio.Semaphore(max_concurrent)
         all_runs: List[AgentRun] = []
 
@@ -1113,96 +1122,114 @@ Write .rac files to the output path. Run tests after each file."""
                 total.cache_read_tokens += run.total_tokens.cache_read_tokens
         return total
 
-    def _log_to_db(self, run: OrchestratorRun) -> None:
-        """Log the complete run to experiment database."""
+    def _sum_cost(self, runs: List[AgentRun]) -> float:
+        """Sum costs across agent runs, preferring SDK-reported costs.
+
+        Uses SDK total_cost when available, falls back to token-based estimation.
+        """
+        total = 0.0
+        for run in runs:
+            if run.total_cost is not None:
+                total += run.total_cost
+            elif run.total_tokens:
+                total += run.total_tokens.estimated_cost_usd
+        return total
+
+    def _log_agent_run(self, session_id: str, agent_run: AgentRun) -> None:
+        """Log a single agent run to the DB immediately after it completes.
+
+        Called after each _run_agent() so data survives crashes.
+        """
         if not self.experiment_db:
             return
 
-        # Create session
-        self.experiment_db.start_session(
-            model=self.model, cwd=str(Path.cwd()), session_id=run.session_id
+        # Log agent start
+        self.experiment_db.log_event(
+            session_id=session_id,
+            event_type="agent_start",
+            content=agent_run.prompt,
+            metadata={
+                "agent_type": agent_run.agent_type,
+                "phase": agent_run.phase.value,
+            },
         )
 
-        # Log each agent run as events
-        for agent_run in run.agent_runs:
-            # Log agent start
+        # Log each message
+        for msg in agent_run.messages:
             self.experiment_db.log_event(
-                session_id=run.session_id,
-                event_type="agent_start",
-                content=agent_run.prompt,
+                session_id=session_id,
+                event_type=f"agent_{msg.role}",
+                tool_name=msg.tool_name,
+                content=msg.content,
                 metadata={
                     "agent_type": agent_run.agent_type,
-                    "phase": agent_run.phase.value,
+                    "summary": msg.summary,
+                    "tool_input": msg.tool_input,
+                    "tool_output": msg.tool_output[:1000]
+                    if msg.tool_output
+                    else None,
+                    "tokens": {
+                        "input": msg.tokens.input_tokens if msg.tokens else 0,
+                        "output": msg.tokens.output_tokens if msg.tokens else 0,
+                    }
+                    if msg.tokens
+                    else None,
                 },
             )
 
-            # Log each message
-            for msg in agent_run.messages:
-                self.experiment_db.log_event(
-                    session_id=run.session_id,
-                    event_type=f"agent_{msg.role}",
-                    tool_name=msg.tool_name,
-                    content=msg.content,
-                    metadata={
-                        "agent_type": agent_run.agent_type,
-                        "summary": msg.summary,  # Human-readable summary
-                        "tool_input": msg.tool_input,
-                        "tool_output": msg.tool_output[:1000]
-                        if msg.tool_output
-                        else None,
-                        "tokens": {
-                            "input": msg.tokens.input_tokens if msg.tokens else 0,
-                            "output": msg.tokens.output_tokens if msg.tokens else 0,
-                        }
-                        if msg.tokens
-                        else None,
-                    },
-                )
-
-            # Calculate phase cost
-            phase_cost = (
+        # Calculate phase cost
+        phase_cost = (
+            agent_run.total_cost
+            if agent_run.total_cost is not None
+            else (
                 agent_run.total_tokens.estimated_cost_usd
                 if agent_run.total_tokens
                 else 0
             )
+        )
 
-            # Generate phase summary
-            tool_counts = {}
-            for msg in agent_run.messages:
-                if msg.tool_name:
-                    tool_counts[msg.tool_name] = tool_counts.get(msg.tool_name, 0) + 1
-            tools_summary = ", ".join(
-                f"{t}×{c}" for t, c in sorted(tool_counts.items(), key=lambda x: -x[1])
-            )
+        # Generate phase summary
+        tool_counts = {}
+        for msg in agent_run.messages:
+            if msg.tool_name:
+                tool_counts[msg.tool_name] = tool_counts.get(msg.tool_name, 0) + 1
+        tools_summary = ", ".join(
+            f"{t}×{c}" for t, c in sorted(tool_counts.items(), key=lambda x: -x[1])
+        )
 
-            phase_summary = (
-                f"{agent_run.phase.value.upper()}: {len(agent_run.messages)} events"
-            )
-            if tools_summary:
-                phase_summary += f" ({tools_summary})"
-            if phase_cost > 0:
-                phase_summary += f" - ${phase_cost:.2f}"
+        phase_summary = (
+            f"{agent_run.phase.value.upper()}: {len(agent_run.messages)} events"
+        )
+        if tools_summary:
+            phase_summary += f" ({tools_summary})"
+        if phase_cost > 0:
+            phase_summary += f" - ${phase_cost:.2f}"
 
-            # Log agent end
-            self.experiment_db.log_event(
-                session_id=run.session_id,
-                event_type="agent_end",
-                content=agent_run.result or "",
-                metadata={
-                    "agent_type": agent_run.agent_type,
-                    "phase": agent_run.phase.value,
-                    "summary": phase_summary,
-                    "error": agent_run.error,
-                    "total_tokens": {
-                        "input": agent_run.total_tokens.input_tokens,
-                        "output": agent_run.total_tokens.output_tokens,
-                    }
-                    if agent_run.total_tokens
-                    else None,
-                    "cost_usd": phase_cost,
-                    "tools_used": tool_counts,
-                },
-            )
+        # Log agent end
+        self.experiment_db.log_event(
+            session_id=session_id,
+            event_type="agent_end",
+            content=agent_run.result or "",
+            metadata={
+                "agent_type": agent_run.agent_type,
+                "phase": agent_run.phase.value,
+                "summary": phase_summary,
+                "error": agent_run.error,
+                "total_tokens": {
+                    "input": agent_run.total_tokens.input_tokens,
+                    "output": agent_run.total_tokens.output_tokens,
+                }
+                if agent_run.total_tokens
+                else None,
+                "cost_usd": phase_cost,
+                "tools_used": tool_counts,
+            },
+        )
+
+    def _log_to_db(self, run: OrchestratorRun) -> None:
+        """Finalize session in DB with totals. Agent runs already logged incrementally."""
+        if not self.experiment_db:
+            return
 
         # Update session totals
         if run.total_tokens:

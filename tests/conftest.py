@@ -86,7 +86,7 @@ def sample_encoding_run(sample_predicted_scores, sample_actual_scores):
         file_path="/path/to/statute.rac",
         citation="26 USC 32",
         agent_type="autorac:encoder",
-        agent_model="claude-opus-4-5-20251101",
+        agent_model="claude-opus-4-6",
         rac_content="# EITC variable\nvariable EarnedIncome:\n  dtype: Money\n",
         statute_text="Sample statute text for EITC",
     )

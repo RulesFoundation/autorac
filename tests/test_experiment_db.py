@@ -25,7 +25,7 @@ class TestCreateRun:
             file_path="/path/to/file.rac",
             citation="26 USC 32",
             agent_type="autorac:encoder",
-            agent_model="claude-opus-4-5-20251101",
+            agent_model="claude-opus-4-6",
             rac_content="# content",
         )
         assert run.id is not None
@@ -38,7 +38,7 @@ class TestCreateRun:
             file_path="/path/to/file.rac",
             citation="26 USC 32",
             agent_type="autorac:encoder",
-            agent_model="claude-opus-4-5-20251101",
+            agent_model="claude-opus-4-6",
             rac_content="# content",
         )
         after = datetime.now()
@@ -50,7 +50,7 @@ class TestCreateRun:
             file_path="/path/to/file.rac",
             citation="26 USC 32",
             agent_type="autorac:encoder",
-            agent_model="claude-opus-4-5-20251101",
+            agent_model="claude-opus-4-6",
             rac_content="# content",
         )
         assert run.iteration == 1
@@ -62,7 +62,7 @@ class TestCreateRun:
             file_path="/path/to/file.rac",
             citation="26 USC 32",
             agent_type="autorac:encoder",
-            agent_model="claude-opus-4-5-20251101",
+            agent_model="claude-opus-4-6",
             rac_content="# content",
             parent_run_id="abc12345",
         )
@@ -125,7 +125,7 @@ class TestLogAndRetrieveRuns:
             file_path="/path/to/file.rac",
             citation="26 USC 32",
             agent_type="autorac:encoder",
-            agent_model="claude-opus-4-5-20251101",
+            agent_model="claude-opus-4-6",
             rac_content="# content",
         )
         run.predicted = sample_predicted_scores
@@ -144,7 +144,7 @@ class TestLogAndRetrieveRuns:
             file_path="/path/to/file.rac",
             citation="26 USC 32",
             agent_type="autorac:encoder",
-            agent_model="claude-opus-4-5-20251101",
+            agent_model="claude-opus-4-6",
             rac_content="# content",
         )
         run.actual = sample_actual_scores
@@ -163,7 +163,7 @@ class TestLogAndRetrieveRuns:
             file_path="/path/to/file.rac",
             citation="26 USC 32",
             agent_type="autorac:encoder",
-            agent_model="claude-opus-4-5-20251101",
+            agent_model="claude-opus-4-6",
             rac_content="# content",
         )
         run.suggestions = [
@@ -203,7 +203,7 @@ class TestUpdateActualScores:
             file_path="/path/to/file.rac",
             citation="26 USC 32",
             agent_type="autorac:encoder",
-            agent_model="claude-opus-4-5-20251101",
+            agent_model="claude-opus-4-6",
             rac_content="# content",
         )
         experiment_db.log_run(run)
@@ -234,7 +234,7 @@ class TestListRunsWithFilters:
                 file_path=f"/path/to/file{i}.rac",
                 citation="26 USC 32",
                 agent_type="autorac:encoder",
-                agent_model="claude-opus-4-5-20251101",
+                agent_model="claude-opus-4-6",
                 rac_content=f"# content {i}",
             )
             experiment_db.log_run(run)
@@ -243,7 +243,7 @@ class TestListRunsWithFilters:
             file_path="/path/to/other.rac",
             citation="26 USC 24",  # Different citation
             agent_type="autorac:encoder",
-            agent_model="claude-opus-4-5-20251101",
+            agent_model="claude-opus-4-6",
             rac_content="# other content",
         )
         experiment_db.log_run(run_other)
@@ -266,7 +266,7 @@ class TestListRunsWithFilters:
                 file_path=f"/path/to/file{i}.rac",
                 citation=f"26 USC {i}",
                 agent_type="autorac:encoder",
-                agent_model="claude-opus-4-5-20251101",
+                agent_model="claude-opus-4-6",
                 rac_content=f"# content {i}",
             )
             experiment_db.log_run(run)
@@ -284,7 +284,7 @@ class TestListRunsWithFilters:
             file_path="/path/to/file.rac",
             citation="26 USC 32",
             agent_type="autorac:encoder",
-            agent_model="claude-opus-4-5-20251101",
+            agent_model="claude-opus-4-6",
             rac_content="# content",
         )
         experiment_db.log_run(run)
@@ -310,7 +310,7 @@ class TestCalibrationData:
             file_path="/path/to/file1.rac",
             citation="26 USC 32",
             agent_type="autorac:encoder",
-            agent_model="claude-opus-4-5-20251101",
+            agent_model="claude-opus-4-6",
             rac_content="# content",
         )
         run1.predicted = sample_predicted_scores
@@ -321,7 +321,7 @@ class TestCalibrationData:
             file_path="/path/to/file2.rac",
             citation="26 USC 32",
             agent_type="autorac:encoder",
-            agent_model="claude-opus-4-5-20251101",
+            agent_model="claude-opus-4-6",
             rac_content="# content",
         )
         experiment_db.log_run(run2)
