@@ -821,6 +821,7 @@ variable ctc_maximum:
         citation: str,
         output_path: Path,
         statute_text: Optional[str] = None,
+        subsection_text: Optional[str] = None,
     ) -> str:
         """Build a focused encoding prompt for a single subsection.
 
@@ -851,16 +852,57 @@ variable ctc_maximum:
                 f"(already encoded). You may import from those files."
             )
 
-        if statute_text:
+        if subsection_text:
             parts.append("")
-            parts.append(f"Statute text:\n{statute_text[:5000]}")
+            parts.append(
+                f"Statute text for subsection ({task.subsection_id}):\n{subsection_text}"
+            )
+        elif statute_text:
+            parts.append("")
+            parts.append(f"Full statute text (excerpt):\n{statute_text[:5000]}")
 
         # Append DSL cheatsheet + exemplar (prevents discovery overhead)
         parts.append(self.DSL_CHEATSHEET)
 
         return "\n".join(parts)
 
+    def _get_cached_section(self, citation: str):
+        """Get a cached atlas Section for a citation, or None if unavailable."""
+        if not hasattr(self, "_section_cache"):
+            self._section_cache = {}
+        if citation not in self._section_cache:
+            try:
+                from atlas import Arch
+
+                db_path = Path.home() / "RulesFoundation" / "atlas" / "atlas.db"
+                if not db_path.exists():
+                    self._section_cache[citation] = None
+                else:
+                    a = Arch(db_path=db_path)
+                    self._section_cache[citation] = a.get(citation)
+            except ImportError:
+                self._section_cache[citation] = None
+        return self._section_cache[citation]
+
+    def _fetch_subsection_text(self, citation: str, subsection_id: str) -> Optional[str]:
+        """Fetch text for a specific subsection from atlas."""
+        section = self._get_cached_section(citation)
+        if section is None:
+            return None
+        return section.get_subsection_text(subsection_id)
+
     def _fetch_statute_text(
+        self,
+        citation: str,
+        xml_path: Optional[Path] = None,
+    ) -> Optional[str]:
+        """Fetch statute text — atlas first, fallback to legacy XML regex."""
+        section = self._get_cached_section(citation)
+        if section:
+            return section.text
+        return self._fetch_statute_text_legacy(citation, xml_path)
+
+    def _fetch_statute_text_legacy(
         self,
         citation: str,
         xml_path: Optional[Path] = None,
@@ -1076,8 +1118,13 @@ Write .rac files to the output path. Run tests after each file."""
 
             async def encode_one(task: SubsectionTask) -> AgentRun:
                 async with semaphore:
+                    sub_text = self._fetch_subsection_text(
+                        citation, task.subsection_id
+                    )
                     prompt = self._build_subsection_prompt(
-                        task, citation, output_path, statute_text
+                        task, citation, output_path,
+                        statute_text=statute_text,
+                        subsection_text=sub_text,
                     )
                     return await self._run_agent(
                         "encoder", prompt, Phase.ENCODING, self.model

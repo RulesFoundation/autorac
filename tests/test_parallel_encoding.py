@@ -234,6 +234,18 @@ class TestBuildSubsectionPrompt:
         )
         assert "Some statute text here" in prompt
 
+    def test_subsection_text_preferred_over_full(self, orchestrator):
+        """When both subsection and full text provided, subsection text appears."""
+        task = SubsectionTask("c", "Definitions", "c.rac", [])
+        output_path = Path("/tmp/rac-us/statute/26/24")
+        prompt = orchestrator._build_subsection_prompt(
+            task, "26 USC 24", output_path,
+            statute_text="Full text that should not appear",
+            subsection_text="Subsection-specific text for (c).",
+        )
+        assert "Subsection-specific text for (c)." in prompt
+        assert "Full text that should not appear" not in prompt
+
     def test_mentions_dependencies(self, orchestrator):
         """When deps exist, prompt mentions them for import reference."""
         task = SubsectionTask("b", "Limitations", "b.rac", ["a"])
@@ -292,7 +304,7 @@ class TestRunEncodingParallel:
     async def test_partial_failure(self, orchestrator):
         """One subsection fails, others succeed."""
         async def mock_run_agent(agent_key, prompt, phase, model):
-            if "(b)" in prompt:
+            if "subsection (b)" in prompt:
                 raise RuntimeError("Encoding failed for (b)")
             return AgentRun(
                 agent_type="encoder",
@@ -453,6 +465,39 @@ class TestStatuteTextPrefetch:
         # We just verify the method exists and is callable
         assert hasattr(orchestrator, "_fetch_statute_text")
         assert callable(orchestrator._fetch_statute_text)
+
+    def test_fetch_subsection_text(self, orchestrator):
+        """_fetch_subsection_text returns text for a specific subsection."""
+        db_path = Path.home() / "RulesFoundation" / "atlas" / "atlas.db"
+        if not db_path.exists():
+            pytest.skip("atlas.db not available")
+        sub_text = orchestrator._fetch_subsection_text("26 USC 32", "a")
+        if sub_text is None:
+            pytest.skip("26 USC 32 not in atlas.db")
+        assert isinstance(sub_text, str)
+        assert len(sub_text) > 0
+        # Should be shorter than the full section text
+        full_text = orchestrator._fetch_statute_text("26 USC 32")
+        if full_text:
+            assert len(sub_text) < len(full_text)
+
+    def test_fetch_subsection_text_missing(self, orchestrator):
+        """_fetch_subsection_text returns None for bad path."""
+        result = orchestrator._fetch_subsection_text("99 USC 999", "z")
+        assert result is None
+
+    def test_subsection_text_in_prompt(self, orchestrator):
+        """When subsection text is provided, prompt uses it instead of truncated full text."""
+        task = SubsectionTask("c", "Definitions", "c.rac", [])
+        output_path = Path("/tmp/rac-us/statute/26/32")
+        prompt = orchestrator._build_subsection_prompt(
+            task, "26 USC 32", output_path,
+            statute_text="Full statute text here" * 500,
+            subsection_text="Specific subsection (c) definitions text.",
+        )
+        assert "Specific subsection (c) definitions text." in prompt
+        # Should NOT contain the truncated full text when subsection text is available
+        assert "Full statute text here" not in prompt
 
 
 # --- Test FIX 4: Batch small subsections ---

@@ -119,7 +119,7 @@ def main():
     # init command - create stubs for all subsections
     init_parser = subparsers.add_parser(
         "init",
-        help="Initialize encoding: create stubs for all subsections with text from arch",
+        help="Initialize encoding: create stubs for all subsections with text from atlas",
     )
     init_parser.add_argument("citation", help="Citation like '26 USC 1' or '26/1'")
     init_parser.add_argument(
@@ -1124,7 +1124,7 @@ def _extract_subsections_from_xml(xml_path: Path, section: str) -> list[dict]:
 
 
 def cmd_init(args):
-    """Initialize encoding: create stubs for all subsections with text from arch.
+    """Initialize encoding: create stubs for all subsections with text from atlas.
 
     Uses local USC XML as primary source (faster, more reliable).
     """
