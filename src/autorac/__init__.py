@@ -1,6 +1,7 @@
 # AutoRAC - AI-assisted RAC encoding
 # Feedback loop infrastructure for automated statute encoding
 
+from .constants import DEFAULT_CLI_MODEL, DEFAULT_MODEL, REVIEWER_CLI_MODEL
 from .harness import (
     ActualScores,
     AgentSDKBackend,
@@ -35,6 +36,9 @@ from .harness import (
 )
 
 __all__ = [
+    "DEFAULT_MODEL",
+    "DEFAULT_CLI_MODEL",
+    "REVIEWER_CLI_MODEL",
     "ExperimentDB",
     "EncodingRun",
     "ComplexityFactors",

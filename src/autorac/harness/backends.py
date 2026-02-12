@@ -19,6 +19,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
+from autorac.constants import DEFAULT_CLI_MODEL, DEFAULT_MODEL
+
+from .experiment_db import TokenUsage
+
 
 @dataclass
 class EncoderRequest:
@@ -28,31 +32,8 @@ class EncoderRequest:
     statute_text: str
     output_path: Path
     agent_type: str = "cosilico:RAC Encoder"
-    model: str = "opus"
+    model: str = DEFAULT_CLI_MODEL
     timeout: int = 300
-
-
-@dataclass
-class TokenUsage:
-    """Token usage from an encoding operation."""
-
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read_tokens: int = 0
-    cache_creation_tokens: int = 0
-
-    @property
-    def total_tokens(self) -> int:
-        return self.input_tokens + self.output_tokens
-
-    @property
-    def estimated_cost_usd(self) -> float:
-        """Rough cost estimate (Opus pricing as of 2025)."""
-        return (
-            self.input_tokens * 15 / 1_000_000
-            + self.output_tokens * 75 / 1_000_000
-            + self.cache_read_tokens * 1.875 / 1_000_000
-        )
 
 
 @dataclass
@@ -184,7 +165,7 @@ Score each dimension from 1-10. Output ONLY valid JSON:
         try:
             output, returncode = self._run_claude_code(
                 prompt=prompt,
-                model="opus",
+                model=DEFAULT_CLI_MODEL,
                 timeout=60,
             )
 
@@ -214,7 +195,7 @@ Score each dimension from 1-10. Output ONLY valid JSON:
         self,
         prompt: str,
         agent: Optional[str] = None,
-        model: str = "sonnet",
+        model: str = DEFAULT_CLI_MODEL,
         timeout: int = 300,
     ) -> tuple[str, int]:
         """Run Claude Code CLI as subprocess."""
@@ -270,13 +251,13 @@ class AgentSDKBackend(EncoderBackend):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "claude-opus-4-5-20251101",
+        model: str | None = None,
         plugin_path: Optional[Path] = None,
     ):
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not self.api_key:
             raise ValueError("ANTHROPIC_API_KEY required for AgentSDKBackend")
-        self.model = model
+        self.model = model or DEFAULT_MODEL
         self.plugin_path = (
             Path(plugin_path) if plugin_path else self.DEFAULT_PLUGIN_PATH
         )

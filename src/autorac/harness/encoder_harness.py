@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from autorac.constants import DEFAULT_CLI_MODEL, DEFAULT_MODEL
+
 from .experiment_db import (
     AgentSuggestion,
     EncodingRun,
@@ -32,7 +34,7 @@ from .validator_pipeline import PipelineResult, ValidatorPipeline
 def run_claude_code(
     prompt: str,
     agent: Optional[str] = None,
-    model: str = "sonnet",
+    model: str = DEFAULT_CLI_MODEL,
     timeout: int = 300,
     cwd: Optional[Path] = None,
     plugin_dir: Optional[Path] = None,
@@ -139,13 +141,14 @@ class EncoderHarness:
         statute_text: str,
         output_path: Path,
         agent_type: str = "autorac:encoder",
-        agent_model: str = "claude-opus-4-5-20251101",
+        agent_model: str | None = None,
     ) -> tuple[EncodingRun, PipelineResult]:
         """
         Full encode-validate-log cycle.
 
         Returns the encoding run and validation results.
         """
+        agent_model = agent_model or DEFAULT_MODEL
         start = time.time()
 
         # Step 1: Get predictions from agent
@@ -189,13 +192,14 @@ class EncoderHarness:
         statute_text: str,
         output_path: Path,
         agent_type: str = "autorac:encoder",
-        agent_model: str = "claude-opus-4-5-20251101",
+        agent_model: str | None = None,
     ) -> list[tuple[EncodingRun, PipelineResult]]:
         """
         Iteratively encode until all validators pass or max iterations.
 
         Returns list of (run, result) for each iteration.
         """
+        agent_model = agent_model or DEFAULT_MODEL
         iterations = []
         parent_run_id = None
 
@@ -252,7 +256,7 @@ Score each dimension from 1-10. Output ONLY valid JSON:
         try:
             output, returncode = run_claude_code(
                 prompt,
-                model="opus",
+                model=DEFAULT_CLI_MODEL,
                 timeout=60,
                 cwd=self.config.rac_us_path,
             )
@@ -311,7 +315,7 @@ Use the Write tool to create the .rac file at the specified path.
             output, returncode = run_claude_code(
                 prompt,
                 agent="cosilico:RAC Encoder",
-                model="opus",
+                model=DEFAULT_CLI_MODEL,
                 timeout=300,
                 cwd=self.config.rac_us_path,
                 plugin_dir=self.config.cosilico_plugin_path,
@@ -424,7 +428,7 @@ Output ONLY valid JSON array:
         try:
             output, returncode = run_claude_code(
                 prompt,
-                model="opus",
+                model=DEFAULT_CLI_MODEL,
                 timeout=60,
                 cwd=self.config.rac_us_path,
             )

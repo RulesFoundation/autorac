@@ -27,12 +27,14 @@ from typing import Any, Optional
 
 import yaml
 
+from autorac.constants import REVIEWER_CLI_MODEL
+
 from .experiment_db import ActualScores, ExperimentDB
 
 
 def run_claude_code(
     prompt: str,
-    model: str = "haiku",
+    model: str = REVIEWER_CLI_MODEL,
     timeout: int = 120,
     cwd: Optional[Path] = None,
 ) -> tuple[str, int]:
@@ -646,7 +648,7 @@ Output ONLY valid JSON:
         try:
             output, returncode = run_claude_code(
                 prompt,
-                model="opus",
+                model=REVIEWER_CLI_MODEL,
                 timeout=120,
                 cwd=self.rac_us_path,
             )
@@ -677,23 +679,121 @@ Output ONLY valid JSON:
             duration = int((time.time() - start) * 1000)
             return ValidationResult(
                 validator_name=reviewer_type,
-                passed=True,  # Fail open when CLI errors
-                score=8.0,  # Placeholder
+                passed=False,
+                score=None,
                 issues=[f"Reviewer error: {e}"],
                 duration_ms=duration,
                 error=str(e),
             )
 
+    def _find_pe_python(self) -> Optional[str]:
+        """Find a Python interpreter with policyengine-us installed.
+
+        Checks: 1) current interpreter, 2) known PE venv paths.
+        Returns the path to a working Python, or None.
+        """
+        # Try current interpreter first
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "from policyengine_us import Simulation; print('ok')",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode == 0 and "ok" in result.stdout:
+                return sys.executable
+        except Exception:
+            pass
+
+        # Try known PE venv locations
+        pe_venv_paths = [
+            Path.home() / "policyengine-us" / ".venv" / "bin" / "python",
+            Path.home()
+            / "RulesFoundation"
+            / "policyengine-us"
+            / ".venv"
+            / "bin"
+            / "python",
+            Path.home()
+            / "PolicyEngine"
+            / "policyengine-us"
+            / ".venv"
+            / "bin"
+            / "python",
+        ]
+        for pe_python in pe_venv_paths:
+            if pe_python.exists():
+                try:
+                    result = subprocess.run(
+                        [
+                            str(pe_python),
+                            "-c",
+                            "from policyengine_us import Simulation; print('ok')",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                    if result.returncode == 0 and "ok" in result.stdout:
+                        return str(pe_python)
+                except Exception:
+                    continue
+
+        # Try auto-installing into current venv as last resort
+        try:
+            print("  PolicyEngine not found, attempting install...")
+            install_result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "policyengine-us"],
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            if install_result.returncode == 0:
+                return sys.executable
+            else:
+                print(f"  Install failed: {install_result.stderr[:200]}")
+        except Exception as e:
+            print(f"  Auto-install failed: {e}")
+
+        return None
+
+    def _run_pe_subprocess(self, script: str, pe_python: str) -> Optional[str]:
+        """Run a Python script using the PE-capable interpreter.
+
+        Returns stdout on success, None on failure.
+        """
+        try:
+            result = subprocess.run(
+                [pe_python, "-c", script],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if result.returncode == 0:
+                return result.stdout
+            return None
+        except Exception:
+            return None
+
     def _run_policyengine(self, rac_file: Path) -> ValidationResult:
         """Validate against PolicyEngine oracle.
 
-        Extracts test cases from RAC file, runs inputs through PolicyEngine,
-        and compares outputs. Returns match rate as score (0-1).
+        Uses scenario-based comparison: builds standard PE households from
+        RAC test case inputs and compares the PE-calculated output variable
+        against the RAC test's expected value.
+
+        For programs like SNAP where RAC tests use intermediate inputs
+        (snap_net_income, thrifty_food_plan_cost), we run PE with equivalent
+        raw household scenarios and compare at the output variable level.
         """
         start = time.time()
         issues = []
 
-        # Read and parse RAC file to extract test cases
+        # Read and parse RAC file
         try:
             rac_content = Path(rac_file).read_text()
         except Exception as e:
@@ -707,88 +807,108 @@ Output ONLY valid JSON:
                 error=str(e),
             )
 
-        # Try to extract tests from RAC content
-        tests = self._extract_tests_from_rac(rac_content)
+        # Extract per-variable tests from RAC v2 format
+        tests = self._extract_tests_from_rac_v2(rac_content)
 
         if not tests:
             duration = int((time.time() - start) * 1000)
             return ValidationResult(
                 validator_name="policyengine",
-                passed=True,  # Pass if no tests (nothing to validate)
-                score=1.0,
-                issues=["No test cases found to validate"],
+                passed=True,
+                score=None,
+                issues=["No test cases with expected values found"],
                 duration_ms=duration,
             )
 
-        # Try to run through PolicyEngine
-        try:
-            # Import PolicyEngine if available
-            try:
-                from policyengine_us import Simulation
+        # Find a PE-capable Python interpreter
+        pe_python = self._find_pe_python()
+        if not pe_python:
+            duration = int((time.time() - start) * 1000)
+            return ValidationResult(
+                validator_name="policyengine",
+                passed=False,
+                score=None,
+                issues=[
+                    "No PolicyEngine-capable Python found (tried local, known venvs, auto-install)"
+                ],
+                duration_ms=duration,
+                error="policyengine-us not available",
+            )
 
-                pe_available = True
-            except ImportError:
-                pe_available = False
+        # Map RAC variables to PE variables
+        pe_var_map = self._get_pe_variable_map()
 
-            if not pe_available:
-                duration = int((time.time() - start) * 1000)
-                return ValidationResult(
-                    validator_name="policyengine",
-                    passed=True,  # Pass when PE not available
-                    score=0.95,  # Placeholder
-                    issues=["PolicyEngine not installed - using placeholder"],
-                    duration_ms=duration,
+        # Run comparison for each test
+        matches = 0
+        total = 0
+        for test in tests:
+            rac_var = test.get("variable", "")
+            pe_var = pe_var_map.get(rac_var)
+            expected = test.get("expect")
+            inputs = test.get("inputs", {})
+            period = test.get("period", "2024-01")
+            year = period.split("-")[0] if "-" in str(period) else str(period)
+
+            if expected is None:
+                continue
+
+            if not pe_var:
+                issues.append(f"No PE mapping for RAC variable '{rac_var}'")
+                total += 1
+                continue
+
+            # Build and run PE scenario — include period in inputs for monthly detection
+            inputs_with_period = {**inputs, "period": str(period)}
+            scenario_script = self._build_pe_scenario_script(
+                pe_var, inputs_with_period, year, expected
+            )
+            output = self._run_pe_subprocess(scenario_script, pe_python)
+
+            if output is None:
+                issues.append(
+                    f"PE calculation failed for '{test.get('name', rac_var)}'"
                 )
+                total += 1
+                continue
 
-            # Run tests through PolicyEngine
-            matches = 0
-            total = 0
-            for test in tests:
-                try:
-                    # Build situation from test inputs
-                    # This is a simplified version - real impl would map RAC vars to PE vars
-                    situation = self._build_pe_situation(test.get("inputs", {}))
-
-                    sim = Simulation(situation=situation)
-
-                    # Compare expected output with PE result
-                    expected = test.get("expect")
-                    if expected is not None:
-                        # Extract variable name from test
-                        var_name = test.get("variable", "")
-                        if var_name:
-                            pe_result = sim.calculate(var_name)
-                            if self._values_match(pe_result, expected):
-                                matches += 1
+            # Parse result
+            try:
+                lines = output.strip().split("\n")
+                result_line = [line for line in lines if line.startswith("RESULT:")]
+                if result_line:
+                    parts = result_line[0].split(":")
+                    pe_value = float(parts[1])
+                    expected_float = float(expected)
+                    match = self._values_match(pe_value, expected_float, tolerance=0.02)
+                    if match:
+                        matches += 1
+                    else:
+                        issues.append(
+                            f"'{test.get('name', rac_var)}': PE={pe_value:.2f}, RAC expects={expected_float:.2f}"
+                        )
                     total += 1
-                except Exception as test_error:
+                else:
                     issues.append(
-                        f"Test '{test.get('name', 'unknown')}' failed: {test_error}"
+                        f"No RESULT in PE output for '{test.get('name', rac_var)}'"
                     )
                     total += 1
+            except Exception as parse_err:
+                issues.append(
+                    f"Parse error for '{test.get('name', rac_var)}': {parse_err}"
+                )
+                total += 1
 
-            score = matches / total if total > 0 else 0.0
-            passed = score >= 0.8  # 80% match threshold
+        score = matches / total if total > 0 else None
+        passed = score is not None and score >= 0.8
 
-            duration = int((time.time() - start) * 1000)
-            return ValidationResult(
-                validator_name="policyengine",
-                passed=passed,
-                score=score,
-                issues=issues,
-                duration_ms=duration,
-            )
-
-        except Exception as e:
-            duration = int((time.time() - start) * 1000)
-            return ValidationResult(
-                validator_name="policyengine",
-                passed=True,  # Fail open
-                score=0.95,  # Placeholder
-                issues=[f"PolicyEngine validation error: {e}"],
-                duration_ms=duration,
-                error=str(e),
-            )
+        duration = int((time.time() - start) * 1000)
+        return ValidationResult(
+            validator_name="policyengine",
+            passed=passed,
+            score=score,
+            issues=issues,
+            duration_ms=duration,
+        )
 
     def _run_taxsim(self, rac_file: Path) -> ValidationResult:
         """Validate against TAXSIM oracle.
@@ -890,17 +1010,18 @@ Output ONLY valid JSON:
             duration = int((time.time() - start) * 1000)
             return ValidationResult(
                 validator_name="taxsim",
-                passed=True,
-                score=0.92,  # Placeholder
-                issues=["requests package not installed - using placeholder"],
+                passed=False,
+                score=None,
+                issues=["requests package not installed for TAXSIM API"],
                 duration_ms=duration,
+                error="requests not available",
             )
         except Exception as e:
             duration = int((time.time() - start) * 1000)
             return ValidationResult(
                 validator_name="taxsim",
-                passed=True,  # Fail open
-                score=0.92,  # Placeholder
+                passed=False,
+                score=None,
                 issues=[f"TAXSIM validation error: {e}"],
                 duration_ms=duration,
                 error=str(e),
@@ -1038,6 +1159,212 @@ Output ONLY valid JSON:
         except (ValueError, TypeError):
             # Fall back to string comparison
             return str(actual) == str(expected)
+
+    def _extract_tests_from_rac_v2(self, rac_content: str) -> list[dict]:
+        """Extract test cases from RAC v2 format with per-variable tests.
+
+        RAC v2 has tests nested under each variable:
+            variable snap_allotment:
+              ...
+              tests:
+                - name: "test name"
+                  period: 2024-10
+                  inputs:
+                    household_size: 4
+                  expect: 973
+
+        Returns list of dicts with keys: variable, name, period, inputs, expect.
+        """
+        tests = []
+
+        # Find all variable blocks with their tests
+        # Pattern: "variable <name>:" ... "tests:" ... (next variable or EOF)
+        var_pattern = re.compile(
+            r"^variable\s+(\w+):\s*\n(.*?)(?=^variable\s+\w+:|\Z)",
+            re.MULTILINE | re.DOTALL,
+        )
+
+        for var_match in var_pattern.finditer(rac_content):
+            var_name = var_match.group(1)
+            var_block = var_match.group(2)
+
+            # Find tests section within this variable block
+            tests_pattern = re.compile(
+                r"^\s+tests:\s*\n((?:\s+-.*\n?|\s+\w.*\n?)*)",
+                re.MULTILINE,
+            )
+            tests_match = tests_pattern.search(var_block)
+            if not tests_match:
+                continue
+
+            tests_yaml_str = tests_match.group(1)
+            try:
+                parsed = yaml.safe_load(f"items:\n{tests_yaml_str}")
+                if parsed and "items" in parsed and isinstance(parsed["items"], list):
+                    for test_case in parsed["items"]:
+                        if isinstance(test_case, dict) and "expect" in test_case:
+                            test_case["variable"] = var_name
+                            tests.append(test_case)
+            except Exception:
+                # Try individual test extraction as fallback
+                pass
+
+        # If no v2-style tests found, fall back to legacy extraction
+        if not tests:
+            tests = self._extract_tests_from_rac(rac_content)
+
+        return tests
+
+    def _get_pe_variable_map(self) -> dict[str, str]:
+        """Map RAC variable names to PolicyEngine variable names.
+
+        Returns dict of rac_var_name -> pe_var_name.
+        """
+        return {
+            # EITC
+            "eitc": "eitc",
+            "earned_income_credit": "eitc",
+            "eitc_amount": "eitc",
+            # CTC
+            "ctc": "ctc",
+            "child_tax_credit": "ctc",
+            # Income tax
+            "income_tax": "income_tax",
+            "federal_income_tax": "income_tax",
+            # Standard deduction
+            "standard_deduction": "standard_deduction",
+            "basic_standard_deduction": "basic_standard_deduction",
+            # AGI
+            "agi": "adjusted_gross_income",
+            "adjusted_gross_income": "adjusted_gross_income",
+            # SNAP
+            "snap_allotment": "snap_normal_allotment",
+            "snap_benefits": "snap",
+            "snap": "snap",
+            "snap_maximum_allotment": "snap_max_allotment",
+            "minimum_allotment": "snap_min_allotment",
+            "snap_net_income_calculation": "snap_net_income",
+        }
+
+    # PE variables that are defined as monthly (not annual)
+    _PE_MONTHLY_VARS = {
+        "snap",
+        "snap_normal_allotment",
+        "snap_max_allotment",
+        "snap_net_income",
+        "snap_expected_contribution",
+        "snap_min_allotment",
+        "snap_gross_income",
+        "snap_emergency_allotment",
+        "ssi",
+        "ssi_amount_if_eligible",
+        "tanf",
+    }
+
+    # PE variables at spm_unit level (need spm_units in situation)
+    _PE_SPM_VARS = {
+        "snap",
+        "snap_normal_allotment",
+        "snap_max_allotment",
+        "snap_net_income",
+        "snap_expected_contribution",
+        "snap_min_allotment",
+    }
+
+    def _build_pe_scenario_script(
+        self, pe_var: str, inputs: dict, year: str, expected: Any
+    ) -> str:
+        """Build a Python script to run a PE scenario via subprocess.
+
+        Handles period detection (monthly vs annual PE variables),
+        builds appropriate household structures, and overrides PE
+        intermediate variables to match RAC test inputs for apples-to-apples
+        comparison.
+        """
+        # Determine household composition from inputs
+        household_size = inputs.get("household_size", 1)
+        filing_status = inputs.get("filing_status", "SINGLE")
+
+        # Determine period for calculation
+        is_monthly = pe_var in self._PE_MONTHLY_VARS
+        if is_monthly:
+            period = inputs.get("period", f"{year}-01")
+            if "-" not in str(period):
+                period = f"{year}-01"
+            calc_period = f"'{period}'"
+        else:
+            calc_period = f"int('{year}')"
+
+        # Build people
+        people_parts = [f"'adult': {{'age': {{'{year}': 30}}}}"]
+        members = ["'adult'"]
+
+        # Check for employment income / earned income
+        earned = inputs.get(
+            "employment_income", inputs.get("earned_income", inputs.get("wages", 0))
+        )
+        if earned:
+            people_parts[0] = (
+                f"'adult': {{'age': {{'{year}': 30}}, 'employment_income': {{'{year}': {earned}}}}}"
+            )
+
+        # Add spouse if joint
+        if filing_status.upper() in ("JOINT", "MARRIED_FILING_JOINTLY"):
+            people_parts.append(f"'spouse': {{'age': {{'{year}': 30}}}}")
+            members.append("'spouse'")
+
+        # Add children based on household_size (subtract adults)
+        num_adults = (
+            2 if filing_status.upper() in ("JOINT", "MARRIED_FILING_JOINTLY") else 1
+        )
+        num_children = max(0, int(household_size) - num_adults)
+        for i in range(num_children):
+            people_parts.append(
+                f"'child{i}': {{'age': {{'{year}': 8}}, 'is_tax_unit_dependent': {{'{year}': True}}}}"
+            )
+            members.append(f"'child{i}'")
+
+        members_str = "[" + ", ".join(members) + "]"
+        people_str = "{" + ", ".join(people_parts) + "}"
+
+        # Build SPM unit overrides for SNAP intermediate variables
+        # This allows apples-to-apples comparison when RAC tests pass
+        # pre-computed intermediate values (snap_net_income, etc.)
+        snap_overridable = {
+            "snap_net_income": "snap_net_income",
+            "snap_gross_income": "snap_gross_income",
+        }
+        override_parts = []
+        for rac_key, pe_key in snap_overridable.items():
+            if rac_key in inputs:
+                val = inputs[rac_key]
+                if is_monthly:
+                    override_parts.append(f"'{pe_key}': {{'{period}': {val}}}")
+                else:
+                    override_parts.append(f"'{pe_key}': {{'{year}': {val}}}")
+
+        spm_extra = ""
+        if override_parts:
+            spm_extra = ", " + ", ".join(override_parts)
+
+        script = f"""
+from policyengine_us import Simulation
+
+situation = {{
+    'people': {people_str},
+    'tax_units': {{'tu': {{'members': {members_str}}}}},
+    'spm_units': {{'spm': {{'members': {members_str}{spm_extra}}}}},
+    'households': {{'hh': {{'members': {members_str}, 'state_name': {{'{year}': 'CA'}}}}}},
+    'families': {{'fam': {{'members': {members_str}}}}},
+    'marital_units': {{'mu': {{'members': ['adult']}}}},
+}}
+
+sim = Simulation(situation=situation)
+result = sim.calculate('{pe_var}', {calc_period})
+val = float(result[0]) if hasattr(result, '__len__') and len(result) > 0 else float(result)
+print(f'RESULT:{{val}}')
+"""
+        return script
 
 
 def validate_file(rac_file: str | Path) -> PipelineResult:

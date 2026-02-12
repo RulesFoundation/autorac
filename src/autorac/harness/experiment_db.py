@@ -66,12 +66,16 @@ class TokenUsage:
 
     @property
     def estimated_cost_usd(self) -> float:
-        """Rough cost estimate (Opus pricing as of 2025)."""
-        # $15/M input, $75/M output, $1.875/M cache read
+        """Cost estimate using Opus 4.5 pricing (updated Feb 2026).
+
+        Rates: $5/M input, $25/M output, $0.50/M cache read, $6.25/M cache create.
+        Source: https://platform.claude.com/docs/en/about-claude/pricing
+        """
         return (
-            self.input_tokens * 15 / 1_000_000
-            + self.output_tokens * 75 / 1_000_000
-            + self.cache_read_tokens * 1.875 / 1_000_000
+            self.input_tokens * 5 / 1_000_000
+            + self.output_tokens * 25 / 1_000_000
+            + self.cache_read_tokens * 0.50 / 1_000_000
+            + self.cache_creation_tokens * 6.25 / 1_000_000
         )
 
 
@@ -261,7 +265,7 @@ class EncodingRun:
 
     # Agent info
     agent_type: str = "encoder"
-    agent_model: str = "claude-opus-4-5-20251101"
+    agent_model: str = ""
 
     # Suggestions for framework improvement
     suggestions: list[AgentSuggestion] = field(default_factory=list)
@@ -911,15 +915,19 @@ class ExperimentDB:
             )
 
         # Parse suggestions
-        suggestions = [
-            AgentSuggestion(
-                category=s_data.get("category", "documentation"),
-                description=s_data.get("description", ""),
-                predicted_impact=s_data.get("predicted_impact", "medium"),
-                specific_change=s_data.get("specific_change"),
-            )
-            for s_data in json.loads(suggestions_json)
-        ] if suggestions_json else []
+        suggestions = (
+            [
+                AgentSuggestion(
+                    category=s_data.get("category", "documentation"),
+                    description=s_data.get("description", ""),
+                    predicted_impact=s_data.get("predicted_impact", "medium"),
+                    specific_change=s_data.get("specific_change"),
+                )
+                for s_data in json.loads(suggestions_json)
+            ]
+            if suggestions_json
+            else []
+        )
 
         return EncodingRun(
             id=id,
@@ -1426,12 +1434,12 @@ class ExperimentDB:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        # Estimate cost (Opus pricing)
-        estimated_cost = (
-            input_tokens * 15 / 1_000_000
-            + output_tokens * 75 / 1_000_000
-            + cache_read_tokens * 1.875 / 1_000_000
-        )
+        estimated_cost = TokenUsage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+        ).estimated_cost_usd
 
         cursor.execute(
             """
