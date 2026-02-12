@@ -9,6 +9,7 @@ This is the scientific-grade orchestrator for calibration experiments.
 
 import asyncio
 import json
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -16,6 +17,8 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import List, Optional
+
+from autorac.constants import DEFAULT_MODEL
 
 from .experiment_db import ExperimentDB, TokenUsage
 from .validator_pipeline import ValidatorPipeline
@@ -157,9 +160,6 @@ def _summarize_thinking(content: str) -> Optional[str]:
     if not content:
         return None
 
-    # Look for thinking tags
-    import re
-
     thinking_match = re.search(r"<thinking>([\s\S]*?)</thinking>", content)
     if thinking_match:
         thinking = thinking_match.group(1).strip()
@@ -244,13 +244,9 @@ class SDKOrchestrator:
         plugin_path: Optional[Path] = None,
         experiment_db: Optional[ExperimentDB] = None,
     ):
-        import os
-
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not self.api_key:
             raise ValueError("ANTHROPIC_API_KEY required")
-
-        from autorac.constants import DEFAULT_MODEL
 
         self.model = model or DEFAULT_MODEL
         self.plugin_path = plugin_path or self._find_plugin_path()

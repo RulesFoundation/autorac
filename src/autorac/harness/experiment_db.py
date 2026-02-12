@@ -1434,12 +1434,12 @@ class ExperimentDB:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        # Estimate cost (Opus 4.5 pricing, updated Feb 2026)
-        estimated_cost = (
-            input_tokens * 5 / 1_000_000
-            + output_tokens * 25 / 1_000_000
-            + cache_read_tokens * 0.50 / 1_000_000
-        )
+        estimated_cost = TokenUsage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+        ).estimated_cost_usd
 
         cursor.execute(
             """
