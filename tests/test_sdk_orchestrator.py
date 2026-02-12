@@ -4,12 +4,10 @@ Tests for sdk_orchestrator module.
 All external dependencies (Claude Agent SDK, subprocess) are mocked.
 """
 
-import asyncio
-import json
 import os
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -25,7 +23,6 @@ from autorac.harness.sdk_orchestrator import (
     _summarize_thinking,
     _summarize_tool_call,
 )
-
 
 # =========================================================================
 # Test utility functions
@@ -290,10 +287,11 @@ class TestFetchStatuteText:
     def test_fetch_statute_text(self, tmp_path):
         with patch.object(SDKOrchestrator, "_find_plugin_path", return_value=tmp_path):
             orch = SDKOrchestrator(api_key="key")
-            # _fetch_statute_text should call autorac statute command or similar
-            # Since it uses subprocess, we mock it
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value = Mock(stdout="Statute text", returncode=0)
+            # _fetch_statute_text tries atlas cache then legacy XML.
+            # Mock the legacy path to return text.
+            with patch.object(
+                orch, "_fetch_statute_text_legacy", return_value="Statute text"
+            ):
                 result = orch._fetch_statute_text("26 USC 1")
                 assert isinstance(result, str)
 
@@ -566,7 +564,7 @@ class TestLogAgentRun:
 
     def test_log_with_tools_and_cost(self, tmp_path):
         """Test _log_agent_run with tool counts and cost."""
-        from autorac.harness.experiment_db import ExperimentDB, TokenUsage
+        from autorac.harness.experiment_db import ExperimentDB
 
         db = ExperimentDB(tmp_path / "test.db")
         session = db.start_session(model="test")
@@ -982,8 +980,6 @@ class TestRunAgent:
 
             mock_sdk = MagicMock()
 
-            event_count = 0
-
             class ResultMessage:
                 """Named to match type(event).__name__ == 'ResultMessage' check."""
 
@@ -1343,7 +1339,7 @@ class TestRunAgentWithSystemPrompt:
             mock_sdk.ClaudeAgentOptions = MagicMock()
 
             with patch.dict("sys.modules", {"claude_agent_sdk": mock_sdk}):
-                result = await orch._run_agent(
+                await orch._run_agent(
                     agent_key="encoder",
                     prompt="Encode 26 USC 1",
                     phase=Phase.ENCODING,

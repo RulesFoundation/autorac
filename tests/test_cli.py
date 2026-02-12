@@ -6,18 +6,13 @@ All external dependencies are mocked.
 """
 
 import json
-import os
-import subprocess
-import sys
 import tempfile
-from datetime import datetime
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from autorac.cli import (
-    DEFAULT_DB,
     _extract_subsections_from_xml,
     cmd_benchmark,
     cmd_calibration,
@@ -48,10 +43,7 @@ from autorac.harness.experiment_db import (
     Iteration,
     IterationError,
     PredictedScores,
-    Session,
-    SessionEvent,
 )
-
 
 # =========================================================================
 # Test main() dispatch
@@ -919,7 +911,7 @@ class TestCmdCalibration:
 
     def test_no_calibration_data(self, capsys, tmp_path):
         db_path = tmp_path / "test.db"
-        db = ExperimentDB(db_path)
+        ExperimentDB(db_path)
         args = MagicMock()
         args.db = db_path
         args.limit = 50
@@ -1053,7 +1045,7 @@ class TestCmdRuns:
 
     def test_no_runs(self, capsys, tmp_path):
         db_path = tmp_path / "test.db"
-        db = ExperimentDB(db_path)
+        ExperimentDB(db_path)
         args = MagicMock()
         args.db = db_path
         args.limit = 20
@@ -1491,7 +1483,7 @@ class TestSessionCommands:
 
     def test_sessions_empty(self, capsys, tmp_path):
         db_path = tmp_path / "test.db"
-        db = ExperimentDB(db_path)
+        ExperimentDB(db_path)
         args = MagicMock()
         args.db = db_path
         args.limit = 20
@@ -1501,7 +1493,7 @@ class TestSessionCommands:
 
     def test_session_show_not_found(self, capsys, tmp_path):
         db_path = tmp_path / "test.db"
-        db = ExperimentDB(db_path)
+        ExperimentDB(db_path)
         args = MagicMock()
         args.session_id = "nonexistent"
         args.db = db_path

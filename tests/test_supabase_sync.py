@@ -4,19 +4,15 @@ Tests for supabase_sync module.
 All external dependencies (supabase, sqlite DBs, env vars) are mocked.
 """
 
-import json
 import os
 import sqlite3
-import sys
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from autorac.supabase_sync import (
-    EXPERIMENTS_DB,
-    TRANSCRIPT_DB,
     fetch_runs_from_supabase,
     get_local_transcript_stats,
     get_supabase_client,
@@ -25,7 +21,6 @@ from autorac.supabase_sync import (
     sync_sdk_sessions_to_supabase,
     sync_transcripts_to_supabase,
 )
-
 
 # =========================================================================
 # get_supabase_client
@@ -50,7 +45,7 @@ class TestGetSupabaseClient:
         }, clear=True):
             with patch("autorac.supabase_sync.create_client") as mock_create:
                 mock_create.return_value = MagicMock()
-                client = get_supabase_client()
+                get_supabase_client()
                 mock_create.assert_called_once_with("https://example.supabase.co", "secret-key")
 
     def test_with_anon_key_fallback(self):
@@ -60,7 +55,7 @@ class TestGetSupabaseClient:
         }, clear=True):
             with patch("autorac.supabase_sync.create_client") as mock_create:
                 mock_create.return_value = MagicMock()
-                client = get_supabase_client()
+                get_supabase_client()
                 mock_create.assert_called_once_with("https://example.supabase.co", "anon-key")
 
 
@@ -246,7 +241,7 @@ class TestSyncAllRuns:
         from autorac.harness.experiment_db import ExperimentDB
 
         db_path = tmp_path / "test.db"
-        db = ExperimentDB(db_path)
+        ExperimentDB(db_path)
 
         mock_client = MagicMock()
         mock_client.table.return_value.upsert.return_value.execute.return_value = MagicMock(

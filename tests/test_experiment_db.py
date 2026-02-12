@@ -422,7 +422,6 @@ class TestRowToRunSchemaVersions:
 
     def test_row_with_11_columns(self, experiment_db):
         """Test _row_to_run with legacy 11-column schema."""
-        import sqlite3
 
         row = (
             "test-id",  # id
@@ -534,7 +533,7 @@ class TestMigration:
         conn.close()
 
         # Now init ExperimentDB — should migrate
-        db = ExperimentDB(temp_db_path)
+        ExperimentDB(temp_db_path)
 
         # Old table should be gone
         conn = sqlite3.connect(temp_db_path)

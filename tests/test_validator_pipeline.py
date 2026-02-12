@@ -10,8 +10,6 @@ Tests cover:
 6. Convenience function
 """
 
-import json
-import re
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
@@ -26,14 +24,13 @@ from autorac import (
 )
 from autorac.harness.experiment_db import ActualScores
 from autorac.harness.validator_pipeline import (
+    _REVIEW_JSON_FORMAT,
     FORMULA_REVIEWER_PROMPT,
     INTEGRATION_REVIEWER_PROMPT,
     PARAMETER_REVIEWER_PROMPT,
     RAC_REVIEWER_PROMPT,
-    _REVIEW_JSON_FORMAT,
     run_claude_code,
 )
-
 
 # =========================================================================
 # Fixtures
@@ -615,7 +612,7 @@ class TestRunReviewer:
                 '{"score": 7.0, "passed": true, "issues": [], "reasoning": "ok"}',
                 0,
             )
-            result = pipeline._run_reviewer("unknown-reviewer", temp_rac_file)
+            pipeline._run_reviewer("unknown-reviewer", temp_rac_file)
             call_prompt = mock_claude.call_args[0][0]
             assert "overall quality" in call_prompt
 
@@ -688,12 +685,11 @@ class TestFindPePython:
             ):
                 pass
             # Use actual pipeline but patch the known paths
-            pipeline_paths = [fake_venv]
             with patch(
                 "autorac.harness.validator_pipeline.Path.home",
                 return_value=tmp_path.parent,
             ):
-                result = pipeline._find_pe_python()
+                pipeline._find_pe_python()
 
     def test_current_interpreter_exception(self, pipeline):
         """Handles exception when checking current interpreter."""
@@ -719,7 +715,7 @@ class TestFindPePython:
         with patch("autorac.harness.validator_pipeline.subprocess.run") as mock_run:
             mock_run.side_effect = mock_run_side_effect
             with patch("pathlib.Path.exists", return_value=False):
-                result = pipeline._find_pe_python()
+                pipeline._find_pe_python()
 
     def test_auto_install_fails(self, pipeline):
         """Auto-install path fails."""
