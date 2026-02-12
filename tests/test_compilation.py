@@ -50,17 +50,16 @@ class TestCompilationValidator:
         rac_us_path, _ = temp_dirs
         rac_file = rac_us_path / "valid.rac"
         rac_file.write_text("""
-parameter rate:
-  values:
-    2024-01-01: 0.10
+rate:
+  from 2024-01-01: 0.10
 
-input income:
+income:
   entity: Person
   period: Year
   dtype: Money
   default: 0
 
-variable tax:
+tax:
   entity: Person
   period: Year
   dtype: Money
@@ -92,9 +91,8 @@ variable tax:
         rac_us_path, _ = temp_dirs
         rac_file = rac_us_path / "simple.rac"
         rac_file.write_text("""
-parameter rate:
-  values:
-    2024-01-01: 0.25
+rate:
+  from 2024-01-01: 0.25
 """)
 
         result = pipeline._run_compile_check(rac_file)
@@ -106,9 +104,8 @@ parameter rate:
         rac_us_path, _ = temp_dirs
         rac_file = rac_us_path / "simple.rac"
         rac_file.write_text("""
-parameter rate:
-  values:
-    2024-01-01: 0.25
+rate:
+  from 2024-01-01: 0.25
 """)
 
         result = pipeline.validate(rac_file)
@@ -121,9 +118,8 @@ parameter rate:
         rac_us_path, _ = temp_dirs
         rac_file = rac_us_path / "simple.rac"
         rac_file.write_text("""
-parameter rate:
-  values:
-    2024-01-01: 0.25
+rate:
+  from 2024-01-01: 0.25
 """)
 
         # Track execution order
@@ -150,17 +146,16 @@ parameter rate:
         rac_us_path, _ = temp_dirs
         rac_file = rac_us_path / "executable.rac"
         rac_file.write_text("""
-parameter rate:
-  values:
-    2024-01-01: 0.10
+rate:
+  from 2024-01-01: 0.10
 
-input income:
+income:
   entity: Person
   period: Year
   dtype: Money
   default: 0
 
-variable tax:
+tax:
   entity: Person
   period: Year
   dtype: Money
@@ -206,17 +201,16 @@ class TestCompileCLI:
         """autorac compile should succeed for a valid .rac file."""
         rac_file = tmp_path / "test.rac"
         rac_file.write_text("""
-parameter rate:
-  values:
-    2024-01-01: 0.10
+rate:
+  from 2024-01-01: 0.10
 
-input income:
+income:
   entity: Person
   period: Year
   dtype: Money
   default: 0
 
-variable tax:
+tax:
   entity: Person
   period: Year
   dtype: Money
@@ -244,7 +238,7 @@ variable tax:
         rac_file = tmp_path / "bad.rac"
         # Use content that triggers an actual parse error (unclosed braces)
         rac_file.write_text("""
-variable broken:
+broken:
   entity: Person
   period: Year
   dtype: Money
@@ -268,17 +262,16 @@ variable broken:
         """autorac compile --execute should compile and run."""
         rac_file = tmp_path / "test.rac"
         rac_file.write_text("""
-parameter rate:
-  values:
-    2024-01-01: 0.10
+rate:
+  from 2024-01-01: 0.10
 
-input income:
+income:
   entity: Person
   period: Year
   dtype: Money
   default: 0
 
-variable tax:
+tax:
   entity: Person
   period: Year
   dtype: Money
@@ -302,9 +295,8 @@ variable tax:
         """autorac compile --json should output JSON."""
         rac_file = tmp_path / "test.rac"
         rac_file.write_text("""
-parameter rate:
-  values:
-    2024-01-01: 0.10
+rate:
+  from 2024-01-01: 0.10
 """)
 
         import io
@@ -345,17 +337,16 @@ class TestBenchmarkCLI:
         """autorac benchmark should run and report timing."""
         rac_file = tmp_path / "test.rac"
         rac_file.write_text("""
-parameter rate:
-  values:
-    2024-01-01: 0.10
+rate:
+  from 2024-01-01: 0.10
 
-input income:
+income:
   entity: Person
   period: Year
   dtype: Money
   default: 0
 
-variable tax:
+tax:
   entity: Person
   period: Year
   dtype: Money

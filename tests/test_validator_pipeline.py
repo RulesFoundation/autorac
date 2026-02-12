@@ -34,7 +34,7 @@ def temp_rac_file():
     with tempfile.NamedTemporaryFile(mode="w", suffix=".rac", delete=False) as f:
         f.write("""
 # Simple test RAC file
-variable earned_income:
+earned_income:
     entity: Person
     period: Year
     dtype: Money
@@ -103,7 +103,7 @@ class TestCIValidator:
         # Create RAC file with failing test
         test_file = rac_us_path / "failing_test.rac"
         test_file.write_text("""
-variable always_zero:
+always_zero:
     entity: Person
     period: Year
     dtype: Integer
@@ -313,7 +313,7 @@ class TestReviewerPrompts:
         test_file = rac_us_path / "bad_structure.rac"
         test_file.write_text("""
 # Missing required fields
-variable incomplete_var:
+incomplete_var:
     entity: Person
     # Missing period, dtype, formula
 """)
@@ -331,7 +331,7 @@ variable incomplete_var:
         # Create RAC file with logic issues
         test_file = rac_us_path / "bad_formula.rac"
         test_file.write_text("""
-variable circular_ref:
+circular_ref:
     entity: Person
     period: Year
     dtype: Money
@@ -350,13 +350,13 @@ variable circular_ref:
         # Create RAC file with parameter issues
         test_file = rac_us_path / "unsourced_param.rac"
         test_file.write_text("""
-variable uses_magic_number:
+uses_magic_number:
     entity: Person
     period: Year
     dtype: Money
     formula: |
-        # Magic number without parameter reference
-        return person.income * 0.153  # Should be from parameters
+        # Magic number without named definition
+        return person.income * 0.153  # Should be from a named definition
 """)
 
         result = pipeline._run_reviewer("parameter-reviewer", test_file)

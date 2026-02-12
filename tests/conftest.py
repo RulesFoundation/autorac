@@ -87,7 +87,7 @@ def sample_encoding_run(sample_predicted_scores, sample_actual_scores):
         citation="26 USC 32",
         agent_type="autorac:encoder",
         agent_model="claude-opus-4-6",
-        rac_content="# EITC variable\nvariable EarnedIncome:\n  dtype: Money\n",
+        rac_content="# EITC\nEarnedIncome:\n  dtype: Money\n",
         statute_text="Sample statute text for EITC",
     )
     run.predicted = sample_predicted_scores
@@ -209,8 +209,8 @@ def temp_rac_file():
     with tempfile.TemporaryDirectory() as tmpdir:
         rac_file = Path(tmpdir) / "test.rac"
         rac_file.write_text("""
-# Test variable
-variable TestIncome:
+# Test definition
+TestIncome:
   entity: Person
   dtype: Money
   period: Year

@@ -353,11 +353,11 @@ Use the Write tool to create the .rac file at the specified path.
             var_name = re.sub(r"_+", "_", var_name).strip("_")
 
             # Return a minimal valid RAC structure as fallback
-            fallback = f'''text: """
+            fallback = f'''"""
 {statute_text}
 """
 
-variable {var_name}:
+{var_name}:
   entity: TaxUnit
   period: Year
   dtype: Money
@@ -367,11 +367,6 @@ variable {var_name}:
     # TODO: Implement formula
     return 0
   default: 0
-  tests:
-    - name: "Placeholder test"
-      period: 2024-01
-      inputs: {{}}
-      expect: 0
 '''
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(fallback)

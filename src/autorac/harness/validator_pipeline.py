@@ -67,11 +67,11 @@ def run_claude_code(
 RAC_REVIEWER_PROMPT = """You are an expert RAC (Rules as Code) reviewer specializing in structure and legal citations.
 
 Review the RAC file for:
-1. **Structure**: Proper variable definition with all required fields (entity, period, dtype, formula)
+1. **Structure**: Proper definition with `name:` (no `variable`/`parameter` keywords), all required fields (entity, period, dtype, formula)
 2. **Legal Citations**: Accurate citation format (e.g., "26 USC 32(a)(1)")
-3. **Imports**: Correct import paths using path#variable syntax
+3. **Imports**: Correct import paths using path#name syntax
 4. **Entity Hierarchy**: Proper entity usage (Person < TaxUnit < Household)
-5. **DSL Compliance**: Adherence to RAC DSL specification
+5. **DSL Compliance**: Uses unified syntax — just `name:`, `from yyyy-mm-dd:` for temporal entries, `\"\"\"...\"\"\"` for text blocks, tests in `.rac.test` files (not inline)
 
 Output your review as JSON:
 {
@@ -87,9 +87,10 @@ FORMULA_REVIEWER_PROMPT = """You are an expert formula reviewer for RAC (Rules a
 Review the RAC file formulas for:
 1. **Logic Correctness**: Does the formula correctly implement the statute logic?
 2. **Edge Cases**: Are edge cases handled (zero values, negative numbers, thresholds)?
-3. **Circular Dependencies**: No circular references between variables
+3. **Circular Dependencies**: No circular references between definitions
 4. **Return Statements**: Every code path returns a value
 5. **Type Consistency**: Return type matches declared dtype
+6. **Temporal Values**: Uses `from yyyy-mm-dd:` syntax for date-based entries (not `values:` dict)
 
 Output your review as JSON:
 {
@@ -100,14 +101,14 @@ Output your review as JSON:
 }
 """
 
-PARAMETER_REVIEWER_PROMPT = """You are an expert parameter reviewer for RAC (Rules as Code) encodings.
+PARAMETER_REVIEWER_PROMPT = """You are an expert reviewer for RAC (Rules as Code) encodings, focused on policy values and parameters.
 
-Review the RAC file for parameter usage:
-1. **No Magic Numbers**: Only -1, 0, 1, 2, 3 allowed as literals. All other values must be parameters.
-2. **Parameter Sourcing**: Parameters should reference authoritative sources
-3. **Time-Varying Values**: Rate thresholds and amounts should use parameters
-4. **Parameter Path Format**: Correct parameter reference syntax
-5. **Default Values**: Appropriate defaults for optional parameters
+Review the RAC file for policy value usage:
+1. **No Magic Numbers**: Only -1, 0, 1, 2, 3 allowed as literals. All other values must be defined as named entries.
+2. **Sourcing**: Policy values should reference authoritative sources
+3. **Time-Varying Values**: Rate thresholds and amounts should use `from yyyy-mm-dd:` temporal entries
+4. **Reference Format**: Correct reference syntax (unified `name:` format, no `parameter` keyword)
+5. **Default Values**: Appropriate defaults for optional inputs
 
 Output your review as JSON:
 {
@@ -121,11 +122,12 @@ Output your review as JSON:
 INTEGRATION_REVIEWER_PROMPT = """You are an expert integration reviewer for RAC (Rules as Code) encodings.
 
 Review the RAC file for integration quality:
-1. **Test Coverage**: At least 3-5 test cases covering normal and edge cases
+1. **Test Coverage**: At least 3-5 test cases in the companion `.rac.test` file covering normal and edge cases
 2. **Dependency Resolution**: All imports can be resolved
-3. **Cross-Variable Consistency**: Variables work together correctly
+3. **Cross-Definition Consistency**: Named definitions work together correctly
 4. **Documentation**: Clear labels and descriptions
 5. **Completeness**: Full statute implementation, no TODO placeholders
+6. **Syntax**: Uses unified syntax — `name:` (not `variable name:` or `parameter name:`), `from yyyy-mm-dd:` for temporal entries
 
 Output your review as JSON:
 {
@@ -1161,10 +1163,10 @@ Output ONLY valid JSON:
             return str(actual) == str(expected)
 
     def _extract_tests_from_rac_v2(self, rac_content: str) -> list[dict]:
-        """Extract test cases from RAC v2 format with per-variable tests.
+        """Extract test cases from RAC format with per-definition tests.
 
-        RAC v2 has tests nested under each variable:
-            variable snap_allotment:
+        RAC unified syntax has tests nested under each definition:
+            snap_allotment:
               ...
               tests:
                 - name: "test name"
@@ -1173,14 +1175,17 @@ Output ONLY valid JSON:
                     household_size: 4
                   expect: 973
 
+        Also supports legacy `variable name:` format for backwards compat.
+
         Returns list of dicts with keys: variable, name, period, inputs, expect.
         """
         tests = []
 
-        # Find all variable blocks with their tests
-        # Pattern: "variable <name>:" ... "tests:" ... (next variable or EOF)
+        # Find all definition blocks with their tests
+        # Matches both unified `name:` and legacy `variable name:` syntax
+        # Pattern: top-level "name:" ... "tests:" ... (next top-level definition or EOF)
         var_pattern = re.compile(
-            r"^variable\s+(\w+):\s*\n(.*?)(?=^variable\s+\w+:|\Z)",
+            r"^(?:variable\s+)?(\w+):\s*\n(.*?)(?=^(?:variable\s+)?\w+:|\Z)",
             re.MULTILINE | re.DOTALL,
         )
 

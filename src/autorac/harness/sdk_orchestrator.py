@@ -748,65 +748,68 @@ class SDKOrchestrator:
     # DSL cheatsheet embedded in every encoder prompt to prevent
     # edit-test-fail spirals from DSL misunderstanding
     DSL_CHEATSHEET = """
-## RAC DSL quick reference
+## RAC DSL quick reference (unified syntax)
 
-### Declaration types
-- `parameter name:` — policy value with temporal `values:` dict
-- `variable name:` — computed value with `formula:` and `tests:`
-- `input name:` — user-provided value with `default:`
+### Declaration types (all use just `name:`)
+- `name:` with `from yyyy-mm-dd:` — policy value with temporal entries
+- `name:` with `formula:` — computed value
+- `name:` with `default:` — user-provided input
 - `enum Name:` — enumeration with `values:` list
 
-### Variable fields (all required unless noted)
+### Fields (all required unless noted)
 - `entity:` Person | TaxUnit | Household | Family
 - `period:` Year | Month | Day
 - `dtype:` Money | Rate | Boolean | Integer | String | Enum[Name]
 - `formula: |` — Python-like formula (see below)
-- `tests:` — list of `{name, period, inputs, expect}`
-- `imports:` — list of `path#variable` (optional)
+- `imports:` — list of `path#name` (optional)
+
+### Temporal syntax (replaces old `values:` dict)
+```yaml
+ctc_base_amount:
+  from 2018-01-01: 2000
+  from 2025-01-01: 2500
+```
+
+### Text blocks (top-level, no `text:` prefix)
+```
+\"\"\"
+Statute text goes here...
+\"\"\"
+```
+
+### Tests go in `.rac.test` files (not inline)
 
 ### Formula syntax
 **Allowed:** `if`/`elif`/`else`, `return`, `and`/`or`/`not`, `=` assignment
 **Operators:** `+`, `-`, `*`, `/`, `%`, `==`, `!=`, `<`, `>`, `<=`, `>=`
 **Built-in functions:** `min(a,b)`, `max(a,b)`, `abs(x)`, `floor(x)`, `ceil(x)`, `round(x,n)`, `clamp(x,lo,hi)`, `sum(...)`, `len(...)`
 **FORBIDDEN:** `for`/`while` loops, list comprehensions, `def`/`lambda`, `try`/`except`, `+=`, imports
-**Numeric literals:** ONLY -1, 0, 1, 2, 3 allowed. ALL other numbers must come from parameters.
+**Numeric literals:** ONLY -1, 0, 1, 2, 3 allowed. ALL other numbers must come from named definitions.
 
 ### Import syntax
 ```yaml
 imports: [26/24/a#ctc_maximum, 26/24/b#ctc_phaseout as phaseout]
 ```
 
-### Exemplar (complete variable with parameter and tests)
+### Exemplar (complete encoding with temporal value and formula)
 ```yaml
-parameter ctc_base_amount:
+ctc_base_amount:
   description: "Base credit per qualifying child per 26 USC 24(a)"
   unit: USD
-  values:
-    2018-01-01: 2000
+  from 2018-01-01: 2000
 
-input qualifying_child_count:
+qualifying_child_count:
   entity: TaxUnit
   period: Year
   dtype: Integer
   default: 0
 
-variable ctc_maximum:
+ctc_maximum:
   entity: TaxUnit
   period: Year
   dtype: Money
   formula: |
     return qualifying_child_count * ctc_base_amount
-  tests:
-    - name: "One child"
-      period: 2024-01
-      inputs:
-        qualifying_child_count: 1
-      expect: 2000
-    - name: "No children"
-      period: 2024-01
-      inputs:
-        qualifying_child_count: 0
-      expect: 0
 ```
 """
 

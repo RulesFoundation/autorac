@@ -1227,7 +1227,7 @@ def cmd_init(args):
 
 status: unexamined
 
-text: """
+"""
 {body[:3000]}{"..." if len(body) > 3000 else ""}
 """
 
