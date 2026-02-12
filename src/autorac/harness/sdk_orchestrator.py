@@ -745,12 +745,10 @@ class SDKOrchestrator:
 
         return waves
 
-    # DSL cheatsheet embedded in every encoder prompt to prevent
-    # edit-test-fail spirals from DSL misunderstanding
     DSL_CHEATSHEET = """
 ## RAC DSL quick reference (unified syntax)
 
-### Declaration types (all use just `name:`)
+### Declaration types
 - `name:` with `from yyyy-mm-dd:` — policy value with temporal entries
 - `name:` with `formula:` — computed value
 - `name:` with `default:` — user-provided input
@@ -763,14 +761,14 @@ class SDKOrchestrator:
 - `formula: |` — Python-like formula (see below)
 - `imports:` — list of `path#name` (optional)
 
-### Temporal syntax (replaces old `values:` dict)
+### Temporal syntax
 ```yaml
 ctc_base_amount:
   from 2018-01-01: 2000
   from 2025-01-01: 2500
 ```
 
-### Text blocks (top-level, no `text:` prefix)
+### Text blocks
 ```
 \"\"\"
 Statute text goes here...
@@ -791,7 +789,7 @@ Statute text goes here...
 imports: [26/24/a#ctc_maximum, 26/24/b#ctc_phaseout as phaseout]
 ```
 
-### Exemplar (complete encoding with temporal value and formula)
+### Exemplar
 ```yaml
 ctc_base_amount:
   description: "Base credit per qualifying child per 26 USC 24(a)"
@@ -821,11 +819,7 @@ ctc_maximum:
         statute_text: Optional[str] = None,
         subsection_text: Optional[str] = None,
     ) -> str:
-        """Build a focused encoding prompt for a single subsection.
-
-        Includes DSL cheatsheet and exemplar to prevent discovery overhead
-        and edit-test-fail spirals.
-        """
+        """Build a focused encoding prompt for a single subsection."""
         parts = [
             f"Encode {citation} subsection ({task.subsection_id}) - "
             f'"{task.title}" into RAC format.',
@@ -859,7 +853,6 @@ ctc_maximum:
             parts.append("")
             parts.append(f"Full statute text (excerpt):\n{statute_text[:5000]}")
 
-        # Append DSL cheatsheet + exemplar (prevents discovery overhead)
         parts.append(self.DSL_CHEATSHEET)
 
         return "\n".join(parts)

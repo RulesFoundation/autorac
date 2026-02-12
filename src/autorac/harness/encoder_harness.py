@@ -352,7 +352,6 @@ Use the Write tool to create the .rac file at the specified path.
             )
             var_name = re.sub(r"_+", "_", var_name).strip("_")
 
-            # Return a minimal valid RAC structure as fallback
             fallback = f'''"""
 {statute_text}
 """
