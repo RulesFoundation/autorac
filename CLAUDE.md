@@ -14,14 +14,14 @@ Uses Claude Code with Max subscription. No API billing.
 ┌─────────────────────────────────────────────────────────────┐
 │  Claude Code Session (Max subscription)                      │
 │    └── /encode "26 USC 32"                                  │
-│          └── Task(cosilico:RAC Encoder)                     │
+│          └── Task(rac:RAC Encoder)                          │
 │                └── Write, Edit, Grep tools                  │
 │                      └── rac-us/statute/26/32.rac           │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 **How to use:**
-1. Install cosilico-claude plugin
+1. Install rac-claude plugin
 2. Run `/encode "26 USC 32"` in Claude Code
 3. Agent encodes, validates, logs journey
 
@@ -130,4 +130,4 @@ python -m autorac.metrics --db experiments.db
 - **rac** - DSL parser, executor, runtime
 - **rac-us** - US statute encodings
 - **rac-validators** - External calculator validation (PolicyEngine, TAXSIM)
-- **cosilico-claude** - Claude Code plugin with /encode command
+- **rac-claude** - Claude Code plugin with /encode command

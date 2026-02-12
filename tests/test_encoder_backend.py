@@ -93,7 +93,7 @@ class TestClaudeCodeBackend:
             assert "claude" in cmd
 
     def test_encode_uses_plugin_agent(self):
-        """encode() uses the cosilico:RAC Encoder agent."""
+        """encode() uses the rac:RAC Encoder agent."""
         backend = ClaudeCodeBackend(plugin_dir=Path("/path/to/plugins"))
 
         with patch("subprocess.run") as mock_run:

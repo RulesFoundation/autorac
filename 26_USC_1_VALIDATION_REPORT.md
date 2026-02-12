@@ -18,7 +18,7 @@ Total Test Cases: 6
 - Head of Household (Medium Income)
 
 ### Validation Approach
-Due to limitations in the cosilico-validators infrastructure, a manual validation was performed using a simplified tax calculation model.
+Due to limitations in the rac-validators infrastructure, a manual validation was performed using a simplified tax calculation model.
 
 ## Validation Results
 

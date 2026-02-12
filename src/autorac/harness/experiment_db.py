@@ -24,7 +24,7 @@ from typing import Literal, Optional
 
 # Artifact types for SCD2 tracking
 ArtifactType = Literal[
-    "plugin",  # cosilico Claude Code plugin
+    "plugin",  # rac-claude Claude Code plugin
     "rac_spec",  # RAC_SPEC.md
     "encoder_prompt",  # encoder agent system prompt
     "reviewer_prompt",  # reviewer agent prompts
@@ -1470,7 +1470,7 @@ class ExperimentDB:
         self, plugin_path: Path, version_label: str = ""
     ) -> ArtifactVersion:
         """
-        Snapshot the entire cosilico plugin as a single artifact.
+        Snapshot the entire rac-claude plugin as a single artifact.
         Concatenates all agent, skill, command, and hook files.
         """
         content_parts = []

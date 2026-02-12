@@ -15,16 +15,16 @@ from supabase import Client, create_client
 
 def get_supabase_client() -> Client:
     """Get Supabase client using environment variables."""
-    url = os.environ.get("COSILICO_SUPABASE_URL")
+    url = os.environ.get("RAC_SUPABASE_URL")
     # Try service role key first (for writes), fall back to anon key (reads only)
-    key = os.environ.get("COSILICO_SUPABASE_SECRET_KEY") or os.environ.get(
-        "COSILICO_SUPABASE_ANON_KEY"
+    key = os.environ.get("RAC_SUPABASE_SECRET_KEY") or os.environ.get(
+        "RAC_SUPABASE_ANON_KEY"
     )
 
     if not url or not key:
         raise ValueError(
-            "Missing Supabase credentials. Set COSILICO_SUPABASE_URL and "
-            "COSILICO_SUPABASE_SECRET_KEY (or COSILICO_SUPABASE_ANON_KEY for read-only)."
+            "Missing Supabase credentials. Set RAC_SUPABASE_URL and "
+            "RAC_SUPABASE_SECRET_KEY (or RAC_SUPABASE_ANON_KEY for read-only)."
         )
 
     return create_client(url, key)
