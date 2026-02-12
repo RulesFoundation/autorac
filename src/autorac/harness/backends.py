@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
+from autorac import DEFAULT_CLI_MODEL
+
 
 @dataclass
 class EncoderRequest:
@@ -28,7 +30,7 @@ class EncoderRequest:
     statute_text: str
     output_path: Path
     agent_type: str = "cosilico:RAC Encoder"
-    model: str = "opus"
+    model: str = DEFAULT_CLI_MODEL
     timeout: int = 300
 
 
@@ -184,7 +186,7 @@ Score each dimension from 1-10. Output ONLY valid JSON:
         try:
             output, returncode = self._run_claude_code(
                 prompt=prompt,
-                model="opus",
+                model=DEFAULT_CLI_MODEL,
                 timeout=60,
             )
 
@@ -214,7 +216,7 @@ Score each dimension from 1-10. Output ONLY valid JSON:
         self,
         prompt: str,
         agent: Optional[str] = None,
-        model: str = "sonnet",
+        model: str = DEFAULT_CLI_MODEL,
         timeout: int = 300,
     ) -> tuple[str, int]:
         """Run Claude Code CLI as subprocess."""

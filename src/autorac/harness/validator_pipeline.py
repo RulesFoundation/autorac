@@ -27,12 +27,14 @@ from typing import Any, Optional
 
 import yaml
 
+from autorac import REVIEWER_CLI_MODEL
+
 from .experiment_db import ActualScores, ExperimentDB
 
 
 def run_claude_code(
     prompt: str,
-    model: str = "haiku",
+    model: str = REVIEWER_CLI_MODEL,
     timeout: int = 120,
     cwd: Optional[Path] = None,
 ) -> tuple[str, int]:
@@ -646,7 +648,7 @@ Output ONLY valid JSON:
         try:
             output, returncode = run_claude_code(
                 prompt,
-                model="opus",
+                model=REVIEWER_CLI_MODEL,
                 timeout=120,
                 cwd=self.rac_us_path,
             )

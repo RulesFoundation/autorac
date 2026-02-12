@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from autorac import DEFAULT_CLI_MODEL
+
 from .experiment_db import (
     AgentSuggestion,
     EncodingRun,
@@ -32,7 +34,7 @@ from .validator_pipeline import PipelineResult, ValidatorPipeline
 def run_claude_code(
     prompt: str,
     agent: Optional[str] = None,
-    model: str = "sonnet",
+    model: str = DEFAULT_CLI_MODEL,
     timeout: int = 300,
     cwd: Optional[Path] = None,
     plugin_dir: Optional[Path] = None,
@@ -258,7 +260,7 @@ Score each dimension from 1-10. Output ONLY valid JSON:
         try:
             output, returncode = run_claude_code(
                 prompt,
-                model="opus",
+                model=DEFAULT_CLI_MODEL,
                 timeout=60,
                 cwd=self.config.rac_us_path,
             )
@@ -317,7 +319,7 @@ Use the Write tool to create the .rac file at the specified path.
             output, returncode = run_claude_code(
                 prompt,
                 agent="cosilico:RAC Encoder",
-                model="opus",
+                model=DEFAULT_CLI_MODEL,
                 timeout=300,
                 cwd=self.config.rac_us_path,
                 plugin_dir=self.config.cosilico_plugin_path,
@@ -430,7 +432,7 @@ Output ONLY valid JSON array:
         try:
             output, returncode = run_claude_code(
                 prompt,
-                model="opus",
+                model=DEFAULT_CLI_MODEL,
                 timeout=60,
                 cwd=self.config.rac_us_path,
             )
