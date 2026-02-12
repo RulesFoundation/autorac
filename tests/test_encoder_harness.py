@@ -149,11 +149,11 @@ class TestEncode:
         """Test that valid RAC content is generated and saved."""
         harness = EncoderHarness(temp_config)
 
-        expected_rac = '''text: """
+        expected_rac = '''"""
 Sample statute text
 """
 
-variable sample_var:
+sample_var:
   entity: TaxUnit
   period: Year
   dtype: Money
@@ -161,11 +161,6 @@ variable sample_var:
   formula: |
     return 0
   default: 0
-  tests:
-    - name: "Basic test"
-      period: 2024-01
-      inputs: {}
-      expect: 0
 '''
 
         with patch("autorac.harness.encoder_harness.run_claude_code") as mock_claude:
@@ -174,8 +169,8 @@ variable sample_var:
             output_path = temp_config.rac_us_path / "test.rac"
             result = harness._encode("26 USC 1", "Sample statute text", output_path)
 
-            assert "text:" in result
-            assert "variable" in result
+            assert '"""' in result
+            assert "sample_var:" in result
             assert output_path.exists()
 
     def test_strips_markdown_code_blocks(self, temp_config):
@@ -183,11 +178,11 @@ variable sample_var:
         harness = EncoderHarness(temp_config)
 
         response_with_markdown = '''```yaml
-text: """
+"""
 Statute text
 """
 
-variable test:
+test:
   dtype: Money
 ```'''
 
@@ -199,7 +194,7 @@ variable test:
 
             assert not result.startswith("```")
             assert not result.endswith("```")
-            assert "text:" in result
+            assert '"""' in result
 
     def test_creates_output_directory(self, temp_config):
         """Test that output directory is created if it doesn't exist."""
@@ -223,8 +218,7 @@ variable test:
             output_path = temp_config.rac_us_path / "fallback.rac"
             result = harness._encode("26 USC 32", "EITC statute", output_path)
 
-            assert "text:" in result
-            assert "variable" in result
+            assert '"""' in result
             assert "TODO: Implement formula" in result
             assert output_path.exists()
 
@@ -343,11 +337,11 @@ class TestEncodeWithFeedback:
             }
         )
 
-        rac_content = '''text: """
+        rac_content = '''"""
 Test statute
 """
 
-variable test:
+test:
   entity: TaxUnit
   dtype: Money
   period: Year

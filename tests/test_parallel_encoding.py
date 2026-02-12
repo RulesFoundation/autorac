@@ -35,18 +35,16 @@ DSL_CHEATSHEET_MARKERS = [
     "Boolean",
     "Integer",
     "Rate",
-    "parameter",
-    "variable",
+    "from",
+    "entity:",
     "formula",
-    "tests:",
 ]
 
 EXEMPLAR_MARKERS = [
-    "parameter",
-    "variable",
+    "from",
+    "entity:",
     "formula:",
-    "tests:",
-    "expect:",
+    "dtype:",
 ]
 
 

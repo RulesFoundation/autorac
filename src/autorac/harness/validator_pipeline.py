@@ -63,16 +63,7 @@ def run_claude_code(
         return f"Error: {e}", 1
 
 
-# Reviewer agent system prompts
-RAC_REVIEWER_PROMPT = """You are an expert RAC (Rules as Code) reviewer specializing in structure and legal citations.
-
-Review the RAC file for:
-1. **Structure**: Proper variable definition with all required fields (entity, period, dtype, formula)
-2. **Legal Citations**: Accurate citation format (e.g., "26 USC 32(a)(1)")
-3. **Imports**: Correct import paths using path#variable syntax
-4. **Entity Hierarchy**: Proper entity usage (Person < TaxUnit < Household)
-5. **DSL Compliance**: Adherence to RAC DSL specification
-
+_REVIEW_JSON_FORMAT = """
 Output your review as JSON:
 {
   "score": <float 1-10>,
@@ -82,59 +73,59 @@ Output your review as JSON:
 }
 """
 
-FORMULA_REVIEWER_PROMPT = """You are an expert formula reviewer for RAC (Rules as Code) encodings.
+RAC_REVIEWER_PROMPT = (
+    """You are an expert RAC (Rules as Code) reviewer specializing in structure and legal citations.
+
+Review the RAC file for:
+1. **Structure**: Proper definition with `name:` (no `variable`/`parameter` keywords), all required fields (entity, period, dtype, formula)
+2. **Legal Citations**: Accurate citation format (e.g., "26 USC 32(a)(1)")
+3. **Imports**: Correct import paths using path#name syntax
+4. **Entity Hierarchy**: Proper entity usage (Person < TaxUnit < Household)
+5. **DSL Compliance**: Unified syntax — `name:`, `from yyyy-mm-dd:` temporal entries, `\"\"\"...\"\"\"` text blocks, tests in `.rac.test` files
+"""
+    + _REVIEW_JSON_FORMAT
+)
+
+FORMULA_REVIEWER_PROMPT = (
+    """You are an expert formula reviewer for RAC (Rules as Code) encodings.
 
 Review the RAC file formulas for:
 1. **Logic Correctness**: Does the formula correctly implement the statute logic?
 2. **Edge Cases**: Are edge cases handled (zero values, negative numbers, thresholds)?
-3. **Circular Dependencies**: No circular references between variables
+3. **Circular Dependencies**: No circular references between definitions
 4. **Return Statements**: Every code path returns a value
 5. **Type Consistency**: Return type matches declared dtype
-
-Output your review as JSON:
-{
-  "score": <float 1-10>,
-  "passed": <boolean>,
-  "issues": ["issue1", "issue2"],
-  "reasoning": "<brief explanation>"
-}
+6. **Temporal Values**: Uses `from yyyy-mm-dd:` syntax for date-based entries
 """
+    + _REVIEW_JSON_FORMAT
+)
 
-PARAMETER_REVIEWER_PROMPT = """You are an expert parameter reviewer for RAC (Rules as Code) encodings.
+PARAMETER_REVIEWER_PROMPT = (
+    """You are an expert reviewer for RAC (Rules as Code) encodings, focused on policy values and parameters.
 
-Review the RAC file for parameter usage:
-1. **No Magic Numbers**: Only -1, 0, 1, 2, 3 allowed as literals. All other values must be parameters.
-2. **Parameter Sourcing**: Parameters should reference authoritative sources
-3. **Time-Varying Values**: Rate thresholds and amounts should use parameters
-4. **Parameter Path Format**: Correct parameter reference syntax
-5. **Default Values**: Appropriate defaults for optional parameters
-
-Output your review as JSON:
-{
-  "score": <float 1-10>,
-  "passed": <boolean>,
-  "issues": ["issue1", "issue2"],
-  "reasoning": "<brief explanation>"
-}
+Review the RAC file for policy value usage:
+1. **No Magic Numbers**: Only -1, 0, 1, 2, 3 allowed as literals. All other values must be defined as named entries.
+2. **Sourcing**: Policy values should reference authoritative sources
+3. **Time-Varying Values**: Rate thresholds and amounts should use `from yyyy-mm-dd:` temporal entries
+4. **Reference Format**: Correct reference syntax (unified `name:` format, no `parameter` keyword)
+5. **Default Values**: Appropriate defaults for optional inputs
 """
+    + _REVIEW_JSON_FORMAT
+)
 
-INTEGRATION_REVIEWER_PROMPT = """You are an expert integration reviewer for RAC (Rules as Code) encodings.
+INTEGRATION_REVIEWER_PROMPT = (
+    """You are an expert integration reviewer for RAC (Rules as Code) encodings.
 
 Review the RAC file for integration quality:
-1. **Test Coverage**: At least 3-5 test cases covering normal and edge cases
+1. **Test Coverage**: At least 3-5 test cases in the companion `.rac.test` file covering normal and edge cases
 2. **Dependency Resolution**: All imports can be resolved
-3. **Cross-Variable Consistency**: Variables work together correctly
+3. **Cross-Definition Consistency**: Named definitions work together correctly
 4. **Documentation**: Clear labels and descriptions
 5. **Completeness**: Full statute implementation, no TODO placeholders
-
-Output your review as JSON:
-{
-  "score": <float 1-10>,
-  "passed": <boolean>,
-  "issues": ["issue1", "issue2"],
-  "reasoning": "<brief explanation>"
-}
+6. **Syntax**: Unified syntax — `name:`, `from yyyy-mm-dd:` temporal entries, tests in `.rac.test` files
 """
+    + _REVIEW_JSON_FORMAT
+)
 
 
 @dataclass
@@ -1161,26 +1152,16 @@ Output ONLY valid JSON:
             return str(actual) == str(expected)
 
     def _extract_tests_from_rac_v2(self, rac_content: str) -> list[dict]:
-        """Extract test cases from RAC v2 format with per-variable tests.
+        """Extract test cases from per-definition test blocks.
 
-        RAC v2 has tests nested under each variable:
-            variable snap_allotment:
-              ...
-              tests:
-                - name: "test name"
-                  period: 2024-10
-                  inputs:
-                    household_size: 4
-                  expect: 973
-
+        Supports both unified `name:` and legacy `variable name:` syntax.
         Returns list of dicts with keys: variable, name, period, inputs, expect.
         """
         tests = []
 
-        # Find all variable blocks with their tests
-        # Pattern: "variable <name>:" ... "tests:" ... (next variable or EOF)
+        # Match both unified `name:` and legacy `variable name:` definition blocks
         var_pattern = re.compile(
-            r"^variable\s+(\w+):\s*\n(.*?)(?=^variable\s+\w+:|\Z)",
+            r"^(?:variable\s+)?(\w+):\s*\n(.*?)(?=^(?:variable\s+)?\w+:|\Z)",
             re.MULTILINE | re.DOTALL,
         )
 

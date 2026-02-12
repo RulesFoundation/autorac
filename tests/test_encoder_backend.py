@@ -50,7 +50,7 @@ class TestEncoderBackendInterface:
     def test_response_dataclass(self):
         """EncoderResponse holds encoding outputs."""
         resp = EncoderResponse(
-            rac_content="variable eitc:\n  entity: TaxUnit",
+            rac_content="eitc:\n  entity: TaxUnit",
             success=True,
             error=None,
             duration_ms=1500,
@@ -74,7 +74,7 @@ class TestClaudeCodeBackend:
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = Mock(
-                stdout="variable test:\n  entity: TaxUnit",
+                stdout="test:\n  entity: TaxUnit",
                 stderr="",
                 returncode=0,
             )
@@ -98,7 +98,7 @@ class TestClaudeCodeBackend:
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = Mock(
-                stdout="variable test:\n  entity: TaxUnit",
+                stdout="test:\n  entity: TaxUnit",
                 stderr="",
                 returncode=0,
             )
@@ -173,7 +173,7 @@ class TestAgentSDKBackend:
                     self.result = result
 
             async def mock_gen():
-                yield MockMessage(result="variable test:\n  entity: TaxUnit")
+                yield MockMessage(result="test:\n  entity: TaxUnit")
 
             mock_sdk.query = Mock(return_value=mock_gen())
             mock_sdk.ClaudeAgentOptions = Mock()
@@ -265,7 +265,7 @@ class TestBackendCompatibility:
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = Mock(
-                stdout="variable test:\n  entity: TaxUnit",
+                stdout="test:\n  entity: TaxUnit",
                 stderr="",
                 returncode=0,
             )
