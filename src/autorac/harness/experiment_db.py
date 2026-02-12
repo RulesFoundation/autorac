@@ -265,7 +265,7 @@ class EncodingRun:
 
     # Agent info
     agent_type: str = "encoder"
-    agent_model: str = "claude-opus-4-6"
+    agent_model: str = ""
 
     # Suggestions for framework improvement
     suggestions: list[AgentSuggestion] = field(default_factory=list)

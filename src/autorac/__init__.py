@@ -1,6 +1,8 @@
 # AutoRAC - AI-assisted RAC encoding
 # Feedback loop infrastructure for automated statute encoding
 
+DEFAULT_MODEL = "claude-opus-4-6"
+
 from .harness import (
     ActualScores,
     AgentSDKBackend,

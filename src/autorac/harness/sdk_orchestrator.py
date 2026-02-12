@@ -240,7 +240,7 @@ class SDKOrchestrator:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "claude-opus-4-6",
+        model: str | None = None,
         plugin_path: Optional[Path] = None,
         experiment_db: Optional[ExperimentDB] = None,
     ):
@@ -250,7 +250,9 @@ class SDKOrchestrator:
         if not self.api_key:
             raise ValueError("ANTHROPIC_API_KEY required")
 
-        self.model = model
+        from autorac import DEFAULT_MODEL
+
+        self.model = model or DEFAULT_MODEL
         self.plugin_path = plugin_path or self._find_plugin_path()
         self.experiment_db = experiment_db
 
@@ -723,7 +725,6 @@ class SDKOrchestrator:
         if not tasks:
             return []
 
-        task_map = {t.subsection_id: t for t in tasks}
         assigned = set()
         waves = []
 

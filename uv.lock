@@ -282,7 +282,6 @@ name = "autorac"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "atlas" },
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "requests" },
@@ -292,9 +291,13 @@ dependencies = [
 
 [package.optional-dependencies]
 all = [
+    { name = "atlas" },
     { name = "claude-agent-sdk" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
+]
+atlas = [
+    { name = "atlas" },
 ]
 dev = [
     { name = "pytest" },
@@ -306,8 +309,8 @@ sdk = [
 
 [package.metadata]
 requires-dist = [
-    { name = "atlas", editable = "../atlas" },
-    { name = "autorac", extras = ["sdk", "dev"], marker = "extra == 'all'" },
+    { name = "atlas", marker = "extra == 'atlas'", editable = "../atlas" },
+    { name = "autorac", extras = ["atlas", "sdk", "dev"], marker = "extra == 'all'" },
     { name = "claude-agent-sdk", marker = "extra == 'sdk'", specifier = ">=0.1.0" },
     { name = "pydantic" },
     { name = "pytest", marker = "extra == 'dev'" },
@@ -317,7 +320,7 @@ requires-dist = [
     { name = "sqlite-utils" },
     { name = "supabase", specifier = ">=2.0.0" },
 ]
-provides-extras = ["sdk", "dev", "all"]
+provides-extras = ["atlas", "sdk", "dev", "all"]
 
 [[package]]
 name = "backports-asyncio-runner"

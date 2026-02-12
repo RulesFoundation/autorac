@@ -270,13 +270,15 @@ class AgentSDKBackend(EncoderBackend):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "claude-opus-4-6",
+        model: str | None = None,
         plugin_path: Optional[Path] = None,
     ):
+        from autorac import DEFAULT_MODEL
+
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not self.api_key:
             raise ValueError("ANTHROPIC_API_KEY required for AgentSDKBackend")
-        self.model = model
+        self.model = model or DEFAULT_MODEL
         self.plugin_path = (
             Path(plugin_path) if plugin_path else self.DEFAULT_PLUGIN_PATH
         )

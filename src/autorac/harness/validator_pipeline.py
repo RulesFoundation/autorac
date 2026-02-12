@@ -850,7 +850,7 @@ Output ONLY valid JSON:
             # Parse result
             try:
                 lines = output.strip().split("\n")
-                result_line = [l for l in lines if l.startswith("RESULT:")]
+                result_line = [line for line in lines if line.startswith("RESULT:")]
                 if result_line:
                     parts = result_line[0].split(":")
                     pe_value = float(parts[1])
@@ -1286,7 +1286,6 @@ Output ONLY valid JSON:
         # Build SPM unit overrides for SNAP intermediate variables
         # This allows apples-to-apples comparison when RAC tests pass
         # pre-computed intermediate values (snap_net_income, etc.)
-        spm_overrides = ""
         snap_overridable = {
             "snap_net_income": "snap_net_income",
             "snap_gross_income": "snap_gross_income",

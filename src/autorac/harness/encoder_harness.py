@@ -139,13 +139,16 @@ class EncoderHarness:
         statute_text: str,
         output_path: Path,
         agent_type: str = "autorac:encoder",
-        agent_model: str = "claude-opus-4-6",
+        agent_model: str | None = None,
     ) -> tuple[EncodingRun, PipelineResult]:
         """
         Full encode-validate-log cycle.
 
         Returns the encoding run and validation results.
         """
+        from autorac import DEFAULT_MODEL
+
+        agent_model = agent_model or DEFAULT_MODEL
         start = time.time()
 
         # Step 1: Get predictions from agent
@@ -189,13 +192,16 @@ class EncoderHarness:
         statute_text: str,
         output_path: Path,
         agent_type: str = "autorac:encoder",
-        agent_model: str = "claude-opus-4-6",
+        agent_model: str | None = None,
     ) -> list[tuple[EncodingRun, PipelineResult]]:
         """
         Iteratively encode until all validators pass or max iterations.
 
         Returns list of (run, result) for each iteration.
         """
+        from autorac import DEFAULT_MODEL
+
+        agent_model = agent_model or DEFAULT_MODEL
         iterations = []
         parent_run_id = None
 
