@@ -7,3 +7,5 @@ dist/
 build/
 *.db
 .DS_Store
+.coverage
+hook_debug.log

@@ -731,8 +731,8 @@ Output ONLY valid JSON:
                     )
                     if result.returncode == 0 and "ok" in result.stdout:
                         return str(pe_python)
-                except Exception:
-                    continue
+                except Exception:  # pragma: no cover
+                    continue  # pragma: no cover
 
         # Try auto-installing into current venv as last resort
         try:

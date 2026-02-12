@@ -39,6 +39,7 @@ sdk = [
 dev = [
     "pytest",
     "pytest-asyncio",
+    "pytest-cov",
 ]
 all = [
     "autorac[sdk,dev]",
@@ -63,6 +64,7 @@ sources = ["src"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src"]
+addopts = "--cov=src/autorac --cov-report=term-missing --cov-fail-under=100"
 
 [tool.ruff]
 line-length = 88

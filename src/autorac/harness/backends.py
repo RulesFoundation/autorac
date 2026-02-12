@@ -67,12 +67,12 @@ class EncoderBackend(ABC):
     @abstractmethod
     def encode(self, request: EncoderRequest) -> EncoderResponse:
         """Encode a statute to RAC format (synchronous)."""
-        pass
+        pass  # pragma: no cover
 
     @abstractmethod
     def predict(self, citation: str, statute_text: str) -> PredictionScores:
         """Predict quality scores before encoding."""
-        pass
+        pass  # pragma: no cover
 
 
 class ClaudeCodeBackend(EncoderBackend):
