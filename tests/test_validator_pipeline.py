@@ -97,9 +97,7 @@ class TestRunClaudeCode:
 
     def test_returns_output_and_returncode(self):
         with patch("autorac.harness.validator_pipeline.subprocess.run") as mock_run:
-            mock_run.return_value = Mock(
-                stdout="test output", stderr="", returncode=0
-            )
+            mock_run.return_value = Mock(stdout="test output", stderr="", returncode=0)
             output, code = run_claude_code("test prompt")
             assert "test output" in output
             assert code == 0
@@ -192,9 +190,7 @@ class TestDataclasses:
             "policyengine": ValidationResult("policyengine", True, 0.9, [], 100),
             "taxsim": ValidationResult("taxsim", True, 0.85, [], 100),
         }
-        pr = PipelineResult(
-            results=results, total_duration_ms=1000, all_passed=True
-        )
+        pr = PipelineResult(results=results, total_duration_ms=1000, all_passed=True)
         actual = pr.to_actual_scores()
         assert isinstance(actual, ActualScores)
         assert actual.rac_reviewer == 8.0
@@ -369,7 +365,9 @@ class TestRunCI:
             ]
             result = pipeline._run_ci(temp_rac_file)
             assert result.passed is False
-            assert any("parse" in issue.lower() or "Parse" in issue for issue in result.issues)
+            assert any(
+                "parse" in issue.lower() or "Parse" in issue for issue in result.issues
+            )
 
     def test_ci_tests_fail(self, pipeline, temp_rac_file):
         """CI reports test failures."""
@@ -516,9 +514,7 @@ class TestRunCI:
 class TestRunReviewer:
     def test_reviewer_success(self, pipeline, temp_rac_file):
         """Reviewer returns valid score from JSON response."""
-        with patch(
-            "autorac.harness.validator_pipeline.run_claude_code"
-        ) as mock_claude:
+        with patch("autorac.harness.validator_pipeline.run_claude_code") as mock_claude:
             mock_claude.return_value = (
                 '{"score": 8.5, "passed": true, "issues": ["minor issue"], "reasoning": "Good"}',
                 0,
@@ -539,9 +535,7 @@ class TestRunReviewer:
                 "issues": ["mismatch in edge case"],
             },
         }
-        with patch(
-            "autorac.harness.validator_pipeline.run_claude_code"
-        ) as mock_claude:
+        with patch("autorac.harness.validator_pipeline.run_claude_code") as mock_claude:
             mock_claude.return_value = (
                 '{"score": 7.0, "passed": true, "issues": [], "reasoning": "ok"}',
                 0,
@@ -556,9 +550,7 @@ class TestRunReviewer:
 
     def test_reviewer_no_json_in_output(self, pipeline, temp_rac_file):
         """Reviewer handles response without JSON."""
-        with patch(
-            "autorac.harness.validator_pipeline.run_claude_code"
-        ) as mock_claude:
+        with patch("autorac.harness.validator_pipeline.run_claude_code") as mock_claude:
             mock_claude.return_value = ("No JSON here, just text", 0)
             result = pipeline._run_reviewer("rac-reviewer", temp_rac_file)
             assert result.passed is False
@@ -567,9 +559,7 @@ class TestRunReviewer:
 
     def test_reviewer_cli_error(self, pipeline, temp_rac_file):
         """Reviewer handles CLI error."""
-        with patch(
-            "autorac.harness.validator_pipeline.run_claude_code"
-        ) as mock_claude:
+        with patch("autorac.harness.validator_pipeline.run_claude_code") as mock_claude:
             mock_claude.side_effect = RuntimeError("CLI crash")
             result = pipeline._run_reviewer("rac-reviewer", temp_rac_file)
             assert result.passed is False
@@ -605,9 +595,7 @@ class TestRunReviewer:
 
     def test_reviewer_unknown_type(self, pipeline, temp_rac_file):
         """Unknown reviewer type uses 'overall quality' focus."""
-        with patch(
-            "autorac.harness.validator_pipeline.run_claude_code"
-        ) as mock_claude:
+        with patch("autorac.harness.validator_pipeline.run_claude_code") as mock_claude:
             mock_claude.return_value = (
                 '{"score": 7.0, "passed": true, "issues": [], "reasoning": "ok"}',
                 0,
@@ -618,9 +606,7 @@ class TestRunReviewer:
 
     def test_reviewer_issues_not_list(self, pipeline, temp_rac_file):
         """Reviewer converts non-list issues to list."""
-        with patch(
-            "autorac.harness.validator_pipeline.run_claude_code"
-        ) as mock_claude:
+        with patch("autorac.harness.validator_pipeline.run_claude_code") as mock_claude:
             mock_claude.return_value = (
                 '{"score": 5.0, "passed": false, "issues": "single issue string", "reasoning": "ok"}',
                 0,
@@ -630,9 +616,7 @@ class TestRunReviewer:
 
     def test_reviewer_passed_from_score(self, pipeline, temp_rac_file):
         """Reviewer derives passed from score when not explicit."""
-        with patch(
-            "autorac.harness.validator_pipeline.run_claude_code"
-        ) as mock_claude:
+        with patch("autorac.harness.validator_pipeline.run_claude_code") as mock_claude:
             mock_claude.return_value = (
                 '{"score": 8.0, "issues": [], "reasoning": "ok"}',
                 0,
@@ -903,7 +887,9 @@ eitc:
         )
         with patch.object(pipeline, "_find_pe_python", return_value="/usr/bin/python"):
             with patch.object(
-                pipeline, "_run_pe_subprocess", return_value="some output without RESULT"
+                pipeline,
+                "_run_pe_subprocess",
+                return_value="some output without RESULT",
             ):
                 result = pipeline._run_policyengine(rac_file)
                 assert any("No RESULT" in issue for issue in result.issues)
@@ -1010,13 +996,19 @@ class TestRunTAXSIM:
         mock_resp.text = "header\n1,2024,0,1,0,0,0,5000.0,0"
         mock_requests.post.return_value = mock_resp
 
-        with patch.object(
-            pipeline,
-            "_extract_tests_from_rac",
-            return_value=[{"name": "wage test", "inputs": {"wages": 50000}, "expect": 5000}],
-        ), patch.object(
-            pipeline, "_build_taxsim_input", return_value="1,2024,0,1,0,0,0,0,50000"
-        ), patch.dict("sys.modules", {"requests": mock_requests}):
+        with (
+            patch.object(
+                pipeline,
+                "_extract_tests_from_rac",
+                return_value=[
+                    {"name": "wage test", "inputs": {"wages": 50000}, "expect": 5000}
+                ],
+            ),
+            patch.object(
+                pipeline, "_build_taxsim_input", return_value="1,2024,0,1,0,0,0,0,50000"
+            ),
+            patch.dict("sys.modules", {"requests": mock_requests}),
+        ):
             result = pipeline._run_taxsim(rac_file)
             assert result.validator_name == "taxsim"
 
@@ -1034,13 +1026,19 @@ class TestRunTAXSIM:
 
         # Mock _extract_tests_from_rac to return proper test dicts
         # and _build_taxsim_input to return a non-None value
-        with patch.object(
-            pipeline,
-            "_extract_tests_from_rac",
-            return_value=[{"name": "wage test", "inputs": {"wages": 50000}, "expect": 5000}],
-        ), patch.object(
-            pipeline, "_build_taxsim_input", return_value="1,2024,0,1,0,0,0,0,50000"
-        ), patch.dict("sys.modules", {"requests": mock_requests}):
+        with (
+            patch.object(
+                pipeline,
+                "_extract_tests_from_rac",
+                return_value=[
+                    {"name": "wage test", "inputs": {"wages": 50000}, "expect": 5000}
+                ],
+            ),
+            patch.object(
+                pipeline, "_build_taxsim_input", return_value="1,2024,0,1,0,0,0,0,50000"
+            ),
+            patch.dict("sys.modules", {"requests": mock_requests}),
+        ):
             result = pipeline._run_taxsim(rac_file)
             assert any("request failed" in issue.lower() for issue in result.issues)
 
@@ -1056,13 +1054,19 @@ class TestRunTAXSIM:
         mock_requests.RequestException = req_mod.RequestException
         mock_requests.post.side_effect = TypeError("bad data")
 
-        with patch.object(
-            pipeline,
-            "_extract_tests_from_rac",
-            return_value=[{"name": "bad test", "inputs": {"wages": 50000}, "expect": 5000}],
-        ), patch.object(
-            pipeline, "_build_taxsim_input", return_value="1,2024,0,1,0,0,0,0,50000"
-        ), patch.dict("sys.modules", {"requests": mock_requests}):
+        with (
+            patch.object(
+                pipeline,
+                "_extract_tests_from_rac",
+                return_value=[
+                    {"name": "bad test", "inputs": {"wages": 50000}, "expect": 5000}
+                ],
+            ),
+            patch.object(
+                pipeline, "_build_taxsim_input", return_value="1,2024,0,1,0,0,0,0,50000"
+            ),
+            patch.dict("sys.modules", {"requests": mock_requests}),
+        ):
             result = pipeline._run_taxsim(rac_file)
             assert any("failed" in issue.lower() for issue in result.issues)
 
@@ -1081,11 +1085,16 @@ class TestRunTAXSIM:
                 raise ImportError("No module named 'requests'")
             return original_import(name, *args, **kwargs)
 
-        with patch.object(
-            pipeline,
-            "_extract_tests_from_rac",
-            return_value=[{"name": "test", "inputs": {"wages": 50000}, "expect": 5000}],
-        ), patch("builtins.__import__", side_effect=import_no_requests):
+        with (
+            patch.object(
+                pipeline,
+                "_extract_tests_from_rac",
+                return_value=[
+                    {"name": "test", "inputs": {"wages": 50000}, "expect": 5000}
+                ],
+            ),
+            patch("builtins.__import__", side_effect=import_no_requests),
+        ):
             result = pipeline._run_taxsim(rac_file)
             assert result.passed is False
             assert "requests" in (result.error or "").lower()
@@ -1105,13 +1114,20 @@ class TestRunTAXSIM:
         mock_resp.text = "header\n1,2024,0,1,0,0,0,0,0"
         mock_requests.post.return_value = mock_resp
 
-        with patch.object(
-            pipeline,
-            "_extract_tests_from_rac",
-            return_value=[
-                {"name": "unmappable test", "inputs": {"obscure_variable": 100}, "expect": 50}
-            ],
-        ), patch.dict("sys.modules", {"requests": mock_requests}):
+        with (
+            patch.object(
+                pipeline,
+                "_extract_tests_from_rac",
+                return_value=[
+                    {
+                        "name": "unmappable test",
+                        "inputs": {"obscure_variable": 100},
+                        "expect": 50,
+                    }
+                ],
+            ),
+            patch.dict("sys.modules", {"requests": mock_requests}),
+        ):
             result = pipeline._run_taxsim(rac_file)
             # _build_taxsim_input returns None for unmappable inputs, so total stays 0
             assert result.validator_name == "taxsim"
@@ -1695,10 +1711,10 @@ class TestExtractTestsRegexFallback:
         # so we need it to succeed at regex but fail at YAML.
         # Actually, the regex captures the `- name:` line then YAML.safe_load
         # is called on it. If that fails, the except clause at 1050 runs.
-        content = '''
+        content = """
 tests:
   - name: 'my_test' expect: 42
-'''
+"""
         # The regex captures "  - name: 'my_test' expect: 42"
         # YAML.safe_load might succeed or fail
         tests = pipeline._extract_tests_from_rac(content)
@@ -1748,16 +1764,24 @@ class TestLLMValidatorException:
         rac_file.write_text("test_var:\n  entity: Person\n")
 
         # Mock CI to pass
-        with patch.object(
-            pipeline, "_run_ci", return_value=ValidationResult(
-                validator_name="ci", passed=True, issues=[], duration_ms=10
-            )
-        ), patch.object(
-            pipeline, "_run_compile_check", return_value=ValidationResult(
-                validator_name="compile", passed=True, issues=[], duration_ms=10
-            )
-        ), patch.object(
-            pipeline, "_run_reviewer", side_effect=RuntimeError("LLM error")
+        with (
+            patch.object(
+                pipeline,
+                "_run_ci",
+                return_value=ValidationResult(
+                    validator_name="ci", passed=True, issues=[], duration_ms=10
+                ),
+            ),
+            patch.object(
+                pipeline,
+                "_run_compile_check",
+                return_value=ValidationResult(
+                    validator_name="compile", passed=True, issues=[], duration_ms=10
+                ),
+            ),
+            patch.object(
+                pipeline, "_run_reviewer", side_effect=RuntimeError("LLM error")
+            ),
         ):
             result = pipeline.validate(rac_file)
             # Should still return a result with error in the failed validator
@@ -1816,7 +1840,12 @@ class TestFindPePythonVenvPath:
 
             # Create the venv path
             venv_python = (
-                tmp_path / "PolicyEngine" / "policyengine-us" / ".venv" / "bin" / "python"
+                tmp_path
+                / "PolicyEngine"
+                / "policyengine-us"
+                / ".venv"
+                / "bin"
+                / "python"
             )
             venv_python.parent.mkdir(parents=True)
             venv_python.touch()

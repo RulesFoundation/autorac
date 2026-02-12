@@ -166,9 +166,15 @@ class TestIterateUntilPass:
             results={
                 "ci": ValidationResult("ci", True, None, [], 100),
                 "rac_reviewer": ValidationResult("rac_reviewer", True, 8.0, [], 500),
-                "formula_reviewer": ValidationResult("formula_reviewer", True, 8.0, [], 500),
-                "parameter_reviewer": ValidationResult("parameter_reviewer", True, 8.0, [], 500),
-                "integration_reviewer": ValidationResult("integration_reviewer", True, 8.0, [], 500),
+                "formula_reviewer": ValidationResult(
+                    "formula_reviewer", True, 8.0, [], 500
+                ),
+                "parameter_reviewer": ValidationResult(
+                    "parameter_reviewer", True, 8.0, [], 500
+                ),
+                "integration_reviewer": ValidationResult(
+                    "integration_reviewer", True, 8.0, [], 500
+                ),
             },
             total_duration_ms=600,
             all_passed=True,
@@ -203,7 +209,13 @@ class TestIterateUntilPass:
         prediction_json = json.dumps({"rac_reviewer": 8.0, "confidence": 0.7})
         rac_content = "test_var:\n  entity: TaxUnit\n"
         suggestions_json = json.dumps(
-            [{"category": "validator", "description": "fix", "predicted_impact": "high"}]
+            [
+                {
+                    "category": "validator",
+                    "description": "fix",
+                    "predicted_impact": "high",
+                }
+            ]
         )
 
         call_count = 0
@@ -224,7 +236,9 @@ class TestIterateUntilPass:
             ) as mock_validator:
                 # First iteration fails, second passes
                 fail_result = '{"score": 4.0, "passed": false, "issues": ["Bad formula"], "reasoning": "Wrong"}'
-                pass_result = '{"score": 8.0, "passed": true, "issues": [], "reasoning": "Good"}'
+                pass_result = (
+                    '{"score": 8.0, "passed": true, "issues": [], "reasoning": "Good"}'
+                )
 
                 mock_encoder.side_effect = [
                     (prediction_json, 0),  # 1st predict

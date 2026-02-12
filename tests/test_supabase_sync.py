@@ -34,29 +34,43 @@ class TestGetSupabaseClient:
                 get_supabase_client()
 
     def test_missing_key(self):
-        with patch.dict(os.environ, {"RAC_SUPABASE_URL": "https://example.supabase.co"}, clear=True):
+        with patch.dict(
+            os.environ, {"RAC_SUPABASE_URL": "https://example.supabase.co"}, clear=True
+        ):
             with pytest.raises(ValueError, match="Missing Supabase credentials"):
                 get_supabase_client()
 
     def test_with_secret_key(self):
-        with patch.dict(os.environ, {
-            "RAC_SUPABASE_URL": "https://example.supabase.co",
-            "RAC_SUPABASE_SECRET_KEY": "secret-key",
-        }, clear=True):
+        with patch.dict(
+            os.environ,
+            {
+                "RAC_SUPABASE_URL": "https://example.supabase.co",
+                "RAC_SUPABASE_SECRET_KEY": "secret-key",
+            },
+            clear=True,
+        ):
             with patch("autorac.supabase_sync.create_client") as mock_create:
                 mock_create.return_value = MagicMock()
                 get_supabase_client()
-                mock_create.assert_called_once_with("https://example.supabase.co", "secret-key")
+                mock_create.assert_called_once_with(
+                    "https://example.supabase.co", "secret-key"
+                )
 
     def test_with_anon_key_fallback(self):
-        with patch.dict(os.environ, {
-            "RAC_SUPABASE_URL": "https://example.supabase.co",
-            "RAC_SUPABASE_ANON_KEY": "anon-key",
-        }, clear=True):
+        with patch.dict(
+            os.environ,
+            {
+                "RAC_SUPABASE_URL": "https://example.supabase.co",
+                "RAC_SUPABASE_ANON_KEY": "anon-key",
+            },
+            clear=True,
+        ):
             with patch("autorac.supabase_sync.create_client") as mock_create:
                 mock_create.return_value = MagicMock()
                 get_supabase_client()
-                mock_create.assert_called_once_with("https://example.supabase.co", "anon-key")
+                mock_create.assert_called_once_with(
+                    "https://example.supabase.co", "anon-key"
+                )
 
 
 # =========================================================================
@@ -81,8 +95,8 @@ class TestSyncRunToSupabase:
             mock_run.final_scores = None
 
             mock_client = MagicMock()
-            mock_client.table.return_value.upsert.return_value.execute.return_value = MagicMock(
-                data=[{"id": "test-123"}]
+            mock_client.table.return_value.upsert.return_value.execute.return_value = (
+                MagicMock(data=[{"id": "test-123"}])
             )
 
             result = sync_run_to_supabase(mock_run, source, client=mock_client)
@@ -95,14 +109,19 @@ class TestSyncRunToSupabase:
         mock_run.citation = "26 USC 1"
         mock_run.file_path = "test.rac"
         mock_run.predicted_scores = MagicMock(
-            rac=7.0, formula=6.5, param=7.5, integration=7.0,
-            iterations=3, time_minutes=5, confidence=0.8,
+            rac=7.0,
+            formula=6.5,
+            param=7.5,
+            integration=7.0,
+            iterations=3,
+            time_minutes=5,
+            confidence=0.8,
         )
         mock_run.final_scores = None
 
         mock_client = MagicMock()
-        mock_client.table.return_value.upsert.return_value.execute.return_value = MagicMock(
-            data=[{"id": "test-123"}]
+        mock_client.table.return_value.upsert.return_value.execute.return_value = (
+            MagicMock(data=[{"id": "test-123"}])
         )
 
         result = sync_run_to_supabase(mock_run, "reviewer_agent", client=mock_client)
@@ -116,14 +135,17 @@ class TestSyncRunToSupabase:
         mock_run.file_path = "test.rac"
         mock_run.predicted_scores = None
         mock_run.final_scores = MagicMock(
-            rac_reviewer=8.0, formula_reviewer=7.5,
-            parameter_reviewer=8.5, integration_reviewer=8.0,
-            policyengine_match=0.95, taxsim_match=0.90,
+            rac_reviewer=8.0,
+            formula_reviewer=7.5,
+            parameter_reviewer=8.5,
+            integration_reviewer=8.0,
+            policyengine_match=0.95,
+            taxsim_match=0.90,
         )
 
         mock_client = MagicMock()
-        mock_client.table.return_value.upsert.return_value.execute.return_value = MagicMock(
-            data=[{"id": "test-123"}]
+        mock_client.table.return_value.upsert.return_value.execute.return_value = (
+            MagicMock(data=[{"id": "test-123"}])
         )
 
         result = sync_run_to_supabase(mock_run, "reviewer_agent", client=mock_client)
@@ -139,8 +161,8 @@ class TestSyncRunToSupabase:
         mock_run.final_scores = None
 
         mock_client = MagicMock()
-        mock_client.table.return_value.upsert.return_value.execute.side_effect = Exception(
-            "Connection error"
+        mock_client.table.return_value.upsert.return_value.execute.side_effect = (
+            Exception("Connection error")
         )
 
         result = sync_run_to_supabase(mock_run, "ci_only", client=mock_client)
@@ -156,8 +178,8 @@ class TestSyncRunToSupabase:
         mock_run.final_scores = None
 
         mock_client = MagicMock()
-        mock_client.table.return_value.upsert.return_value.execute.return_value = MagicMock(
-            data=[]
+        mock_client.table.return_value.upsert.return_value.execute.return_value = (
+            MagicMock(data=[])
         )
 
         result = sync_run_to_supabase(mock_run, "ci_only", client=mock_client)
@@ -173,11 +195,13 @@ class TestSyncRunToSupabase:
         mock_run.final_scores = None
 
         mock_client = MagicMock()
-        mock_client.table.return_value.upsert.return_value.execute.return_value = MagicMock(
-            data=[{"id": "test-123"}]
+        mock_client.table.return_value.upsert.return_value.execute.return_value = (
+            MagicMock(data=[{"id": "test-123"}])
         )
 
-        with patch("autorac.supabase_sync.get_supabase_client", return_value=mock_client):
+        with patch(
+            "autorac.supabase_sync.get_supabase_client", return_value=mock_client
+        ):
             result = sync_run_to_supabase(mock_run, "ci_only")
             assert result is True
 
@@ -205,8 +229,8 @@ class TestSyncAllRuns:
         db.log_run(run)
 
         mock_client = MagicMock()
-        mock_client.table.return_value.upsert.return_value.execute.return_value = MagicMock(
-            data=[{"id": run.id}]
+        mock_client.table.return_value.upsert.return_value.execute.return_value = (
+            MagicMock(data=[{"id": run.id}])
         )
 
         stats = sync_all_runs(db_path, "ci_only", client=mock_client)
@@ -230,8 +254,8 @@ class TestSyncAllRuns:
         db.log_run(run)
 
         mock_client = MagicMock()
-        mock_client.table.return_value.upsert.return_value.execute.side_effect = Exception(
-            "Error"
+        mock_client.table.return_value.upsert.return_value.execute.side_effect = (
+            Exception("Error")
         )
 
         stats = sync_all_runs(db_path, "ci_only", client=mock_client)
@@ -244,11 +268,13 @@ class TestSyncAllRuns:
         ExperimentDB(db_path)
 
         mock_client = MagicMock()
-        mock_client.table.return_value.upsert.return_value.execute.return_value = MagicMock(
-            data=[]
+        mock_client.table.return_value.upsert.return_value.execute.return_value = (
+            MagicMock(data=[])
         )
 
-        with patch("autorac.supabase_sync.get_supabase_client", return_value=mock_client):
+        with patch(
+            "autorac.supabase_sync.get_supabase_client", return_value=mock_client
+        ):
             stats = sync_all_runs(db_path, "ci_only")
             assert stats["total"] == 0
 
@@ -281,7 +307,9 @@ class TestFetchRunsFromSupabase:
             data=[]
         )
 
-        with patch("autorac.supabase_sync.get_supabase_client", return_value=mock_client):
+        with patch(
+            "autorac.supabase_sync.get_supabase_client", return_value=mock_client
+        ):
             results = fetch_runs_from_supabase()
             assert results == []
 
@@ -366,7 +394,9 @@ class TestSyncTranscriptsToSupabase:
         )
 
         with patch("autorac.supabase_sync.TRANSCRIPT_DB", db_path):
-            result = sync_transcripts_to_supabase(session_id="sess-1", client=mock_client)
+            result = sync_transcripts_to_supabase(
+                session_id="sess-1", client=mock_client
+            )
             assert result["synced"] == 1
             assert result["total"] == 1
 
@@ -459,7 +489,9 @@ class TestSyncTranscriptsToSupabase:
 
         mock_client = MagicMock()
         with patch("autorac.supabase_sync.TRANSCRIPT_DB", db_path):
-            with patch("autorac.supabase_sync.get_supabase_client", return_value=mock_client):
+            with patch(
+                "autorac.supabase_sync.get_supabase_client", return_value=mock_client
+            ):
                 result = sync_transcripts_to_supabase()
                 assert result["total"] == 0
 
@@ -567,7 +599,9 @@ class TestSyncSdkSessionsToSupabase:
         )
 
         with patch("autorac.supabase_sync.EXPERIMENTS_DB", db_path):
-            result = sync_sdk_sessions_to_supabase(session_id="sdk-test-1", client=mock_client)
+            result = sync_sdk_sessions_to_supabase(
+                session_id="sdk-test-1", client=mock_client
+            )
             assert result["synced"] == 1
 
     def test_sync_failure(self, tmp_path):
@@ -648,7 +682,9 @@ class TestSyncSdkSessionsToSupabase:
 
         mock_client = MagicMock()
         with patch("autorac.supabase_sync.EXPERIMENTS_DB", db_path):
-            with patch("autorac.supabase_sync.get_supabase_client", return_value=mock_client):
+            with patch(
+                "autorac.supabase_sync.get_supabase_client", return_value=mock_client
+            ):
                 result = sync_sdk_sessions_to_supabase()
                 assert result["total"] == 0
 
@@ -699,5 +735,3 @@ class TestGetLocalTranscriptStats:
             assert result["synced"] == 1
             assert "encoder" in result["by_type"]
             assert "reviewer" in result["by_type"]
-
-

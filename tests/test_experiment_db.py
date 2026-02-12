@@ -665,9 +665,7 @@ class TestArtifactVersioning:
             artifact_type="rac_spec", content="spec code"
         )
 
-        experiment_db.link_run_to_artifacts(
-            sample_encoding_run.id, [v1.id, v2.id]
-        )
+        experiment_db.link_run_to_artifacts(sample_encoding_run.id, [v1.id, v2.id])
 
         artifacts = experiment_db.get_run_artifacts(sample_encoding_run.id)
         assert len(artifacts) == 2
@@ -679,12 +677,8 @@ class TestArtifactVersioning:
         """Test linking a run to all current artifact versions."""
         experiment_db.log_run(sample_encoding_run)
 
-        experiment_db.log_artifact_version(
-            artifact_type="plugin", content="plugin"
-        )
-        experiment_db.log_artifact_version(
-            artifact_type="rac_spec", content="spec"
-        )
+        experiment_db.log_artifact_version(artifact_type="plugin", content="plugin")
+        experiment_db.log_artifact_version(artifact_type="rac_spec", content="spec")
 
         ids = experiment_db.link_run_to_current_artifacts(sample_encoding_run.id)
         assert len(ids) == 2

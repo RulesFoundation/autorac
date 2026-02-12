@@ -235,9 +235,7 @@ class TestCmdValidate:
             taxsim_match=None,
         )
 
-        with patch(
-            "autorac.cli.ValidatorPipeline"
-        ) as mock_pipeline_cls:
+        with patch("autorac.cli.ValidatorPipeline") as mock_pipeline_cls:
             mock_pipeline_cls.return_value.validate.return_value = mock_result
             with pytest.raises(SystemExit) as exc_info:
                 cmd_validate(args)
@@ -271,9 +269,7 @@ class TestCmdValidate:
         )
         mock_result.total_duration_ms = 100
 
-        with patch(
-            "autorac.cli.ValidatorPipeline"
-        ) as mock_pipeline_cls:
+        with patch("autorac.cli.ValidatorPipeline") as mock_pipeline_cls:
             mock_pipeline_cls.return_value.validate.return_value = mock_result
             with pytest.raises(SystemExit) as exc_info:
                 cmd_validate(args)
@@ -472,12 +468,17 @@ class TestCmdCompile:
         mock_compile = MagicMock(return_value=mock_ir)
         mock_execute = MagicMock()
 
-        with patch.dict("sys.modules", {
-            "rac": MagicMock(),
-            "rac.dsl_parser": MagicMock(parse_dsl=mock_parse),
-            "rac.engine": MagicMock(compile=mock_compile, execute=mock_execute),
-            "rac.engine.converter": MagicMock(convert_v2_to_engine_module=mock_convert),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "rac": MagicMock(),
+                "rac.dsl_parser": MagicMock(parse_dsl=mock_parse),
+                "rac.engine": MagicMock(compile=mock_compile, execute=mock_execute),
+                "rac.engine.converter": MagicMock(
+                    convert_v2_to_engine_module=mock_convert
+                ),
+            },
+        ):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_compile(args)
             assert exc_info.value.code == 0
@@ -502,12 +503,17 @@ class TestCmdCompile:
         mock_compile = MagicMock(return_value=mock_ir)
         mock_execute = MagicMock()
 
-        with patch.dict("sys.modules", {
-            "rac": MagicMock(),
-            "rac.dsl_parser": MagicMock(parse_dsl=mock_parse),
-            "rac.engine": MagicMock(compile=mock_compile, execute=mock_execute),
-            "rac.engine.converter": MagicMock(convert_v2_to_engine_module=mock_convert),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "rac": MagicMock(),
+                "rac.dsl_parser": MagicMock(parse_dsl=mock_parse),
+                "rac.engine": MagicMock(compile=mock_compile, execute=mock_execute),
+                "rac.engine.converter": MagicMock(
+                    convert_v2_to_engine_module=mock_convert
+                ),
+            },
+        ):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_compile(args)
             assert exc_info.value.code == 0
@@ -535,12 +541,17 @@ class TestCmdCompile:
         mock_compile = MagicMock(return_value=mock_ir)
         mock_execute = MagicMock(return_value=mock_result)
 
-        with patch.dict("sys.modules", {
-            "rac": MagicMock(),
-            "rac.dsl_parser": MagicMock(parse_dsl=mock_parse),
-            "rac.engine": MagicMock(compile=mock_compile, execute=mock_execute),
-            "rac.engine.converter": MagicMock(convert_v2_to_engine_module=mock_convert),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "rac": MagicMock(),
+                "rac.dsl_parser": MagicMock(parse_dsl=mock_parse),
+                "rac.engine": MagicMock(compile=mock_compile, execute=mock_execute),
+                "rac.engine.converter": MagicMock(
+                    convert_v2_to_engine_module=mock_convert
+                ),
+            },
+        ):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_compile(args)
             assert exc_info.value.code == 0
@@ -566,12 +577,17 @@ class TestCmdCompile:
         mock_compile = MagicMock(return_value=mock_ir)
         mock_execute = MagicMock(return_value=mock_result)
 
-        with patch.dict("sys.modules", {
-            "rac": MagicMock(),
-            "rac.dsl_parser": MagicMock(parse_dsl=mock_parse),
-            "rac.engine": MagicMock(compile=mock_compile, execute=mock_execute),
-            "rac.engine.converter": MagicMock(convert_v2_to_engine_module=mock_convert),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "rac": MagicMock(),
+                "rac.dsl_parser": MagicMock(parse_dsl=mock_parse),
+                "rac.engine": MagicMock(compile=mock_compile, execute=mock_execute),
+                "rac.engine.converter": MagicMock(
+                    convert_v2_to_engine_module=mock_convert
+                ),
+            },
+        ):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_compile(args)
             assert exc_info.value.code == 0
@@ -588,12 +604,17 @@ class TestCmdCompile:
         args.as_of = None
         args.execute = False
 
-        with patch.dict("sys.modules", {
-            "rac": MagicMock(),
-            "rac.dsl_parser": MagicMock(parse_dsl=MagicMock(side_effect=Exception("Parse error"))),
-            "rac.engine": MagicMock(),
-            "rac.engine.converter": MagicMock(),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "rac": MagicMock(),
+                "rac.dsl_parser": MagicMock(
+                    parse_dsl=MagicMock(side_effect=Exception("Parse error"))
+                ),
+                "rac.engine": MagicMock(),
+                "rac.engine.converter": MagicMock(),
+            },
+        ):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_compile(args)
             assert exc_info.value.code == 1
@@ -609,12 +630,17 @@ class TestCmdCompile:
         args.as_of = None
         args.execute = False
 
-        with patch.dict("sys.modules", {
-            "rac": MagicMock(),
-            "rac.dsl_parser": MagicMock(parse_dsl=MagicMock(side_effect=Exception("Parse error"))),
-            "rac.engine": MagicMock(),
-            "rac.engine.converter": MagicMock(),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "rac": MagicMock(),
+                "rac.dsl_parser": MagicMock(
+                    parse_dsl=MagicMock(side_effect=Exception("Parse error"))
+                ),
+                "rac.engine": MagicMock(),
+                "rac.engine.converter": MagicMock(),
+            },
+        ):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_compile(args)
             assert exc_info.value.code == 1
@@ -653,12 +679,17 @@ class TestCmdBenchmark:
         mock_compile = MagicMock(return_value=mock_ir)
         mock_execute = MagicMock()
 
-        with patch.dict("sys.modules", {
-            "rac": MagicMock(),
-            "rac.dsl_parser": MagicMock(parse_dsl=mock_parse),
-            "rac.engine": MagicMock(compile=mock_compile, execute=mock_execute),
-            "rac.engine.converter": MagicMock(convert_v2_to_engine_module=mock_convert),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "rac": MagicMock(),
+                "rac.dsl_parser": MagicMock(parse_dsl=mock_parse),
+                "rac.engine": MagicMock(compile=mock_compile, execute=mock_execute),
+                "rac.engine.converter": MagicMock(
+                    convert_v2_to_engine_module=mock_convert
+                ),
+            },
+        ):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_benchmark(args)
             assert exc_info.value.code == 0
@@ -685,12 +716,17 @@ class TestCmdBenchmark:
         mock_compile = MagicMock(return_value=mock_ir)
         mock_execute = MagicMock()
 
-        with patch.dict("sys.modules", {
-            "rac": MagicMock(),
-            "rac.dsl_parser": MagicMock(parse_dsl=mock_parse),
-            "rac.engine": MagicMock(compile=mock_compile, execute=mock_execute),
-            "rac.engine.converter": MagicMock(convert_v2_to_engine_module=mock_convert),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "rac": MagicMock(),
+                "rac.dsl_parser": MagicMock(parse_dsl=mock_parse),
+                "rac.engine": MagicMock(compile=mock_compile, execute=mock_execute),
+                "rac.engine.converter": MagicMock(
+                    convert_v2_to_engine_module=mock_convert
+                ),
+            },
+        ):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_benchmark(args)
             assert exc_info.value.code == 0
@@ -704,12 +740,17 @@ class TestCmdBenchmark:
         args.iterations = 1
         args.rows = 1
 
-        with patch.dict("sys.modules", {
-            "rac": MagicMock(),
-            "rac.dsl_parser": MagicMock(parse_dsl=MagicMock(side_effect=Exception("Parse error"))),
-            "rac.engine": MagicMock(),
-            "rac.engine.converter": MagicMock(),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "rac": MagicMock(),
+                "rac.dsl_parser": MagicMock(
+                    parse_dsl=MagicMock(side_effect=Exception("Parse error"))
+                ),
+                "rac.engine": MagicMock(),
+                "rac.engine.converter": MagicMock(),
+            },
+        ):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_benchmark(args)
             assert exc_info.value.code == 1
@@ -987,7 +1028,7 @@ class TestCmdStatute:
         assert exc_info.value.code == 1
 
     def test_statute_success(self, capsys, tmp_path):
-        xml_content = '''<root>
+        xml_content = """<root>
 <section identifier="/us/usc/t26/s1" status="active">
 <heading>Tax imposed</heading>
 <subsection identifier="/us/usc/t26/s1/a">
@@ -1003,7 +1044,7 @@ class TestCmdStatute:
 </paragraph>
 </subsection>
 </section>
-</root>'''
+</root>"""
         xml_file = tmp_path / "usc26.xml"
         xml_file.write_text(xml_content)
         args = MagicMock()
@@ -1015,11 +1056,11 @@ class TestCmdStatute:
         assert "Tax imposed" in captured.out
 
     def test_statute_slash_format(self, capsys, tmp_path):
-        xml_content = '''<root>
+        xml_content = """<root>
 <section identifier="/us/usc/t26/s1" status="active">
 <heading>Tax imposed</heading>
 </section>
-</root>'''
+</root>"""
         xml_file = tmp_path / "usc26.xml"
         xml_file.write_text(xml_content)
         args = MagicMock()
@@ -1136,8 +1177,12 @@ class TestCmdInit:
         xml_path.parent.mkdir(parents=True)
         xml_path.write_text("<root></root>")
 
-        with patch("pathlib.Path.home", return_value=tmp_path), \
-             patch("autorac.cli._extract_subsections_from_xml", return_value=subsections):
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch(
+                "autorac.cli._extract_subsections_from_xml", return_value=subsections
+            ),
+        ):
             cmd_init(args)
         captured = capsys.readouterr()
         assert "Created" in captured.out
@@ -1163,8 +1208,12 @@ class TestCmdInit:
         xml_path.parent.mkdir(parents=True)
         xml_path.write_text("<root></root>")
 
-        with patch("pathlib.Path.home", return_value=tmp_path), \
-             patch("autorac.cli._extract_subsections_from_xml", return_value=subsections):
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch(
+                "autorac.cli._extract_subsections_from_xml", return_value=subsections
+            ),
+        ):
             cmd_init(args)
         captured = capsys.readouterr()
         assert "Created" in captured.out
@@ -1195,8 +1244,12 @@ class TestCmdInit:
         xml_path.parent.mkdir(parents=True)
         xml_path.write_text("<root></root>")
 
-        with patch("pathlib.Path.home", return_value=tmp_path), \
-             patch("autorac.cli._extract_subsections_from_xml", return_value=subsections):
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch(
+                "autorac.cli._extract_subsections_from_xml", return_value=subsections
+            ),
+        ):
             cmd_init(args)
         captured = capsys.readouterr()
         assert "skipped" in captured.out
@@ -1339,7 +1392,10 @@ class TestCmdEncode:
 
         mock_orchestrator.encode = mock_encode
 
-        with patch("autorac.harness.sdk_orchestrator.SDKOrchestrator", return_value=mock_orchestrator):
+        with patch(
+            "autorac.harness.sdk_orchestrator.SDKOrchestrator",
+            return_value=mock_orchestrator,
+        ):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_encode(args)
             assert exc_info.value.code == 0
@@ -1367,7 +1423,10 @@ class TestCmdEncode:
 
         mock_orchestrator.encode = mock_encode
 
-        with patch("autorac.harness.sdk_orchestrator.SDKOrchestrator", return_value=mock_orchestrator):
+        with patch(
+            "autorac.harness.sdk_orchestrator.SDKOrchestrator",
+            return_value=mock_orchestrator,
+        ):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_encode(args)
             assert exc_info.value.code == 1
@@ -1396,7 +1455,10 @@ class TestCmdEncode:
 
         mock_orchestrator.encode = mock_encode
 
-        with patch("autorac.harness.sdk_orchestrator.SDKOrchestrator", return_value=mock_orchestrator):
+        with patch(
+            "autorac.harness.sdk_orchestrator.SDKOrchestrator",
+            return_value=mock_orchestrator,
+        ):
             with pytest.raises(SystemExit) as exc_info:
                 cmd_encode(args)
             assert exc_info.value.code == 0
@@ -1675,7 +1737,7 @@ class TestExtractSubsections:
         assert result == []
 
     def test_extraction_with_nested_elements(self, tmp_path):
-        xml_content = '''<root>
+        xml_content = """<root>
 <section identifier="/us/usc/t26/s1" status="active">
 <heading>Tax imposed</heading>
 <chapeau>There is hereby imposed</chapeau>
@@ -1696,7 +1758,7 @@ class TestExtractSubsections:
 <content>For heads of household.</content>
 </subsection>
 </section>
-</root>'''
+</root>"""
         xml_file = tmp_path / "usc26.xml"
         xml_file.write_text(xml_content)
         result = _extract_subsections_from_xml(xml_file, "1")
@@ -1826,7 +1888,7 @@ class TestCmdStatuteEdgeCases:
         extract_element truncates inner XML by len(close_tag) chars, so we add
         padding (a note element) after the content tag to compensate.
         """
-        xml_content = '''<root>
+        xml_content = """<root>
 <section identifier="/us/usc/t26/s1" status="active">
 <heading>Tax imposed</heading>
 <subsection identifier="/us/usc/t26/s1/a">
@@ -1838,7 +1900,7 @@ class TestCmdStatuteEdgeCases:
 </paragraph>
 </subsection>
 </section>
-</root>'''
+</root>"""
         xml_file = tmp_path / "usc26.xml"
         xml_file.write_text(xml_content)
         args = MagicMock()
@@ -1850,7 +1912,7 @@ class TestCmdStatuteEdgeCases:
 
     def test_statute_subpara_content_no_heading(self, capsys, tmp_path):
         """Test statute with subparagraph that has content but no heading (lines 961-962)."""
-        xml_content = '''<root>
+        xml_content = """<root>
 <section identifier="/us/usc/t26/s1" status="active">
 <heading>Tax imposed</heading>
 <subsection identifier="/us/usc/t26/s1/a">
@@ -1864,7 +1926,7 @@ class TestCmdStatuteEdgeCases:
 </paragraph>
 </subsection>
 </section>
-</root>'''
+</root>"""
         xml_file = tmp_path / "usc26.xml"
         xml_file.write_text(xml_content)
         args = MagicMock()
@@ -1881,7 +1943,7 @@ class TestCmdStatuteEdgeCases:
         When a <paragraph> contains another <paragraph> (unusual but handled),
         the depth tracking increments to handle the nesting properly.
         """
-        xml_content = '''<root>
+        xml_content = """<root>
 <section identifier="/us/usc/t26/s1" status="active">
 <heading>Tax imposed</heading>
 <subsection identifier="/us/usc/t26/s1/a">
@@ -1897,7 +1959,7 @@ class TestCmdStatuteEdgeCases:
 </paragraph>
 </subsection>
 </section>
-</root>'''
+</root>"""
         xml_file = tmp_path / "usc26.xml"
         xml_file.write_text(xml_content)
         args = MagicMock()
@@ -1918,9 +1980,9 @@ class TestCmdInitEdgeCases:
 
         subsections = [
             {
-                "source_path": f"usc/26/1/{chr(97+i)}",
-                "heading": f"Subsection {chr(97+i)}",
-                "body": f"Content for subsection {chr(97+i)}.",
+                "source_path": f"usc/26/1/{chr(97 + i)}",
+                "heading": f"Subsection {chr(97 + i)}",
+                "body": f"Content for subsection {chr(97 + i)}.",
                 "line_count": 1,
             }
             for i in range(15)
@@ -1932,8 +1994,12 @@ class TestCmdInitEdgeCases:
         xml_path.parent.mkdir(parents=True)
         xml_path.write_text("<root></root>")
 
-        with patch("pathlib.Path.home", return_value=tmp_path), \
-             patch("autorac.cli._extract_subsections_from_xml", return_value=subsections):
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch(
+                "autorac.cli._extract_subsections_from_xml", return_value=subsections
+            ),
+        ):
             cmd_init(args)
         captured = capsys.readouterr()
         assert "Created" in captured.out
@@ -1975,7 +2041,7 @@ class TestCmdCoverageEdgeCases:
 class TestExtractSubsectionsEdgeCases:
     def test_deep_nesting(self, tmp_path):
         """Test extraction with deep nesting including clause level."""
-        xml_content = '''<root>
+        xml_content = """<root>
 <section identifier="/us/usc/t26/s1" status="active">
 <heading>Tax imposed</heading>
 <subsection identifier="/us/usc/t26/s1/a">
@@ -1999,7 +2065,7 @@ class TestExtractSubsectionsEdgeCases:
 </paragraph>
 </subsection>
 </section>
-</root>'''
+</root>"""
         xml_file = tmp_path / "usc26.xml"
         xml_file.write_text(xml_content)
         result = _extract_subsections_from_xml(xml_file, "1")
@@ -2007,7 +2073,7 @@ class TestExtractSubsectionsEdgeCases:
 
     def test_nested_same_tag_in_extract(self, tmp_path):
         """Test _extract_subsections_from_xml with nested elements of same type (line 1064)."""
-        xml_content = '''<root>
+        xml_content = """<root>
 <section identifier="/us/usc/t26/s1" status="active">
 <heading>Tax imposed</heading>
 <subsection identifier="/us/usc/t26/s1/a">
@@ -2023,7 +2089,7 @@ class TestExtractSubsectionsEdgeCases:
 </paragraph>
 </subsection>
 </section>
-</root>'''
+</root>"""
         xml_file = tmp_path / "usc26.xml"
         xml_file.write_text(xml_content)
         result = _extract_subsections_from_xml(xml_file, "1")
@@ -2032,7 +2098,7 @@ class TestExtractSubsectionsEdgeCases:
 
     def test_identifier_without_section_prefix(self, tmp_path):
         """Test StopIteration fallback (lines 1088-1089)."""
-        xml_content = '''<root>
+        xml_content = """<root>
 <section identifier="/us/usc/t26/s1" status="active">
 <heading>Tax imposed</heading>
 <subsection identifier="nonstandardformat">
@@ -2040,7 +2106,7 @@ class TestExtractSubsectionsEdgeCases:
 <content>This has a nonstandard identifier without s prefix</content>
 </subsection>
 </section>
-</root>'''
+</root>"""
         xml_file = tmp_path / "usc26.xml"
         xml_file.write_text(xml_content)
         result = _extract_subsections_from_xml(xml_file, "1")

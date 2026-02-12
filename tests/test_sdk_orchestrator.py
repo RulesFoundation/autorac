@@ -34,9 +34,7 @@ class TestSummarizeToolCall:
         assert _summarize_tool_call("", None, None) == ""
 
     def test_read_tool(self):
-        result = _summarize_tool_call(
-            "Read", {"file_path": "/path/to/file.rac"}, None
-        )
+        result = _summarize_tool_call("Read", {"file_path": "/path/to/file.rac"}, None)
         assert "file.rac" in result
 
     def test_write_tool(self):
@@ -65,9 +63,7 @@ class TestSummarizeToolCall:
         assert "0 lines" in result
 
     def test_edit_tool(self):
-        result = _summarize_tool_call(
-            "Edit", {"file_path": "/path/to/file.rac"}, None
-        )
+        result = _summarize_tool_call("Edit", {"file_path": "/path/to/file.rac"}, None)
         assert "file.rac" in result
 
     def test_grep_tool_short_pattern(self):
@@ -75,9 +71,7 @@ class TestSummarizeToolCall:
         assert "short" in result
 
     def test_grep_tool_long_pattern(self):
-        result = _summarize_tool_call(
-            "Grep", {"pattern": "a" * 50}, None
-        )
+        result = _summarize_tool_call("Grep", {"pattern": "a" * 50}, None)
         assert "..." in result
 
     def test_glob_tool(self):
@@ -93,9 +87,7 @@ class TestSummarizeToolCall:
         assert "..." in result
 
     def test_task_tool(self):
-        result = _summarize_tool_call(
-            "Task", {"subagent_type": "encoder"}, None
-        )
+        result = _summarize_tool_call("Task", {"subagent_type": "encoder"}, None)
         assert "encoder" in result
 
     def test_unknown_tool(self):
@@ -132,27 +124,19 @@ class TestSummarizeThinking:
         assert "I need to parse the statute carefully" in result
 
     def test_thinking_tags_long(self):
-        result = _summarize_thinking(
-            f"<thinking>{'x' * 200}</thinking>"
-        )
+        result = _summarize_thinking(f"<thinking>{'x' * 200}</thinking>")
         assert "..." in result
 
     def test_reasoning_prefix(self):
-        result = _summarize_thinking(
-            "I need to figure out the correct tax bracket"
-        )
+        result = _summarize_thinking("I need to figure out the correct tax bracket")
         assert "I need to figure out" in result
 
     def test_let_me_prefix(self):
-        result = _summarize_thinking(
-            "Let me analyze the statute structure first."
-        )
+        result = _summarize_thinking("Let me analyze the statute structure first.")
         assert "Let me" in result
 
     def test_no_pattern_found(self):
-        result = _summarize_thinking(
-            "Some random text that doesn't match any patterns"
-        )
+        result = _summarize_thinking("Some random text that doesn't match any patterns")
         assert result is None
 
     def test_empty_thinking_tags(self):
@@ -164,9 +148,7 @@ class TestSummarizeThinking:
         assert "First" in result
 
     def test_long_first_sentence(self):
-        result = _summarize_thinking(
-            "Let me " + "x" * 200
-        )
+        result = _summarize_thinking("Let me " + "x" * 200)
         assert "..." in result
 
 
@@ -192,7 +174,9 @@ class TestSummarizeAssistantMessage:
         assert "Completed successfully" in result
 
     def test_code_block(self):
-        result = _summarize_assistant_message("Here is the code:\n```\nprint('hello')\n```")
+        result = _summarize_assistant_message(
+            "Here is the code:\n```\nprint('hello')\n```"
+        )
         assert "Code block" in result
 
     def test_multiline_first_line(self):
@@ -222,24 +206,33 @@ class TestSDKOrchestratorInit:
                 SDKOrchestrator(api_key=None)
 
     def test_with_explicit_api_key(self):
-        with patch.object(SDKOrchestrator, "_find_plugin_path", return_value=Path("/tmp/plugin")):
+        with patch.object(
+            SDKOrchestrator, "_find_plugin_path", return_value=Path("/tmp/plugin")
+        ):
             orch = SDKOrchestrator(api_key="test-key")
             assert orch.api_key == "test-key"
 
     def test_with_env_api_key(self):
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "env-key"}):
-            with patch.object(SDKOrchestrator, "_find_plugin_path", return_value=Path("/tmp/plugin")):
+            with patch.object(
+                SDKOrchestrator, "_find_plugin_path", return_value=Path("/tmp/plugin")
+            ):
                 orch = SDKOrchestrator()
                 assert orch.api_key == "env-key"
 
     def test_custom_model(self):
-        with patch.object(SDKOrchestrator, "_find_plugin_path", return_value=Path("/tmp/plugin")):
+        with patch.object(
+            SDKOrchestrator, "_find_plugin_path", return_value=Path("/tmp/plugin")
+        ):
             orch = SDKOrchestrator(api_key="key", model="custom-model")
             assert orch.model == "custom-model"
 
     def test_default_model(self):
         from autorac.constants import DEFAULT_MODEL
-        with patch.object(SDKOrchestrator, "_find_plugin_path", return_value=Path("/tmp/plugin")):
+
+        with patch.object(
+            SDKOrchestrator, "_find_plugin_path", return_value=Path("/tmp/plugin")
+        ):
             orch = SDKOrchestrator(api_key="key")
             assert orch.model == DEFAULT_MODEL
 
@@ -256,7 +249,9 @@ class TestFindPluginPath:
         agents.mkdir()
         with patch("pathlib.Path.home", return_value=tmp_path):
             # Create the marketplace structure
-            marketplace = tmp_path / ".claude" / "plugins" / "marketplaces" / "rac" / "agents"
+            marketplace = (
+                tmp_path / ".claude" / "plugins" / "marketplaces" / "rac" / "agents"
+            )
             marketplace.mkdir(parents=True)
             result = SDKOrchestrator._find_plugin_path()
             assert "rac" in str(result)
@@ -316,11 +311,15 @@ class TestBuildPrompts:
         with patch.object(SDKOrchestrator, "_find_plugin_path", return_value=tmp_path):
             orch = SDKOrchestrator(api_key="key")
             task = SubsectionTask(
-                subsection_id="a", title="General", file_name="a.rac",
+                subsection_id="a",
+                title="General",
+                file_name="a.rac",
                 dependencies=["b"],
             )
             prompt = orch._build_subsection_prompt(
-                task=task, citation="26 USC 1", output_path=Path("/tmp/output"),
+                task=task,
+                citation="26 USC 1",
+                output_path=Path("/tmp/output"),
                 statute_text="Tax text",
             )
             assert "26 USC 1" in prompt
@@ -330,10 +329,14 @@ class TestBuildPrompts:
         with patch.object(SDKOrchestrator, "_find_plugin_path", return_value=tmp_path):
             orch = SDKOrchestrator(api_key="key")
             task = SubsectionTask(
-                subsection_id="a", title="General", file_name="a.rac",
+                subsection_id="a",
+                title="General",
+                file_name="a.rac",
             )
             prompt = orch._build_subsection_prompt(
-                task=task, citation="26 USC 1", output_path=Path("/tmp/output"),
+                task=task,
+                citation="26 USC 1",
+                output_path=Path("/tmp/output"),
             )
             assert "26 USC 1" in prompt
 
@@ -880,7 +883,10 @@ class TestRunAgent:
                 )
 
             # AGENTS dict maps "encoder" to "rac:RAC Encoder"
-            assert "encoder" in result.agent_type.lower() or result.agent_type == "rac:RAC Encoder"
+            assert (
+                "encoder" in result.agent_type.lower()
+                or result.agent_type == "rac:RAC Encoder"
+            )
             assert result.result == "Final result"
             assert result.total_tokens is not None
             assert result.total_tokens.input_tokens == 1100  # 1000 + 100 cache_create
@@ -1117,8 +1123,10 @@ class TestGetCachedSection:
                 return orig_import(name, *args, **kwargs)
 
             # Make Path.home() return tmp_path so atlas.db path won't exist
-            with patch("builtins.__import__", side_effect=atlas_import), \
-                 patch("pathlib.Path.home", return_value=tmp_path):
+            with (
+                patch("builtins.__import__", side_effect=atlas_import),
+                patch("pathlib.Path.home", return_value=tmp_path),
+            ):
                 result = orch._get_cached_section("26 USC 999")
                 assert result is None
 
@@ -1317,7 +1325,9 @@ class TestRunAgentWithSystemPrompt:
         # Create agents directory with a prompt file
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
-        (agents_dir / "encoder.md").write_text("# Encoder System Prompt\nYou are an encoder.")
+        (agents_dir / "encoder.md").write_text(
+            "# Encoder System Prompt\nYou are an encoder."
+        )
 
         with patch.object(SDKOrchestrator, "_find_plugin_path", return_value=tmp_path):
             orch = SDKOrchestrator(api_key="key")
@@ -1382,9 +1392,9 @@ Some markdown analysis here.
         with patch.object(SDKOrchestrator, "_find_plugin_path", return_value=tmp_path):
             orch = SDKOrchestrator(api_key="key")
             # Valid JSON but a subsection is missing "id" key
-            text = '''<!-- STRUCTURED_OUTPUT
+            text = """<!-- STRUCTURED_OUTPUT
 {"subsections": [{"title": "A", "disposition": "ENCODE"}], "dependencies": {}}
--->'''
+-->"""
             result = orch._parse_analyzer_output(text)
             assert isinstance(result, AnalyzerOutput)
 
@@ -1420,8 +1430,10 @@ class TestGetCachedSectionWithDb:
                     return mock_atlas_mod
                 return orig_import(name, *args, **kwargs)
 
-            with patch("builtins.__import__", side_effect=atlas_import), \
-                 patch("pathlib.Path.home", return_value=tmp_path):
+            with (
+                patch("builtins.__import__", side_effect=atlas_import),
+                patch("pathlib.Path.home", return_value=tmp_path),
+            ):
                 result = orch._get_cached_section("26 USC 1")
                 assert result == mock_section
 
@@ -1460,7 +1472,10 @@ class TestEncodeExceptionSetsAgentRunError:
             assert isinstance(result, OrchestratorRun)
             # The last agent_run should have the error
             if result.agent_runs:
-                assert result.agent_runs[-1].error is not None or result.ended_at is not None
+                assert (
+                    result.agent_runs[-1].error is not None
+                    or result.ended_at is not None
+                )
 
 
 class TestOracleValidationInEncode:
