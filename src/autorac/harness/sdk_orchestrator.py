@@ -307,7 +307,7 @@ class SDKOrchestrator:
                 statute_text = self._fetch_statute_text(citation)
 
             # Phase 1: Analysis
-            analysis_prompt = self._build_analyzer_prompt(citation)
+            analysis_prompt = self._build_analyzer_prompt(citation, statute_text=statute_text)
 
             analysis = await self._run_agent(
                 agent_key="analyzer",
@@ -1043,10 +1043,30 @@ variable ctc_maximum:
 
         return result
 
-    def _build_analyzer_prompt(self, citation: str) -> str:
+    def _build_analyzer_prompt(self, citation: str, statute_text: Optional[str] = None) -> str:
         """Build the analysis prompt with structured output instructions."""
-        return f"""Analyze {citation}. Report: subsection tree, encoding order, dependencies.
+        text_section = ""
+        if statute_text:
+            text_section = f"""
 
+## Statute Text
+
+The following is the AUTHORITATIVE text of {citation}. Use ONLY this text to identify subsections.
+Do NOT rely on your training data for the subsection structure — the text below is the source of truth.
+
+<statute>
+{statute_text}
+</statute>
+"""
+        else:
+            text_section = f"""
+
+NOTE: Statute text for {citation} was not available. You MUST fetch it using WebFetch or WebSearch
+before analyzing. Do NOT guess the subsection structure from memory — it may be inaccurate.
+"""
+
+        return f"""Analyze {citation}. Report: subsection tree, encoding order, dependencies.
+{text_section}
 After your markdown analysis, include a machine-readable block:
 <!-- STRUCTURED_OUTPUT
 {{"subsections": [{{"id": "a", "title": "...", "disposition": "ENCODE", "file": "a.rac"}}, ...],
