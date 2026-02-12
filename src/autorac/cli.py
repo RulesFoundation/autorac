@@ -1619,9 +1619,7 @@ def cmd_sync_transcripts(args):
         )
     except ValueError as e:
         print(f"Error: {e}")
-        print(
-            "Set COSILICO_SUPABASE_URL and COSILICO_SUPABASE_SECRET_KEY environment variables"
-        )
+        print("Set RAC_SUPABASE_URL and RAC_SUPABASE_SECRET_KEY environment variables")
         sys.exit(1)
 
 
@@ -1661,9 +1659,7 @@ def cmd_sync_sdk_sessions(args):
         )
     except ValueError as e:
         print(f"Error: {e}")
-        print(
-            "Set COSILICO_SUPABASE_URL and COSILICO_SUPABASE_SECRET_KEY environment variables"
-        )
+        print("Set RAC_SUPABASE_URL and RAC_SUPABASE_SECRET_KEY environment variables")
         sys.exit(1)
 
 

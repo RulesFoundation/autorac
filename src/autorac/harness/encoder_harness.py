@@ -44,7 +44,7 @@ def run_claude_code(
 
     Args:
         prompt: The prompt to send
-        agent: Optional agent type (e.g., "cosilico:RAC Encoder")
+        agent: Optional agent type (e.g., "rac:RAC Encoder")
         model: Model to use (sonnet, opus, haiku)
         timeout: Timeout in seconds
         cwd: Working directory
@@ -94,23 +94,23 @@ class EncoderConfig:
     rac_us_path: Path
     rac_path: Path
     db_path: Path = Path("experiments.db")
-    cosilico_plugin_path: Optional[Path] = None  # Path to cosilico-claude plugin
+    rac_plugin_path: Optional[Path] = None  # Path to rac-claude plugin
     enable_oracles: bool = True
     max_iterations: int = 3
     score_threshold: float = 7.0  # Minimum score to accept
 
     def __post_init__(self):
-        # Auto-detect cosilico plugin if not specified
-        if self.cosilico_plugin_path is None:
+        # Auto-detect rac-claude plugin if not specified
+        if self.rac_plugin_path is None:
             # Try common locations
             candidates = [
-                self.rac_us_path.parent / "cosilico-claude",
-                Path.home() / "RulesFoundation" / "cosilico-claude",
-                Path.home() / ".claude" / "plugins" / "cosilico-claude",
+                self.rac_us_path.parent / "rac-claude",
+                Path.home() / "RulesFoundation" / "rac-claude",
+                Path.home() / ".claude" / "plugins" / "rac-claude",
             ]
             for candidate in candidates:
                 if candidate.exists() and (candidate / "plugin.json").exists():
-                    self.cosilico_plugin_path = candidate
+                    self.rac_plugin_path = candidate
                     break
 
 
@@ -298,9 +298,9 @@ Score each dimension from 1-10. Output ONLY valid JSON:
         """
         Invoke Claude Code to encode the statute to RAC format.
 
-        Uses the cosilico:RAC Encoder agent from the plugin.
+        Uses the rac:RAC Encoder agent from the plugin.
         """
-        # Use the cosilico plugin's encoder agent
+        # Use the rac-claude plugin's encoder agent
         prompt = f"""Encode {citation} into RAC format.
 
 Write the output to: {output_path}
@@ -314,11 +314,11 @@ Use the Write tool to create the .rac file at the specified path.
         try:
             output, returncode = run_claude_code(
                 prompt,
-                agent="cosilico:RAC Encoder",
+                agent="rac:RAC Encoder",
                 model=DEFAULT_CLI_MODEL,
                 timeout=300,
                 cwd=self.config.rac_us_path,
-                plugin_dir=self.config.cosilico_plugin_path,
+                plugin_dir=self.config.rac_plugin_path,
             )
 
             # Check if file was created

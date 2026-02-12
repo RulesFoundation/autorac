@@ -31,7 +31,7 @@ class EncoderRequest:
     citation: str
     statute_text: str
     output_path: Path
-    agent_type: str = "cosilico:RAC Encoder"
+    agent_type: str = "rac:RAC Encoder"
     model: str = DEFAULT_CLI_MODEL
     timeout: int = 300
 
@@ -240,12 +240,12 @@ class AgentSDKBackend(EncoderBackend):
     Enables massive parallelization for batch encoding.
 
     Uses the same agent definitions as the Claude Code plugin by loading
-    the cosilico-claude plugin via the SDK's plugins option.
+    the rac-claude plugin via the SDK's plugins option.
     """
 
-    # Default path to cosilico-claude plugin (sibling directory)
+    # Default path to rac-claude plugin (sibling directory)
     DEFAULT_PLUGIN_PATH = (
-        Path(__file__).parent.parent.parent.parent.parent / "cosilico-claude"
+        Path(__file__).parent.parent.parent.parent.parent / "rac-claude"
     )
 
     def __init__(
@@ -270,10 +270,10 @@ class AgentSDKBackend(EncoderBackend):
         return asyncio.run(self.encode_async(request))
 
     async def encode_async(self, request: EncoderRequest) -> EncoderResponse:
-        """Async encode using Agent SDK with cosilico-claude plugin.
+        """Async encode using Agent SDK with rac-claude plugin.
 
         Uses the same agent definitions as Claude Code CLI by loading
-        the cosilico-claude plugin.
+        the rac-claude plugin.
         """
         start = time.time()
 
@@ -291,20 +291,20 @@ Statute Text:
 Use the Write tool to create the .rac file at the specified path.
 """
 
-            # Configure SDK to load the cosilico-claude plugin
+            # Configure SDK to load the rac-claude plugin
             # This gives access to the same agents as Claude Code CLI
             options = ClaudeAgentOptions(
                 model=self.model,
                 allowed_tools=["Read", "Write", "Edit", "Grep", "Glob", "Task", "Bash"],
-                # Load cosilico-claude plugin for agent definitions
+                # Load rac-claude plugin for agent definitions
                 plugins=[{"type": "local", "path": str(self.plugin_path)}],
-                # Load agent definitions from plugin
+                # Load rac-claude agent definitions from plugin
                 setting_sources=["project"],
             )
 
             # If a specific agent is requested, use the Task tool pattern
             # to invoke it (same as Claude Code CLI does)
-            if request.agent_type and request.agent_type != "cosilico:RAC Encoder":
+            if request.agent_type and request.agent_type != "rac:RAC Encoder":
                 prompt = f"""Use the Task tool to invoke the {request.agent_type} agent with this prompt:
 
 {prompt}

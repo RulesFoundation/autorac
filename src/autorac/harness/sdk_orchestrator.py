@@ -215,15 +215,15 @@ class SDKOrchestrator:
     Summaries are generated for human readability.
     """
 
-    # Agent definitions from cosilico-claude plugin
+    # Agent definitions from rac-claude plugin
     AGENTS = {
-        "analyzer": "cosilico:Statute Analyzer",
-        "encoder": "cosilico:RAC Encoder",
-        "validator": "cosilico:Encoding Validator",
-        "rac_reviewer": "cosilico:rac-reviewer",
-        "formula_reviewer": "cosilico:Formula Reviewer",
-        "parameter_reviewer": "cosilico:Parameter Reviewer",
-        "integration_reviewer": "cosilico:Integration Reviewer",
+        "analyzer": "rac:Statute Analyzer",
+        "encoder": "rac:RAC Encoder",
+        "validator": "rac:Encoding Validator",
+        "rac_reviewer": "rac:rac-reviewer",
+        "formula_reviewer": "rac:Formula Reviewer",
+        "parameter_reviewer": "rac:Parameter Reviewer",
+        "integration_reviewer": "rac:Integration Reviewer",
     }
 
     # Map agent keys to their prompt files
@@ -254,11 +254,11 @@ class SDKOrchestrator:
 
     @staticmethod
     def _find_plugin_path() -> Path:
-        """Find the cosilico plugin, checking marketplace and sibling locations."""
+        """Find the rac-claude plugin, checking marketplace and sibling locations."""
         candidates = [
-            Path.home() / ".claude" / "plugins" / "marketplaces" / "cosilico",
-            Path.home() / ".claude" / "plugins" / "cache" / "cosilico" / "cosilico",
-            Path(__file__).parent.parent.parent.parent.parent / "cosilico-claude",
+            Path.home() / ".claude" / "plugins" / "marketplaces" / "rac",
+            Path.home() / ".claude" / "plugins" / "cache" / "rac" / "rac",
+            Path(__file__).parent.parent.parent.parent.parent / "rac-claude",
         ]
         for p in candidates:
             if (p / "agents").exists():
