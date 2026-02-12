@@ -199,7 +199,9 @@ def main():
         help="Output directory for .rac files",
     )
     encode_parser.add_argument(
-        "--model", default=None, help="Model to use for encoding (default: autorac.DEFAULT_MODEL)"
+        "--model",
+        default=None,
+        help="Model to use for encoding (default: autorac.DEFAULT_MODEL)",
     )
     encode_parser.add_argument("--db", type=Path, default=DEFAULT_DB)
 
@@ -1142,7 +1144,12 @@ def cmd_init(args):
 
     # Use local USC XML
     xml_path = (
-        Path.home() / "RulesFoundation" / "atlas" / "data" / "uscode" / f"usc{title}.xml"
+        Path.home()
+        / "RulesFoundation"
+        / "atlas"
+        / "data"
+        / "uscode"
+        / f"usc{title}.xml"
     )
     if not xml_path.exists():
         print(f"USC XML not found: {xml_path}")

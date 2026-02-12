@@ -695,7 +695,11 @@ Output ONLY valid JSON:
         # Try current interpreter first
         try:
             result = subprocess.run(
-                [sys.executable, "-c", "from policyengine_us import Simulation; print('ok')"],
+                [
+                    sys.executable,
+                    "-c",
+                    "from policyengine_us import Simulation; print('ok')",
+                ],
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -708,14 +712,28 @@ Output ONLY valid JSON:
         # Try known PE venv locations
         pe_venv_paths = [
             Path.home() / "policyengine-us" / ".venv" / "bin" / "python",
-            Path.home() / "RulesFoundation" / "policyengine-us" / ".venv" / "bin" / "python",
-            Path.home() / "PolicyEngine" / "policyengine-us" / ".venv" / "bin" / "python",
+            Path.home()
+            / "RulesFoundation"
+            / "policyengine-us"
+            / ".venv"
+            / "bin"
+            / "python",
+            Path.home()
+            / "PolicyEngine"
+            / "policyengine-us"
+            / ".venv"
+            / "bin"
+            / "python",
         ]
         for pe_python in pe_venv_paths:
             if pe_python.exists():
                 try:
                     result = subprocess.run(
-                        [str(pe_python), "-c", "from policyengine_us import Simulation; print('ok')"],
+                        [
+                            str(pe_python),
+                            "-c",
+                            "from policyengine_us import Simulation; print('ok')",
+                        ],
                         capture_output=True,
                         text=True,
                         timeout=30,
@@ -810,7 +828,9 @@ Output ONLY valid JSON:
                 validator_name="policyengine",
                 passed=False,
                 score=None,
-                issues=["No PolicyEngine-capable Python found (tried local, known venvs, auto-install)"],
+                issues=[
+                    "No PolicyEngine-capable Python found (tried local, known venvs, auto-install)"
+                ],
                 duration_ms=duration,
                 error="policyengine-us not available",
             )
@@ -845,7 +865,9 @@ Output ONLY valid JSON:
             output = self._run_pe_subprocess(scenario_script, pe_python)
 
             if output is None:
-                issues.append(f"PE calculation failed for '{test.get('name', rac_var)}'")
+                issues.append(
+                    f"PE calculation failed for '{test.get('name', rac_var)}'"
+                )
                 total += 1
                 continue
 
@@ -866,10 +888,14 @@ Output ONLY valid JSON:
                         )
                     total += 1
                 else:
-                    issues.append(f"No RESULT in PE output for '{test.get('name', rac_var)}'")
+                    issues.append(
+                        f"No RESULT in PE output for '{test.get('name', rac_var)}'"
+                    )
                     total += 1
             except Exception as parse_err:
-                issues.append(f"Parse error for '{test.get('name', rac_var)}': {parse_err}")
+                issues.append(
+                    f"Parse error for '{test.get('name', rac_var)}': {parse_err}"
+                )
                 total += 1
 
         score = matches / total if total > 0 else None
@@ -1134,7 +1160,6 @@ Output ONLY valid JSON:
             # Fall back to string comparison
             return str(actual) == str(expected)
 
-
     def _extract_tests_from_rac_v2(self, rac_content: str) -> list[dict]:
         """Extract test cases from RAC v2 format with per-variable tests.
 
@@ -1223,17 +1248,27 @@ Output ONLY valid JSON:
 
     # PE variables that are defined as monthly (not annual)
     _PE_MONTHLY_VARS = {
-        "snap", "snap_normal_allotment", "snap_max_allotment",
-        "snap_net_income", "snap_expected_contribution", "snap_min_allotment",
-        "snap_gross_income", "snap_emergency_allotment",
-        "ssi", "ssi_amount_if_eligible",
+        "snap",
+        "snap_normal_allotment",
+        "snap_max_allotment",
+        "snap_net_income",
+        "snap_expected_contribution",
+        "snap_min_allotment",
+        "snap_gross_income",
+        "snap_emergency_allotment",
+        "ssi",
+        "ssi_amount_if_eligible",
         "tanf",
     }
 
     # PE variables at spm_unit level (need spm_units in situation)
     _PE_SPM_VARS = {
-        "snap", "snap_normal_allotment", "snap_max_allotment",
-        "snap_net_income", "snap_expected_contribution", "snap_min_allotment",
+        "snap",
+        "snap_normal_allotment",
+        "snap_max_allotment",
+        "snap_net_income",
+        "snap_expected_contribution",
+        "snap_min_allotment",
     }
 
     def _build_pe_scenario_script(
@@ -1265,10 +1300,13 @@ Output ONLY valid JSON:
         members = ["'adult'"]
 
         # Check for employment income / earned income
-        earned = inputs.get("employment_income", inputs.get("earned_income",
-                 inputs.get("wages", 0)))
+        earned = inputs.get(
+            "employment_income", inputs.get("earned_income", inputs.get("wages", 0))
+        )
         if earned:
-            people_parts[0] = f"'adult': {{'age': {{'{year}': 30}}, 'employment_income': {{'{year}': {earned}}}}}"
+            people_parts[0] = (
+                f"'adult': {{'age': {{'{year}': 30}}, 'employment_income': {{'{year}': {earned}}}}}"
+            )
 
         # Add spouse if joint
         if filing_status.upper() in ("JOINT", "MARRIED_FILING_JOINTLY"):
@@ -1276,10 +1314,14 @@ Output ONLY valid JSON:
             members.append("'spouse'")
 
         # Add children based on household_size (subtract adults)
-        num_adults = 2 if filing_status.upper() in ("JOINT", "MARRIED_FILING_JOINTLY") else 1
+        num_adults = (
+            2 if filing_status.upper() in ("JOINT", "MARRIED_FILING_JOINTLY") else 1
+        )
         num_children = max(0, int(household_size) - num_adults)
         for i in range(num_children):
-            people_parts.append(f"'child{i}': {{'age': {{'{year}': 8}}, 'is_tax_unit_dependent': {{'{year}': True}}}}")
+            people_parts.append(
+                f"'child{i}': {{'age': {{'{year}': 8}}, 'is_tax_unit_dependent': {{'{year}': True}}}}"
+            )
             members.append(f"'child{i}'")
 
         members_str = "[" + ", ".join(members) + "]"

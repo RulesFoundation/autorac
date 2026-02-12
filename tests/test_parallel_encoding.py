@@ -4,7 +4,6 @@ Tests for parallel per-subsection encoding in SDKOrchestrator.
 
 import asyncio
 import sys
-import textwrap
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -14,6 +13,7 @@ import pytest
 src_path = str(Path(__file__).parent.parent / "src")
 sys.path.insert(0, src_path)
 
+from autorac.harness.experiment_db import TokenUsage
 from autorac.harness.sdk_orchestrator import (
     AgentRun,
     AnalyzerOutput,
@@ -21,7 +21,6 @@ from autorac.harness.sdk_orchestrator import (
     SDKOrchestrator,
     SubsectionTask,
 )
-from autorac.harness.experiment_db import TokenUsage
 
 # --- Constants for DSL cheatsheet / prompt enrichment tests ---
 
@@ -213,9 +212,7 @@ class TestBuildSubsectionPrompt:
         """Prompt contains subsection ID, output path, and scope rule."""
         task = SubsectionTask("a", "Allowance of credit", "a.rac", [])
         output_path = Path("/tmp/rac-us/statute/26/24")
-        prompt = orchestrator._build_subsection_prompt(
-            task, "26 USC 24", output_path
-        )
+        prompt = orchestrator._build_subsection_prompt(task, "26 USC 24", output_path)
 
         assert "(a)" in prompt
         assert "Allowance of credit" in prompt
@@ -239,7 +236,9 @@ class TestBuildSubsectionPrompt:
         task = SubsectionTask("c", "Definitions", "c.rac", [])
         output_path = Path("/tmp/rac-us/statute/26/24")
         prompt = orchestrator._build_subsection_prompt(
-            task, "26 USC 24", output_path,
+            task,
+            "26 USC 24",
+            output_path,
             statute_text="Full text that should not appear",
             subsection_text="Subsection-specific text for (c).",
         )
@@ -250,9 +249,7 @@ class TestBuildSubsectionPrompt:
         """When deps exist, prompt mentions them for import reference."""
         task = SubsectionTask("b", "Limitations", "b.rac", ["a"])
         output_path = Path("/tmp/rac-us/statute/26/24")
-        prompt = orchestrator._build_subsection_prompt(
-            task, "26 USC 24", output_path
-        )
+        prompt = orchestrator._build_subsection_prompt(task, "26 USC 24", output_path)
         assert "a.rac" in prompt or "a" in prompt
 
 
@@ -303,6 +300,7 @@ class TestRunEncodingParallel:
     @pytest.mark.asyncio
     async def test_partial_failure(self, orchestrator):
         """One subsection fails, others succeed."""
+
         async def mock_run_agent(agent_key, prompt, phase, model):
             if "subsection (b)" in prompt:
                 raise RuntimeError("Encoding failed for (b)")
@@ -351,9 +349,7 @@ class TestRunEncodingParallel:
             active["max"] = max(active["max"], active["count"])
             await asyncio.sleep(0.01)
             active["count"] -= 1
-            return AgentRun(
-                agent_type="encoder", prompt=prompt, phase=Phase.ENCODING
-            )
+            return AgentRun(agent_type="encoder", prompt=prompt, phase=Phase.ENCODING)
 
         orchestrator._run_agent = mock_run_agent
 
@@ -455,9 +451,7 @@ class TestStatuteTextPrefetch:
 
     def test_fetch_statute_text_graceful_missing(self, orchestrator):
         """Returns None for missing citations."""
-        text = orchestrator._fetch_statute_text(
-            "99 USC 999", Path("/nonexistent")
-        )
+        text = orchestrator._fetch_statute_text("99 USC 999", Path("/nonexistent"))
         assert text is None
 
     def test_encode_prefetches_statute(self, orchestrator):
@@ -491,7 +485,9 @@ class TestStatuteTextPrefetch:
         task = SubsectionTask("c", "Definitions", "c.rac", [])
         output_path = Path("/tmp/rac-us/statute/26/32")
         prompt = orchestrator._build_subsection_prompt(
-            task, "26 USC 32", output_path,
+            task,
+            "26 USC 32",
+            output_path,
             statute_text="Full statute text here" * 500,
             subsection_text="Specific subsection (c) definitions text.",
         )
@@ -551,15 +547,14 @@ class TestBatchSmallSubsections:
                     )
                     if dep_task:
                         for d in dep_task.dependencies:
-                            assert d.strip() not in [
-                                i.strip() for i in ids
-                            ], f"{tid} depends on {d}, both in same batch"
+                            assert d.strip() not in [i.strip() for i in ids], (
+                                f"{tid} depends on {d}, both in same batch"
+                            )
 
     def test_batch_respects_max_size(self, orchestrator):
         """No batch exceeds max_batch size."""
         tasks = [
-            SubsectionTask(f"g/{i}", f"Def {i}", f"g/{i}.rac", [])
-            for i in range(10)
+            SubsectionTask(f"g/{i}", f"Def {i}", f"g/{i}.rac", []) for i in range(10)
         ]
         batched = orchestrator._batch_small_subsections(tasks, max_batch=3)
         for t in batched:
@@ -667,7 +662,9 @@ class TestTokenCostEstimation:
         )
         estimated = usage.estimated_cost_usd
         # Should be in the right ballpark (~$0.70-$1.00), not 3x off (~$2.30)
-        assert estimated < 1.5, f"Estimated ${estimated:.2f} is too high (was ~$2.30 with old rates)"
+        assert estimated < 1.5, (
+            f"Estimated ${estimated:.2f} is too high (was ~$2.30 with old rates)"
+        )
         assert estimated > 0.3, f"Estimated ${estimated:.2f} is too low"
 
     def test_orchestrator_prefers_sdk_cost(self, orchestrator):
@@ -782,7 +779,9 @@ class TestIncrementalDBLogging:
 
         def tracking_start(*args, **kwargs):
             result = original_start(*args, **kwargs)
-            created_sessions.append(kwargs.get("session_id", args[2] if len(args) > 2 else None))
+            created_sessions.append(
+                kwargs.get("session_id", args[2] if len(args) > 2 else None)
+            )
             return result
 
         db.start_session = tracking_start
@@ -790,7 +789,9 @@ class TestIncrementalDBLogging:
         # Mock _run_agent to avoid real API calls
         async def mock_run_agent(agent_key, prompt, phase, model):
             # Session should already exist by now
-            assert len(created_sessions) > 0, "DB session not created before first agent!"
+            assert len(created_sessions) > 0, (
+                "DB session not created before first agent!"
+            )
             return AgentRun(
                 agent_type=agent_key, prompt=prompt, phase=phase, result="ok"
             )
@@ -798,10 +799,13 @@ class TestIncrementalDBLogging:
         orchestrator._run_agent = mock_run_agent
 
         import asyncio
+
         try:
-            asyncio.run(orchestrator.encode(
-                "26 USC 99", Path(tmp_path / "output"), statute_text="test"
-            ))
+            asyncio.run(
+                orchestrator.encode(
+                    "26 USC 99", Path(tmp_path / "output"), statute_text="test"
+                )
+            )
         except Exception:
             pass  # Expected - mock won't do real work
 

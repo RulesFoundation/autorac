@@ -30,7 +30,7 @@ jobs:
           uv pip install -e ".[dev]"
 
       - name: Run tests
-        run: uv run pytest tests/ -v
+        run: .venv/bin/pytest tests/ -v
 
   lint:
     runs-on: ubuntu-latest

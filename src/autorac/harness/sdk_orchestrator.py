@@ -309,7 +309,9 @@ class SDKOrchestrator:
                 statute_text = self._fetch_statute_text(citation)
 
             # Phase 1: Analysis
-            analysis_prompt = self._build_analyzer_prompt(citation, statute_text=statute_text)
+            analysis_prompt = self._build_analyzer_prompt(
+                citation, statute_text=statute_text
+            )
 
             analysis = await self._run_agent(
                 agent_key="analyzer",
@@ -714,9 +716,7 @@ class SDKOrchestrator:
 
         return result
 
-    def _compute_waves(
-        self, tasks: List[SubsectionTask]
-    ) -> List[List[SubsectionTask]]:
+    def _compute_waves(self, tasks: List[SubsectionTask]) -> List[List[SubsectionTask]]:
         """Topological sort into parallel batches (waves).
 
         Subsections with no dependencies = wave 0.
@@ -739,9 +739,7 @@ class SDKOrchestrator:
                     wave.append(t)
             if not wave:
                 # Remaining tasks have unsatisfiable deps — put them all in next wave
-                remaining = [
-                    t for t in tasks if t.subsection_id not in assigned
-                ]
+                remaining = [t for t in tasks if t.subsection_id not in assigned]
                 for t in remaining:
                     t.wave = len(waves)
                 waves.append(remaining)
@@ -885,7 +883,9 @@ variable ctc_maximum:
                 self._section_cache[citation] = None
         return self._section_cache[citation]
 
-    def _fetch_subsection_text(self, citation: str, subsection_id: str) -> Optional[str]:
+    def _fetch_subsection_text(
+        self, citation: str, subsection_id: str
+    ) -> Optional[str]:
         """Fetch text for a specific subsection from atlas."""
         section = self._get_cached_section(citation)
         if section is None:
@@ -918,9 +918,7 @@ variable ctc_maximum:
             xml_path = Path.home() / "RulesFoundation" / "atlas" / "data" / "uscode"
 
         # Parse citation: "26 USC 24" or "26 USC 25A"
-        citation_clean = (
-            citation.upper().replace("USC", "").replace("§", "").strip()
-        )
+        citation_clean = citation.upper().replace("USC", "").replace("§", "").strip()
         parts = re.split(r"[\s/]+", citation_clean)
         if len(parts) < 2:
             return None
@@ -1044,7 +1042,9 @@ variable ctc_maximum:
 
         return result
 
-    def _build_analyzer_prompt(self, citation: str, statute_text: Optional[str] = None) -> str:
+    def _build_analyzer_prompt(
+        self, citation: str, statute_text: Optional[str] = None
+    ) -> str:
         """Build the analysis prompt with structured output instructions."""
         text_section = ""
         if statute_text:
@@ -1139,11 +1139,11 @@ Write .rac files to the output path. Run tests after each file."""
 
             async def encode_one(task: SubsectionTask) -> AgentRun:
                 async with semaphore:
-                    sub_text = self._fetch_subsection_text(
-                        citation, task.subsection_id
-                    )
+                    sub_text = self._fetch_subsection_text(citation, task.subsection_id)
                     prompt = self._build_subsection_prompt(
-                        task, citation, output_path,
+                        task,
+                        citation,
+                        output_path,
                         statute_text=statute_text,
                         subsection_text=sub_text,
                     )
@@ -1233,9 +1233,7 @@ Write .rac files to the output path. Run tests after each file."""
                     "agent_type": agent_run.agent_type,
                     "summary": msg.summary,
                     "tool_input": msg.tool_input,
-                    "tool_output": msg.tool_output[:1000]
-                    if msg.tool_output
-                    else None,
+                    "tool_output": msg.tool_output[:1000] if msg.tool_output else None,
                     "tokens": {
                         "input": msg.tokens.input_tokens if msg.tokens else 0,
                         "output": msg.tokens.output_tokens if msg.tokens else 0,

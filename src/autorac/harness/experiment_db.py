@@ -915,15 +915,19 @@ class ExperimentDB:
             )
 
         # Parse suggestions
-        suggestions = [
-            AgentSuggestion(
-                category=s_data.get("category", "documentation"),
-                description=s_data.get("description", ""),
-                predicted_impact=s_data.get("predicted_impact", "medium"),
-                specific_change=s_data.get("specific_change"),
-            )
-            for s_data in json.loads(suggestions_json)
-        ] if suggestions_json else []
+        suggestions = (
+            [
+                AgentSuggestion(
+                    category=s_data.get("category", "documentation"),
+                    description=s_data.get("description", ""),
+                    predicted_impact=s_data.get("predicted_impact", "medium"),
+                    specific_change=s_data.get("specific_change"),
+                )
+                for s_data in json.loads(suggestions_json)
+            ]
+            if suggestions_json
+            else []
+        )
 
         return EncodingRun(
             id=id,
