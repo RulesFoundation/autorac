@@ -73,7 +73,8 @@ Output your review as JSON:
 }
 """
 
-RAC_REVIEWER_PROMPT = """You are an expert RAC (Rules as Code) reviewer specializing in structure and legal citations.
+RAC_REVIEWER_PROMPT = (
+    """You are an expert RAC (Rules as Code) reviewer specializing in structure and legal citations.
 
 Review the RAC file for:
 1. **Structure**: Proper definition with `name:` (no `variable`/`parameter` keywords), all required fields (entity, period, dtype, formula)
@@ -81,9 +82,12 @@ Review the RAC file for:
 3. **Imports**: Correct import paths using path#name syntax
 4. **Entity Hierarchy**: Proper entity usage (Person < TaxUnit < Household)
 5. **DSL Compliance**: Unified syntax — `name:`, `from yyyy-mm-dd:` temporal entries, `\"\"\"...\"\"\"` text blocks, tests in `.rac.test` files
-""" + _REVIEW_JSON_FORMAT
+"""
+    + _REVIEW_JSON_FORMAT
+)
 
-FORMULA_REVIEWER_PROMPT = """You are an expert formula reviewer for RAC (Rules as Code) encodings.
+FORMULA_REVIEWER_PROMPT = (
+    """You are an expert formula reviewer for RAC (Rules as Code) encodings.
 
 Review the RAC file formulas for:
 1. **Logic Correctness**: Does the formula correctly implement the statute logic?
@@ -92,9 +96,12 @@ Review the RAC file formulas for:
 4. **Return Statements**: Every code path returns a value
 5. **Type Consistency**: Return type matches declared dtype
 6. **Temporal Values**: Uses `from yyyy-mm-dd:` syntax for date-based entries
-""" + _REVIEW_JSON_FORMAT
+"""
+    + _REVIEW_JSON_FORMAT
+)
 
-PARAMETER_REVIEWER_PROMPT = """You are an expert reviewer for RAC (Rules as Code) encodings, focused on policy values and parameters.
+PARAMETER_REVIEWER_PROMPT = (
+    """You are an expert reviewer for RAC (Rules as Code) encodings, focused on policy values and parameters.
 
 Review the RAC file for policy value usage:
 1. **No Magic Numbers**: Only -1, 0, 1, 2, 3 allowed as literals. All other values must be defined as named entries.
@@ -102,9 +109,12 @@ Review the RAC file for policy value usage:
 3. **Time-Varying Values**: Rate thresholds and amounts should use `from yyyy-mm-dd:` temporal entries
 4. **Reference Format**: Correct reference syntax (unified `name:` format, no `parameter` keyword)
 5. **Default Values**: Appropriate defaults for optional inputs
-""" + _REVIEW_JSON_FORMAT
+"""
+    + _REVIEW_JSON_FORMAT
+)
 
-INTEGRATION_REVIEWER_PROMPT = """You are an expert integration reviewer for RAC (Rules as Code) encodings.
+INTEGRATION_REVIEWER_PROMPT = (
+    """You are an expert integration reviewer for RAC (Rules as Code) encodings.
 
 Review the RAC file for integration quality:
 1. **Test Coverage**: At least 3-5 test cases in the companion `.rac.test` file covering normal and edge cases
@@ -113,7 +123,9 @@ Review the RAC file for integration quality:
 4. **Documentation**: Clear labels and descriptions
 5. **Completeness**: Full statute implementation, no TODO placeholders
 6. **Syntax**: Unified syntax — `name:`, `from yyyy-mm-dd:` temporal entries, tests in `.rac.test` files
-""" + _REVIEW_JSON_FORMAT
+"""
+    + _REVIEW_JSON_FORMAT
+)
 
 
 @dataclass
