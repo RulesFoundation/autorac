@@ -415,3 +415,334 @@ class TestSessionLogging:
 
         session = experiment_db.get_session("count-test")
         assert session.event_count == 3
+
+
+class TestRowToRunSchemaVersions:
+    """Tests for _row_to_run with different schema versions."""
+
+    def test_row_with_11_columns(self, experiment_db):
+        """Test _row_to_run with legacy 11-column schema."""
+
+        row = (
+            "test-id",  # id
+            "2024-01-01T00:00:00",  # timestamp
+            "26 USC 32",  # citation
+            "/path/file.rac",  # file_path
+            "{}",  # complexity_json
+            "[]",  # iterations_json
+            1000,  # total_duration_ms
+            None,  # final_scores_json
+            "encoder",  # agent_type
+            "opus",  # agent_model
+            "content",  # rac_content
+        )
+        run = experiment_db._row_to_run(row)
+        assert run.id == "test-id"
+        assert run.citation == "26 USC 32"
+        assert run.session_id is None
+        assert run.iteration == 1
+
+    def test_row_with_13_columns(self, experiment_db):
+        """Test _row_to_run with 13-column schema (added predicted_scores, session_id)."""
+        import json
+
+        predicted = json.dumps(
+            {
+                "rac_reviewer": 8.0,
+                "formula_reviewer": 7.0,
+                "parameter_reviewer": 7.5,
+                "integration_reviewer": 7.0,
+                "ci_pass": True,
+                "confidence": 0.6,
+            }
+        )
+        row = (
+            "test-id-13",
+            "2024-01-01T00:00:00",
+            "26 USC 24",
+            "/path/file.rac",
+            "{}",
+            "[]",
+            2000,
+            None,
+            "encoder",
+            "opus",
+            "content",
+            predicted,  # predicted_scores_json
+            "sess-123",  # session_id
+        )
+        run = experiment_db._row_to_run(row)
+        assert run.id == "test-id-13"
+        assert run.session_id == "sess-123"
+        assert run.predicted is not None
+        assert run.predicted.rac_reviewer == 8.0
+        assert run.iteration == 1
+
+
+class TestPredictedScoresSetter:
+    """Test the predicted_scores property setter."""
+
+    def test_predicted_scores_setter(self):
+        """Test EncodingRun.predicted_scores setter sets .predicted."""
+        from autorac import EncodingRun, PredictedScores
+
+        run = EncodingRun(
+            file_path="/path.rac",
+            citation="26 USC 1",
+            agent_type="encoder",
+            agent_model="opus",
+            rac_content="content",
+        )
+        scores = PredictedScores(rac_reviewer=8.0, confidence=0.7)
+        run.predicted_scores = scores
+        assert run.predicted is scores
+        assert run.predicted_scores is scores
+
+
+class TestMigration:
+    """Tests for database migration (old 'runs' table to 'encoding_runs')."""
+
+    def test_migrate_runs_table(self, temp_db_path):
+        """Test that old 'runs' table is renamed to 'encoding_runs'."""
+        import sqlite3
+
+        # Create old-style DB with 'runs' table
+        conn = sqlite3.connect(temp_db_path)
+        conn.execute("""
+            CREATE TABLE runs (
+                id TEXT PRIMARY KEY,
+                timestamp TEXT,
+                citation TEXT,
+                file_path TEXT,
+                complexity_json TEXT,
+                iterations_json TEXT,
+                total_duration_ms INTEGER,
+                final_scores_json TEXT,
+                agent_type TEXT,
+                agent_model TEXT,
+                rac_content TEXT
+            )
+        """)
+        conn.execute("""
+            INSERT INTO runs VALUES (
+                'old-run', '2024-01-01T00:00:00', '26 USC 1',
+                '/path.rac', '{}', '[]', 1000, NULL, 'encoder', 'opus', 'content'
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+        # Now init ExperimentDB — should migrate
+        ExperimentDB(temp_db_path)
+
+        # Old table should be gone
+        conn = sqlite3.connect(temp_db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='runs'"
+        )
+        assert cursor.fetchone() is None
+
+        # encoding_runs should have the data
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='encoding_runs'"
+        )
+        assert cursor.fetchone() is not None
+
+        cursor.execute("SELECT id FROM encoding_runs")
+        assert cursor.fetchone()[0] == "old-run"
+        conn.close()
+
+
+class TestArtifactVersioning:
+    """Tests for SCD2 artifact versioning."""
+
+    def test_log_artifact_version_new(self, experiment_db):
+        """Test creating a new artifact version."""
+        version = experiment_db.log_artifact_version(
+            artifact_type="plugin",
+            content="plugin content v1",
+            version_label="1.0.0",
+            metadata={"files": ["a.md"]},
+        )
+        assert version.artifact_type == "plugin"
+        assert version.content == "plugin content v1"
+        assert version.version_label == "1.0.0"
+        assert version.effective_to is None
+
+    def test_log_artifact_version_duplicate_returns_existing(self, experiment_db):
+        """Test that duplicate content returns existing version."""
+        v1 = experiment_db.log_artifact_version(
+            artifact_type="plugin",
+            content="same content",
+            version_label="1.0.0",
+        )
+        v2 = experiment_db.log_artifact_version(
+            artifact_type="plugin",
+            content="same content",
+            version_label="1.0.1",
+        )
+        assert v1.id == v2.id  # Same version returned
+
+    def test_log_artifact_version_new_content_closes_old(self, experiment_db):
+        """Test that new content closes old version."""
+        v1 = experiment_db.log_artifact_version(
+            artifact_type="plugin",
+            content="content v1",
+            version_label="1.0.0",
+        )
+        v2 = experiment_db.log_artifact_version(
+            artifact_type="plugin",
+            content="content v2",
+            version_label="2.0.0",
+        )
+
+        # v1 and v2 should be different
+        assert v1.id != v2.id
+
+        # v1 should be closed (effective_to set)
+        history = experiment_db.get_artifact_history("plugin")
+        assert len(history) == 2
+        # Most recent first
+        assert history[0].id == v2.id
+        assert history[0].effective_to is None
+        assert history[1].id == v1.id
+        assert history[1].effective_to is not None
+
+    def test_get_current_artifact_version(self, experiment_db):
+        """Test getting the current artifact version."""
+        experiment_db.log_artifact_version(
+            artifact_type="rac_spec",
+            content="spec v1",
+        )
+        experiment_db.log_artifact_version(
+            artifact_type="rac_spec",
+            content="spec v2",
+        )
+
+        current = experiment_db.get_current_artifact_version("rac_spec")
+        assert current is not None
+        assert current.content == "spec v2"
+        assert current.effective_to is None
+
+    def test_get_current_artifact_version_none(self, experiment_db):
+        """Test returns None when no artifact exists."""
+        result = experiment_db.get_current_artifact_version("nonexistent")
+        assert result is None
+
+    def test_get_artifact_history(self, experiment_db):
+        """Test getting full artifact history."""
+        experiment_db.log_artifact_version(
+            artifact_type="plugin",
+            content="v1",
+            version_label="1.0",
+        )
+        experiment_db.log_artifact_version(
+            artifact_type="plugin",
+            content="v2",
+            version_label="2.0",
+        )
+        experiment_db.log_artifact_version(
+            artifact_type="plugin",
+            content="v3",
+            version_label="3.0",
+        )
+
+        history = experiment_db.get_artifact_history("plugin")
+        assert len(history) == 3
+        # Ordered by effective_from DESC
+        assert history[0].version_label == "3.0"
+        assert history[2].version_label == "1.0"
+
+    def test_link_run_to_artifacts(self, experiment_db, sample_encoding_run):
+        """Test linking a run to artifact versions."""
+        experiment_db.log_run(sample_encoding_run)
+
+        v1 = experiment_db.log_artifact_version(
+            artifact_type="plugin", content="plugin code"
+        )
+        v2 = experiment_db.log_artifact_version(
+            artifact_type="rac_spec", content="spec code"
+        )
+
+        experiment_db.link_run_to_artifacts(sample_encoding_run.id, [v1.id, v2.id])
+
+        artifacts = experiment_db.get_run_artifacts(sample_encoding_run.id)
+        assert len(artifacts) == 2
+        artifact_types = {a.artifact_type for a in artifacts}
+        assert "plugin" in artifact_types
+        assert "rac_spec" in artifact_types
+
+    def test_link_run_to_current_artifacts(self, experiment_db, sample_encoding_run):
+        """Test linking a run to all current artifact versions."""
+        experiment_db.log_run(sample_encoding_run)
+
+        experiment_db.log_artifact_version(artifact_type="plugin", content="plugin")
+        experiment_db.log_artifact_version(artifact_type="rac_spec", content="spec")
+
+        ids = experiment_db.link_run_to_current_artifacts(sample_encoding_run.id)
+        assert len(ids) == 2
+
+        artifacts = experiment_db.get_run_artifacts(sample_encoding_run.id)
+        assert len(artifacts) == 2
+
+
+class TestUpdateSessionTokens:
+    """Tests for updating session tokens."""
+
+    def test_update_session_tokens(self, experiment_db):
+        """Test updating token usage for a session."""
+        experiment_db.start_session(
+            model="test-model", cwd="/tmp", session_id="token-test"
+        )
+
+        experiment_db.update_session_tokens(
+            session_id="token-test",
+            input_tokens=1000,
+            output_tokens=500,
+            cache_read_tokens=200,
+        )
+
+        session = experiment_db.get_session("token-test")
+        # Session.total_tokens = input_tokens + output_tokens = 1500
+        assert session.total_tokens == 1500
+
+
+class TestSnapshotPlugin:
+    """Tests for snapshot_plugin method."""
+
+    def test_snapshot_plugin(self, experiment_db, tmp_path):
+        """Test snapshotting a plugin directory."""
+        plugin_dir = tmp_path / "test-plugin"
+        plugin_dir.mkdir()
+
+        # Create plugin structure
+        (plugin_dir / "plugin.json").write_text('{"name": "test"}')
+        agents_dir = plugin_dir / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "encoder.md").write_text("# Encoder agent")
+        skills_dir = plugin_dir / "skills"
+        skills_dir.mkdir()
+        (skills_dir / "encode.md").write_text("# Encode skill")
+
+        version = experiment_db.snapshot_plugin(plugin_dir, version_label="1.0")
+        assert version.artifact_type == "plugin"
+        assert "plugin.json" in version.metadata.get("files", [])
+        assert "agents/encoder.md" in version.metadata.get("files", [])
+        assert "Encoder agent" in version.content
+
+    def test_snapshot_rac_spec(self, experiment_db, tmp_path):
+        """Test snapshotting RAC spec."""
+        spec_file = tmp_path / "RAC_SPEC.md"
+        spec_file.write_text("# RAC Specification\nVersion 2.0")
+
+        version = experiment_db.snapshot_rac_spec(spec_file, version_label="2.0")
+        assert version.artifact_type == "rac_spec"
+        assert "RAC Specification" in version.content
+        assert version.metadata["path"] == str(spec_file)
+
+    def test_snapshot_rac_spec_missing_file(self, experiment_db, tmp_path):
+        """Test snapshotting RAC spec when file doesn't exist."""
+        spec_file = tmp_path / "MISSING_SPEC.md"
+        version = experiment_db.snapshot_rac_spec(spec_file)
+        assert version.content == ""

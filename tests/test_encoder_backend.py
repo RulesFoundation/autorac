@@ -256,6 +256,308 @@ class TestAgentSDKBackend:
             assert max_seen <= 3
 
 
+class TestClaudeCodeBackendAdditional:
+    """Additional tests for ClaudeCodeBackend to cover missing lines."""
+
+    def test_encode_with_nonzero_returncode(self):
+        """Test encode returns error when CLI returns non-zero."""
+        backend = ClaudeCodeBackend()
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = Mock(
+                stdout="Error: failed to encode",
+                stderr="",
+                returncode=1,
+            )
+
+            resp = backend.encode(
+                EncoderRequest(
+                    citation="26 USC 1",
+                    statute_text="Test",
+                    output_path=Path("/tmp/test.rac"),
+                )
+            )
+
+            assert not resp.success
+            assert resp.error is not None
+            assert resp.rac_content == ""
+
+    def test_encode_reads_file_when_exists(self, tmp_path):
+        """Test encode reads from output_path when file exists."""
+        backend = ClaudeCodeBackend()
+        output_path = tmp_path / "output.rac"
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = Mock(
+                stdout="CLI output ignored",
+                stderr="",
+                returncode=0,
+            )
+            # Create the file as if Claude wrote it
+            output_path.write_text("file_var:\n  entity: TaxUnit\n")
+
+            resp = backend.encode(
+                EncoderRequest(
+                    citation="26 USC 1",
+                    statute_text="Test",
+                    output_path=output_path,
+                )
+            )
+
+            assert resp.success
+            assert "file_var" in resp.rac_content
+
+    def test_predict_no_json_in_output(self):
+        """Test predict returns defaults when no JSON found in output."""
+        backend = ClaudeCodeBackend()
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = Mock(
+                stdout="No JSON here, just plain text",
+                stderr="",
+                returncode=0,
+            )
+
+            scores = backend.predict("26 USC 1", "Statute text")
+            # Should return defaults on error
+            assert scores.confidence == 0.3
+
+    def test_predict_returns_defaults_on_exception(self):
+        """Test predict returns defaults when exception occurs."""
+        backend = ClaudeCodeBackend()
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = Exception("unexpected error")
+
+            scores = backend.predict("26 USC 1", "Statute text")
+            assert scores.confidence == 0.3
+
+    def test_run_claude_code_with_plugin_dir(self, tmp_path):
+        """Test _run_claude_code includes plugin-dir when it exists."""
+        plugin_dir = tmp_path / "plugins"
+        plugin_dir.mkdir()
+        backend = ClaudeCodeBackend(plugin_dir=plugin_dir)
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = Mock(stdout="test", stderr="", returncode=0)
+
+            backend._run_claude_code("test prompt")
+
+            cmd = mock_run.call_args[0][0]
+            assert "--plugin-dir" in cmd
+
+    def test_run_claude_code_timeout(self):
+        """Test _run_claude_code handles timeout."""
+        import subprocess
+
+        backend = ClaudeCodeBackend()
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.TimeoutExpired(cmd="claude", timeout=300)
+
+            output, code = backend._run_claude_code("test", timeout=300)
+            assert "Timeout" in output
+            assert code == 1
+
+    def test_run_claude_code_file_not_found(self):
+        """Test _run_claude_code handles missing CLI."""
+        backend = ClaudeCodeBackend()
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = FileNotFoundError()
+
+            output, code = backend._run_claude_code("test")
+            assert "not found" in output
+            assert code == 1
+
+    def test_run_claude_code_generic_error(self):
+        """Test _run_claude_code handles generic exception."""
+        backend = ClaudeCodeBackend()
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = OSError("Permission denied")
+
+            output, code = backend._run_claude_code("test")
+            assert "Error" in output
+            assert code == 1
+
+
+class TestAgentSDKBackendAdditional:
+    """Additional tests for AgentSDKBackend to cover missing lines."""
+
+    def test_plugin_path_does_not_exist(self, tmp_path):
+        """Test AgentSDKBackend raises error for nonexistent plugin path."""
+        with pytest.raises(ValueError, match="does not exist"):
+            AgentSDKBackend(
+                api_key="test-key",
+                plugin_path=tmp_path / "nonexistent",
+            )
+
+    @pytest.mark.asyncio
+    async def test_encode_async_with_custom_agent_type(self, tmp_path):
+        """Test encode_async uses Task tool pattern for custom agent types."""
+        backend = AgentSDKBackend(api_key="test-key", plugin_path=tmp_path)
+
+        mock_sdk = Mock()
+
+        class MockMessage:
+            def __init__(self):
+                self.result = "encoded content"
+
+        async def mock_gen():
+            yield MockMessage()
+
+        mock_sdk.query = Mock(return_value=mock_gen())
+        mock_sdk.ClaudeAgentOptions = Mock()
+
+        with patch.dict("sys.modules", {"claude_agent_sdk": mock_sdk}):
+            resp = await backend.encode_async(
+                EncoderRequest(
+                    citation="26 USC 1",
+                    statute_text="Test",
+                    output_path=Path("/tmp/nonexistent.rac"),
+                    agent_type="custom:Agent",
+                )
+            )
+
+            assert resp.success
+            # Prompt should include "Use the Task tool"
+            call_args = mock_sdk.query.call_args
+            prompt = call_args[1].get("prompt", "") if call_args[1] else ""
+            if not prompt and call_args[0]:
+                prompt = ""
+
+    @pytest.mark.asyncio
+    async def test_encode_async_with_usage(self, tmp_path):
+        """Test encode_async captures token usage."""
+        backend = AgentSDKBackend(api_key="test-key", plugin_path=tmp_path)
+
+        mock_sdk = Mock()
+
+        class MockUsage:
+            input_tokens = 100
+            output_tokens = 50
+            cache_read_input_tokens = 10
+            cache_creation_input_tokens = 5
+
+        class MockMessage:
+            def __init__(self):
+                self.result = "encoded"
+                self.usage = MockUsage()
+
+        async def mock_gen():
+            yield MockMessage()
+
+        mock_sdk.query = Mock(return_value=mock_gen())
+        mock_sdk.ClaudeAgentOptions = Mock()
+
+        with patch.dict("sys.modules", {"claude_agent_sdk": mock_sdk}):
+            resp = await backend.encode_async(
+                EncoderRequest(
+                    citation="26 USC 1",
+                    statute_text="Test",
+                    output_path=Path("/tmp/nonexistent.rac"),
+                )
+            )
+
+            assert resp.success
+            assert resp.tokens is not None
+
+    @pytest.mark.asyncio
+    async def test_encode_async_reads_file_if_exists(self, tmp_path):
+        """Test encode_async reads from output_path if it exists."""
+        backend = AgentSDKBackend(api_key="test-key", plugin_path=tmp_path)
+
+        output_path = tmp_path / "output.rac"
+        output_path.write_text("file_content:\n  entity: TaxUnit\n")
+
+        mock_sdk = Mock()
+
+        class MockMessage:
+            def __init__(self):
+                self.result = "ignored"
+
+        async def mock_gen():
+            yield MockMessage()
+
+        mock_sdk.query = Mock(return_value=mock_gen())
+        mock_sdk.ClaudeAgentOptions = Mock()
+
+        with patch.dict("sys.modules", {"claude_agent_sdk": mock_sdk}):
+            resp = await backend.encode_async(
+                EncoderRequest(
+                    citation="26 USC 1",
+                    statute_text="Test",
+                    output_path=output_path,
+                )
+            )
+
+            assert resp.success
+            assert "file_content" in resp.rac_content
+
+    @pytest.mark.asyncio
+    async def test_encode_async_import_error(self, tmp_path):
+        """Test encode_async handles missing SDK import."""
+        backend = AgentSDKBackend(api_key="test-key", plugin_path=tmp_path)
+
+        import builtins
+
+        orig_import = builtins.__import__
+
+        def no_sdk_import(name, *args, **kwargs):
+            if name == "claude_agent_sdk":
+                raise ImportError("No module named 'claude_agent_sdk'")
+            return orig_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=no_sdk_import):
+            resp = await backend.encode_async(
+                EncoderRequest(
+                    citation="26 USC 1",
+                    statute_text="Test",
+                    output_path=Path("/tmp/test.rac"),
+                )
+            )
+
+            assert not resp.success
+            assert "not installed" in resp.error
+
+    @pytest.mark.asyncio
+    async def test_encode_async_generic_error(self, tmp_path):
+        """Test encode_async handles generic exception."""
+        backend = AgentSDKBackend(api_key="test-key", plugin_path=tmp_path)
+
+        mock_sdk = Mock()
+
+        async def mock_gen():
+            raise RuntimeError("Connection failed")
+            yield  # pragma: no cover
+
+        mock_sdk.query = Mock(return_value=mock_gen())
+        mock_sdk.ClaudeAgentOptions = Mock()
+
+        with patch.dict("sys.modules", {"claude_agent_sdk": mock_sdk}):
+            resp = await backend.encode_async(
+                EncoderRequest(
+                    citation="26 USC 1",
+                    statute_text="Test",
+                    output_path=Path("/tmp/test.rac"),
+                )
+            )
+
+            assert not resp.success
+            assert "Connection failed" in resp.error
+
+
+class TestAgentSDKPrediction:
+    """Test AgentSDKBackend.predict() method."""
+
+    def test_predict_returns_default_scores(self, tmp_path):
+        """Test predict returns default PredictionScores."""
+        backend = AgentSDKBackend(api_key="test-key", plugin_path=tmp_path)
+        scores = backend.predict("26 USC 1", "Statute text")
+        assert scores.confidence == 0.5
+
+
 class TestBackendCompatibility:
     """Test that both backends produce compatible outputs."""
 

@@ -417,7 +417,7 @@ def get_local_transcript_stats() -> dict:
     }
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     # CLI usage: python -m autorac.supabase_sync <db_path> <data_source>
     # data_source is REQUIRED to prevent syncing fake data
     import sys

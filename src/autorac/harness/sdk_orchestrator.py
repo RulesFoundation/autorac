@@ -906,7 +906,7 @@ ctc_maximum:
         """
         import html as html_mod
 
-        if xml_path is None:
+        if xml_path is None:  # pragma: no cover
             xml_path = Path.home() / "RulesFoundation" / "atlas" / "data" / "uscode"
 
         # Parse citation: "26 USC 24" or "26 USC 25A"

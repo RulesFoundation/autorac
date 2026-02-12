@@ -77,6 +77,327 @@ class TestRunClaudeCode:
             assert code == 1
 
 
+class TestRunClaudeCodeAdditional:
+    """Additional tests for run_claude_code covering missing branches."""
+
+    def test_with_plugin_dir(self, tmp_path):
+        """Test run_claude_code with plugin_dir."""
+        plugin_dir = tmp_path / "plugins"
+        plugin_dir.mkdir()
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = Mock(stdout="output", stderr="", returncode=0)
+            output, code = run_claude_code("test", plugin_dir=plugin_dir)
+
+            cmd = mock_run.call_args[0][0]
+            assert "--plugin-dir" in cmd
+
+    def test_with_agent(self):
+        """Test run_claude_code with agent parameter."""
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = Mock(stdout="output", stderr="", returncode=0)
+            output, code = run_claude_code("test", agent="rac:encoder")
+
+            cmd = mock_run.call_args[0][0]
+            assert "--agent" in cmd
+            assert "rac:encoder" in cmd
+
+    def test_generic_exception(self):
+        """Test run_claude_code handles generic exception."""
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = OSError("Permission denied")
+            output, code = run_claude_code("test")
+
+            assert "Error" in output
+            assert code == 1
+
+
+class TestEncoderConfigAutoDetect:
+    """Tests for EncoderConfig auto-detection of plugin path."""
+
+    def test_auto_detect_plugin_path(self, tmp_path):
+        """Test auto-detection of rac-claude plugin directory."""
+        rac_us = tmp_path / "rac-us"
+        rac_us.mkdir()
+        rac = tmp_path / "rac"
+        rac.mkdir()
+        # Create rac-claude sibling with plugin.json
+        rac_claude = tmp_path / "rac-claude"
+        rac_claude.mkdir()
+        (rac_claude / "plugin.json").write_text('{"name": "rac-claude"}')
+
+        config = EncoderConfig(
+            rac_us_path=rac_us,
+            rac_path=rac,
+        )
+        assert config.rac_plugin_path == rac_claude
+
+    def test_no_plugin_found(self, tmp_path):
+        """Test when no plugin is auto-detected."""
+        rac_us = tmp_path / "rac-us"
+        rac_us.mkdir()
+        rac = tmp_path / "rac"
+        rac.mkdir()
+
+        config = EncoderConfig(
+            rac_us_path=rac_us,
+            rac_path=rac,
+        )
+        assert config.rac_plugin_path is None
+
+
+class TestIterateUntilPass:
+    """Tests for iterate_until_pass method."""
+
+    def test_iterate_passes_first_time(self, temp_config):
+        """Test iterate_until_pass when first iteration passes."""
+        harness = EncoderHarness(temp_config)
+
+        prediction_json = json.dumps(
+            {
+                "rac_reviewer": 8.0,
+                "confidence": 0.7,
+            }
+        )
+        rac_content = "test_var:\n  entity: TaxUnit\n"
+
+        # Mock the full pipeline validate to return all_passed=True
+        passing_pipeline_result = PipelineResult(
+            results={
+                "ci": ValidationResult("ci", True, None, [], 100),
+                "rac_reviewer": ValidationResult("rac_reviewer", True, 8.0, [], 500),
+                "formula_reviewer": ValidationResult(
+                    "formula_reviewer", True, 8.0, [], 500
+                ),
+                "parameter_reviewer": ValidationResult(
+                    "parameter_reviewer", True, 8.0, [], 500
+                ),
+                "integration_reviewer": ValidationResult(
+                    "integration_reviewer", True, 8.0, [], 500
+                ),
+            },
+            total_duration_ms=600,
+            all_passed=True,
+        )
+
+        with patch("autorac.harness.encoder_harness.run_claude_code") as mock_encoder:
+            with patch.object(
+                harness.pipeline, "validate", return_value=passing_pipeline_result
+            ):
+                mock_encoder.return_value = (prediction_json, 0)
+                mock_encoder.side_effect = [
+                    (prediction_json, 0),  # predict
+                    (rac_content, 0),  # encode
+                ]
+
+                output_path = temp_config.rac_us_path / "test.rac"
+                iterations = harness.iterate_until_pass(
+                    citation="26 USC 1",
+                    statute_text="Test statute",
+                    output_path=output_path,
+                )
+
+                assert len(iterations) == 1
+                run, result = iterations[0]
+                assert run.citation == "26 USC 1"
+                assert result.all_passed is True
+
+    def test_iterate_multiple_times(self, temp_config):
+        """Test iterate_until_pass with multiple iterations."""
+        harness = EncoderHarness(temp_config)
+
+        prediction_json = json.dumps({"rac_reviewer": 8.0, "confidence": 0.7})
+        rac_content = "test_var:\n  entity: TaxUnit\n"
+        suggestions_json = json.dumps(
+            [
+                {
+                    "category": "validator",
+                    "description": "fix",
+                    "predicted_impact": "high",
+                }
+            ]
+        )
+
+        call_count = 0
+
+        def mock_encoder_calls(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 2:
+                return (prediction_json, 0)
+            elif call_count <= 4:
+                return (rac_content, 0)
+            else:
+                return (suggestions_json, 0)
+
+        with patch("autorac.harness.encoder_harness.run_claude_code") as mock_encoder:
+            with patch(
+                "autorac.harness.validator_pipeline.run_claude_code"
+            ) as mock_validator:
+                # First iteration fails, second passes
+                fail_result = '{"score": 4.0, "passed": false, "issues": ["Bad formula"], "reasoning": "Wrong"}'
+                pass_result = (
+                    '{"score": 8.0, "passed": true, "issues": [], "reasoning": "Good"}'
+                )
+
+                mock_encoder.side_effect = [
+                    (prediction_json, 0),  # 1st predict
+                    (rac_content, 0),  # 1st encode
+                    (prediction_json, 0),  # 2nd predict
+                    (rac_content, 0),  # 2nd encode
+                ]
+                mock_validator.side_effect = [
+                    (fail_result, 0),  # 1st validator fail (rac)
+                    (fail_result, 0),  # 1st validator fail (formula)
+                    (fail_result, 0),  # 1st validator fail (param)
+                    (fail_result, 0),  # 1st validator fail (integration)
+                    (pass_result, 0),  # 2nd validator pass
+                    (pass_result, 0),
+                    (pass_result, 0),
+                    (pass_result, 0),
+                ]
+
+                output_path = temp_config.rac_us_path / "test.rac"
+                iterations = harness.iterate_until_pass(
+                    citation="26 USC 1",
+                    statute_text="Test statute",
+                    output_path=output_path,
+                )
+
+                assert len(iterations) >= 1
+
+
+class TestRunEncodingExperiment:
+    """Tests for run_encoding_experiment convenience function."""
+
+    def test_run_encoding_experiment(self, tmp_path):
+        """Test the convenience function."""
+        from autorac.harness.encoder_harness import run_encoding_experiment
+
+        rac_us = tmp_path / "rac-us"
+        rac_us.mkdir()
+        rac = tmp_path / "rac"
+        rac.mkdir()
+        output_dir = rac_us / "statute" / "26"
+        output_dir.mkdir(parents=True)
+
+        prediction_json = json.dumps({"rac_reviewer": 8.0, "confidence": 0.7})
+        rac_content = "test_var:\n  entity: TaxUnit\n"
+
+        with patch("autorac.harness.encoder_harness.run_claude_code") as mock_encoder:
+            with patch(
+                "autorac.harness.validator_pipeline.run_claude_code"
+            ) as mock_validator:
+                mock_encoder.side_effect = [
+                    (prediction_json, 0),
+                    (rac_content, 0),
+                ]
+                mock_validator.return_value = (
+                    '{"score": 8.0, "passed": true, "issues": [], "reasoning": "Good"}',
+                    0,
+                )
+
+                config = EncoderConfig(
+                    rac_us_path=rac_us,
+                    rac_path=rac,
+                    db_path=tmp_path / "experiments.db",
+                    enable_oracles=False,
+                )
+
+                iterations = run_encoding_experiment(
+                    citation="26 USC 1",
+                    statute_text="Test statute",
+                    output_dir=output_dir,
+                    config=config,
+                )
+
+                assert len(iterations) >= 1
+
+    def test_run_encoding_experiment_auto_config(self, tmp_path):
+        """Test auto-config derivation in run_encoding_experiment."""
+        from autorac.harness.encoder_harness import run_encoding_experiment
+
+        # Create rac-us directory structure
+        rac_us = tmp_path / "rac-us"
+        rac_us.mkdir()
+        output_dir = rac_us / "statute" / "26"
+        output_dir.mkdir(parents=True)
+        # rac sibling
+        rac = tmp_path / "rac"
+        rac.mkdir()
+
+        prediction_json = json.dumps({"rac_reviewer": 8.0, "confidence": 0.7})
+        rac_content = "test_var:\n  entity: TaxUnit\n"
+
+        with patch("autorac.harness.encoder_harness.run_claude_code") as mock_encoder:
+            with patch(
+                "autorac.harness.validator_pipeline.run_claude_code"
+            ) as mock_validator:
+                mock_encoder.side_effect = [
+                    (prediction_json, 0),
+                    (rac_content, 0),
+                ]
+                mock_validator.return_value = (
+                    '{"score": 8.0, "passed": true, "issues": [], "reasoning": "Good"}',
+                    0,
+                )
+
+                iterations = run_encoding_experiment(
+                    citation="26 USC 1",
+                    statute_text="Test statute",
+                    output_dir=output_dir,
+                )
+
+                assert len(iterations) >= 1
+
+
+class TestEncodeReadsFile:
+    """Test _encode reads from file when output_path exists."""
+
+    def test_encode_reads_existing_file(self, temp_config):
+        """Test _encode reads RAC content from file when it exists."""
+        harness = EncoderHarness(temp_config)
+        output_path = temp_config.rac_us_path / "output.rac"
+
+        # Mock run_claude_code but also create the file as a side effect
+        def mock_run_and_create_file(*args, **kwargs):
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text("file_var:\n  entity: TaxUnit\n  dtype: Money\n")
+            return ("CLI output ignored", 0)
+
+        with patch("autorac.harness.encoder_harness.run_claude_code") as mock_claude:
+            mock_claude.side_effect = mock_run_and_create_file
+
+            result = harness._encode("26 USC 1", "Test statute", output_path)
+            assert "file_var" in result
+
+
+class TestGetSuggestionsNoJsonArray:
+    """Test _get_suggestions with no JSON array in output."""
+
+    def test_suggestions_no_json_array(self, temp_config):
+        """Test _get_suggestions when output has no JSON array."""
+        harness = EncoderHarness(temp_config)
+
+        failing_result = PipelineResult(
+            results={
+                "ci": ValidationResult(
+                    "ci", False, None, ["Parse error"], 100, error="Parse error"
+                ),
+            },
+            total_duration_ms=100,
+            all_passed=False,
+        )
+
+        with patch("autorac.harness.encoder_harness.run_claude_code") as mock_claude:
+            mock_claude.return_value = ("No JSON here, just text", 0)
+
+            result = harness._get_suggestions("26 USC 32", "content", failing_result)
+            # Should fall back to basic suggestions
+            assert len(result) >= 1
+            assert all(s.category == "validator" for s in result)
+
+
 class TestGetPredictions:
     """Tests for _get_predictions method."""
 
