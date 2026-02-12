@@ -27,7 +27,7 @@ from typing import Any, Optional
 
 import yaml
 
-from autorac import REVIEWER_CLI_MODEL
+from autorac.constants import REVIEWER_CLI_MODEL
 
 from .experiment_db import ActualScores, ExperimentDB
 

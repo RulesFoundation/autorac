@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
-from autorac import DEFAULT_CLI_MODEL
+from autorac.constants import DEFAULT_CLI_MODEL
 
 
 @dataclass
@@ -275,7 +275,7 @@ class AgentSDKBackend(EncoderBackend):
         model: str | None = None,
         plugin_path: Optional[Path] = None,
     ):
-        from autorac import DEFAULT_MODEL
+        from autorac.constants import DEFAULT_MODEL
 
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not self.api_key:

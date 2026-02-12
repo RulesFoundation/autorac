@@ -250,7 +250,7 @@ class SDKOrchestrator:
         if not self.api_key:
             raise ValueError("ANTHROPIC_API_KEY required")
 
-        from autorac import DEFAULT_MODEL
+        from autorac.constants import DEFAULT_MODEL
 
         self.model = model or DEFAULT_MODEL
         self.plugin_path = plugin_path or self._find_plugin_path()

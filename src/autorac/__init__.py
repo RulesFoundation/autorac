@@ -1,6 +1,7 @@
 # AutoRAC - AI-assisted RAC encoding
 # Feedback loop infrastructure for automated statute encoding
 
+from .constants import DEFAULT_CLI_MODEL, DEFAULT_MODEL, REVIEWER_CLI_MODEL
 from .harness import (
     ActualScores,
     AgentSDKBackend,
@@ -33,13 +34,6 @@ from .harness import (
     save_calibration_snapshot,
     validate_file,
 )
-
-# Full model ID for Agent SDK (API) backend
-DEFAULT_MODEL = "claude-opus-4-6"
-
-# Short-form model names for Claude Code CLI backend
-DEFAULT_CLI_MODEL = "opus"
-REVIEWER_CLI_MODEL = "opus"
 
 __all__ = [
     "DEFAULT_MODEL",

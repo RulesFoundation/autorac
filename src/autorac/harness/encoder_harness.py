@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from autorac import DEFAULT_CLI_MODEL
+from autorac.constants import DEFAULT_CLI_MODEL
 
 from .experiment_db import (
     AgentSuggestion,
@@ -148,7 +148,7 @@ class EncoderHarness:
 
         Returns the encoding run and validation results.
         """
-        from autorac import DEFAULT_MODEL
+        from autorac.constants import DEFAULT_MODEL
 
         agent_model = agent_model or DEFAULT_MODEL
         start = time.time()
@@ -201,7 +201,7 @@ class EncoderHarness:
 
         Returns list of (run, result) for each iteration.
         """
-        from autorac import DEFAULT_MODEL
+        from autorac.constants import DEFAULT_MODEL
 
         agent_model = agent_model or DEFAULT_MODEL
         iterations = []
