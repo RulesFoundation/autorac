@@ -19,6 +19,8 @@ from .experiment_db import (
     Iteration,
     IterationError,
     PredictedScores,
+    ReviewResult,
+    ReviewResults,
     create_run,
 )
 from .metrics import (
@@ -43,6 +45,8 @@ __all__ = [
     "ComplexityFactors",
     "IterationError",
     "Iteration",
+    "ReviewResult",
+    "ReviewResults",
     "FinalScores",
     "PredictedScores",
     "ActualScores",

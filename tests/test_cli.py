@@ -39,10 +39,10 @@ from autorac.cli import (
 from autorac.harness.experiment_db import (
     EncodingRun,
     ExperimentDB,
-    FinalScores,
     Iteration,
     IterationError,
-    PredictedScores,
+    ReviewResult,
+    ReviewResults,
 )
 
 # =========================================================================
@@ -784,8 +784,7 @@ class TestCmdLog:
         assert "Logged" in captured.out
         assert "26 USC 1" in captured.out
         assert "Session: test-session" in captured.out
-        assert "Predicted" in captured.out
-        assert "Actual" in captured.out
+        assert "Reviews: 4/4 passed" in captured.out
 
     def test_log_minimal(self, capsys, tmp_path):
         db_path = tmp_path / "test.db"
@@ -968,17 +967,33 @@ class TestCmdCalibration:
             run = EncodingRun(
                 citation=f"26 USC {i}",
                 file_path="test.rac",
-                predicted=PredictedScores(
-                    rac_reviewer=7 + i * 0.5,
-                    formula_reviewer=6 + i * 0.3,
-                    parameter_reviewer=7,
-                    integration_reviewer=7,
-                ),
-                final_scores=FinalScores(
-                    rac_reviewer=8,
-                    formula_reviewer=7,
-                    parameter_reviewer=8,
-                    integration_reviewer=7.5,
+                review_results=ReviewResults(
+                    reviews=[
+                        ReviewResult(
+                            reviewer="rac_reviewer",
+                            passed=True,
+                            items_checked=10,
+                            items_passed=8,
+                        ),
+                        ReviewResult(
+                            reviewer="formula_reviewer",
+                            passed=True,
+                            items_checked=10,
+                            items_passed=7,
+                        ),
+                        ReviewResult(
+                            reviewer="parameter_reviewer",
+                            passed=True,
+                            items_checked=10,
+                            items_passed=8,
+                        ),
+                        ReviewResult(
+                            reviewer="integration_reviewer",
+                            passed=True,
+                            items_checked=10,
+                            items_passed=7,
+                        ),
+                    ],
                 ),
                 iterations=[Iteration(attempt=1, duration_ms=1000, success=True)],
             )
@@ -1816,8 +1831,8 @@ class TestCmdValidateEdgeCases:
 
 
 class TestCmdCalibrationEdgeCases:
-    def test_calibration_over_bias(self, capsys, tmp_path):
-        """Test calibration with over-predicting bias (line 785)."""
+    def test_calibration_all_pass(self, capsys, tmp_path):
+        """Test calibration with all reviews passing."""
         db_path = tmp_path / "test.db"
         db = ExperimentDB(db_path)
 
@@ -1825,17 +1840,21 @@ class TestCmdCalibrationEdgeCases:
             run = EncodingRun(
                 citation=f"26 USC {i}",
                 file_path="test.rac",
-                predicted=PredictedScores(
-                    rac_reviewer=9.0,  # Much higher than actual
-                    formula_reviewer=9.0,
-                    parameter_reviewer=9.0,
-                    integration_reviewer=9.0,
-                ),
-                final_scores=FinalScores(
-                    rac_reviewer=5.0,  # Low actual
-                    formula_reviewer=5.0,
-                    parameter_reviewer=5.0,
-                    integration_reviewer=5.0,
+                review_results=ReviewResults(
+                    reviews=[
+                        ReviewResult(
+                            reviewer="rac_reviewer",
+                            passed=True,
+                            items_checked=10,
+                            items_passed=9,
+                        ),
+                        ReviewResult(
+                            reviewer="formula_reviewer",
+                            passed=True,
+                            items_checked=10,
+                            items_passed=9,
+                        ),
+                    ],
                 ),
                 iterations=[Iteration(attempt=1, duration_ms=1000, success=True)],
             )
@@ -1846,10 +1865,11 @@ class TestCmdCalibrationEdgeCases:
         args.limit = 50
         cmd_calibration(args)
         captured = capsys.readouterr()
-        assert "over" in captured.out
+        assert "Calibration Report" in captured.out
+        assert "rac_reviewer" in captured.out
 
-    def test_calibration_under_bias(self, capsys, tmp_path):
-        """Test calibration with under-predicting bias (line 787)."""
+    def test_calibration_some_fail(self, capsys, tmp_path):
+        """Test calibration with some reviews failing."""
         db_path = tmp_path / "test.db"
         db = ExperimentDB(db_path)
 
@@ -1857,17 +1877,23 @@ class TestCmdCalibrationEdgeCases:
             run = EncodingRun(
                 citation=f"26 USC {i}",
                 file_path="test.rac",
-                predicted=PredictedScores(
-                    rac_reviewer=3.0,  # Much lower than actual
-                    formula_reviewer=3.0,
-                    parameter_reviewer=3.0,
-                    integration_reviewer=3.0,
-                ),
-                final_scores=FinalScores(
-                    rac_reviewer=9.0,  # High actual
-                    formula_reviewer=9.0,
-                    parameter_reviewer=9.0,
-                    integration_reviewer=9.0,
+                review_results=ReviewResults(
+                    reviews=[
+                        ReviewResult(
+                            reviewer="rac_reviewer",
+                            passed=False,
+                            items_checked=10,
+                            items_passed=3,
+                            critical_issues=["Missing entity"],
+                        ),
+                        ReviewResult(
+                            reviewer="formula_reviewer",
+                            passed=False,
+                            items_checked=10,
+                            items_passed=4,
+                            critical_issues=["Wrong formula"],
+                        ),
+                    ],
                 ),
                 iterations=[Iteration(attempt=1, duration_ms=1000, success=True)],
             )
@@ -1878,7 +1904,7 @@ class TestCmdCalibrationEdgeCases:
         args.limit = 50
         cmd_calibration(args)
         captured = capsys.readouterr()
-        assert "under" in captured.out
+        assert "Calibration Report" in captured.out
 
 
 class TestCmdStatuteEdgeCases:

@@ -29,7 +29,7 @@ import yaml
 
 from autorac.constants import REVIEWER_CLI_MODEL
 
-from .experiment_db import ActualScores, ExperimentDB
+from .experiment_db import ExperimentDB, ReviewResult, ReviewResults
 
 
 def run_claude_code(
@@ -152,38 +152,41 @@ class PipelineResult:
         default_factory=dict
     )  # Context passed to LLM reviewers
 
-    def to_actual_scores(self) -> ActualScores:
-        """Convert to ActualScores for experiment DB."""
-        ci_result = self.results.get("ci", ValidationResult("", False))
-        return ActualScores(
-            rac_reviewer=self.results.get(
-                "rac_reviewer", ValidationResult("", False)
-            ).score
-            or 0.0,
-            formula_reviewer=self.results.get(
-                "formula_reviewer", ValidationResult("", False)
-            ).score
-            or 0.0,
-            parameter_reviewer=self.results.get(
-                "parameter_reviewer", ValidationResult("", False)
-            ).score
-            or 0.0,
-            integration_reviewer=self.results.get(
-                "integration_reviewer", ValidationResult("", False)
-            ).score
-            or 0.0,
-            ci_pass=ci_result.passed,
-            ci_error=ci_result.error,
+    def to_review_results(self) -> ReviewResults:
+        """Convert pipeline results to ReviewResults for experiment DB."""
+        reviews = []
+        for name in [
+            "rac_reviewer",
+            "formula_reviewer",
+            "parameter_reviewer",
+            "integration_reviewer",
+        ]:
+            vr = self.results.get(name, ValidationResult("", False))
+            reviews.append(
+                ReviewResult(
+                    reviewer=name,
+                    passed=vr.passed,
+                    items_checked=len(vr.issues) + (1 if vr.passed else 0),
+                    items_passed=1 if vr.passed else 0,
+                    critical_issues=[issue for issue in (vr.issues or [])]
+                    if not vr.passed
+                    else [],
+                    important_issues=vr.issues or [] if vr.passed else [],
+                )
+            )
+
+        return ReviewResults(
+            reviews=reviews,
             policyengine_match=self.results.get(
                 "policyengine", ValidationResult("", False)
             ).score,
             taxsim_match=self.results.get("taxsim", ValidationResult("", False)).score,
-            reviewer_issues=[
-                issue
-                for name, result in self.results.items()
-                for issue in (result.issues or [])
-            ],
+            oracle_context=self.oracle_context,
         )
+
+    def to_actual_scores(self) -> ReviewResults:
+        """Backward compat alias for to_review_results."""
+        return self.to_review_results()
 
     @property
     def ci_pass(self) -> bool:

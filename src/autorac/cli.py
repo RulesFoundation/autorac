@@ -17,10 +17,10 @@ from pathlib import Path
 from .harness.experiment_db import (
     EncodingRun,
     ExperimentDB,
-    FinalScores,
     Iteration,
     IterationError,
-    PredictedScores,
+    ReviewResult,
+    ReviewResults,
 )
 from .harness.validator_pipeline import ValidatorPipeline
 
@@ -625,30 +625,27 @@ def cmd_log(args):
             )
         )
 
-    # Parse actual scores
-    final_scores = None
+    # Parse review results from --scores (backward compat: convert scores to checklist)
+    review_results = None
     if args.scores:
         s = json.loads(args.scores)
-        final_scores = FinalScores(
-            rac_reviewer=s.get("rac", 0),
-            formula_reviewer=s.get("formula", 0),
-            parameter_reviewer=s.get("param", 0),
-            integration_reviewer=s.get("integration", 0),
-        )
-
-    # Parse predicted scores (for calibration)
-    predicted_scores = None
-    if args.predicted:
-        p = json.loads(args.predicted)
-        predicted_scores = PredictedScores(
-            rac_reviewer=float(p.get("rac", p.get("rac_reviewer", 0))),
-            formula_reviewer=float(p.get("formula", p.get("formula_reviewer", 0))),
-            parameter_reviewer=float(p.get("param", p.get("parameter_reviewer", 0))),
-            integration_reviewer=float(
-                p.get("integration", p.get("integration_reviewer", 0))
-            ),
-            confidence=float(p.get("confidence", 0.5)),
-        )
+        reviews = []
+        for reviewer_name, key in [
+            ("rac_reviewer", "rac"),
+            ("formula_reviewer", "formula"),
+            ("parameter_reviewer", "param"),
+            ("integration_reviewer", "integration"),
+        ]:
+            score = float(s.get(key, 0))
+            reviews.append(
+                ReviewResult(
+                    reviewer=reviewer_name,
+                    passed=score >= 7.0,
+                    items_checked=10,
+                    items_passed=int(score),
+                )
+            )
+        review_results = ReviewResults(reviews=reviews)
 
     # Read RAC content
     rac_content = ""
@@ -658,10 +655,9 @@ def cmd_log(args):
     run = EncodingRun(
         citation=args.citation,
         file_path=str(args.file),
-        predicted=predicted_scores,
+        review_results=review_results,
         iterations=iterations,
         total_duration_ms=args.duration,
-        final_scores=final_scores,
         rac_content=rac_content,
         session_id=args.session,
     )
@@ -674,14 +670,10 @@ def cmd_log(args):
     print(f"  Duration: {args.duration}ms")
     if args.session:
         print(f"  Session: {args.session}")
-    if predicted_scores:
-        print(
-            f"  Predicted: RAC {predicted_scores.rac_reviewer}/10 | Formula {predicted_scores.formula_reviewer}/10 | Param {predicted_scores.parameter_reviewer}/10"
-        )
-    if final_scores:
-        print(
-            f"  Actual: RAC {final_scores.rac_reviewer}/10 | Formula {final_scores.formula_reviewer}/10 | Param {final_scores.parameter_reviewer}/10"
-        )
+    if review_results:
+        passed = sum(1 for r in review_results.reviews if r.passed)
+        total = len(review_results.reviews)
+        print(f"  Reviews: {passed}/{total} passed")
 
 
 def cmd_stats(args):
@@ -731,7 +723,7 @@ def cmd_stats(args):
 
 
 def cmd_calibration(args):
-    """Show calibration metrics - predicted vs actual scores."""
+    """Show review results summary across recent runs."""
     if not args.db.exists():
         print(f"Database not found: {args.db}")
         sys.exit(1)
@@ -739,84 +731,51 @@ def cmd_calibration(args):
     db = ExperimentDB(args.db)
     runs = db.get_recent_runs(limit=args.limit)
 
-    # Filter to runs with predictions
-    runs_with_pred = [r for r in runs if r.predicted and r.final_scores]
+    # Filter to runs with review results
+    runs_with_reviews = [r for r in runs if r.review_results]
 
-    if not runs_with_pred:
+    if not runs_with_reviews:
         print("No runs with both predictions and actual scores yet.")
         print("Use --predicted flag when logging runs to enable calibration.")
         return
 
     print("=== Calibration Report ===\n")
-    print(f"Runs with predictions: {len(runs_with_pred)}")
+    print(f"Runs with reviews: {len(runs_with_reviews)}")
     print()
 
-    # Calculate per-dimension errors
-    dimensions = {
-        "rac_reviewer": [],
-        "formula_reviewer": [],
-        "parameter_reviewer": [],
-        "integration_reviewer": [],
-    }
+    # Per-reviewer pass rates
+    reviewer_stats: dict[str, list[bool]] = {}
+    for run in runs_with_reviews:
+        for review in run.review_results.reviews:
+            reviewer_stats.setdefault(review.reviewer, []).append(review.passed)
 
-    for run in runs_with_pred:
-        p = run.predicted
-        a = run.final_scores
-
-        dimensions["rac_reviewer"].append(p.rac_reviewer - a.rac_reviewer)
-        dimensions["formula_reviewer"].append(p.formula_reviewer - a.formula_reviewer)
-        dimensions["parameter_reviewer"].append(
-            p.parameter_reviewer - a.parameter_reviewer
-        )
-        dimensions["integration_reviewer"].append(
-            p.integration_reviewer - a.integration_reviewer
-        )
-
-    # Print dimension calibration
-    print("Dimension Calibration (predicted - actual):")
+    print("Reviewer Pass Rates:")
     print("-" * 50)
-    print(f"{'Dimension':<25} {'Mean Err':>10} {'Bias':>10} {'MAE':>10}")
+    print(f"{'Reviewer':<25} {'Passed':>8} {'Total':>8} {'Rate':>8}")
     print("-" * 50)
 
-    for dim, errs in dimensions.items():
-        if errs:
-            mean_err = sum(errs) / len(errs)
-            if mean_err > 0.5:
-                bias = "over"
-            elif mean_err < -0.5:
-                bias = "under"
-            else:
-                bias = "good"
-            mae = sum(abs(e) for e in errs) / len(errs)
-            print(f"{dim:<25} {mean_err:>+10.1f} {bias:>10} {mae:>10.1f}")
+    for reviewer, results in sorted(reviewer_stats.items()):
+        passed = sum(1 for r in results if r)
+        total = len(results)
+        rate = passed / total * 100 if total > 0 else 0
+        print(f"{reviewer:<25} {passed:>8} {total:>8} {rate:>7.0f}%")
 
     print()
 
     # Per-run breakdown
     print("Per-Run Breakdown:")
     print("-" * 70)
-    print(f"{'Citation':<25} {'Pred':>8} {'Act':>8} {'Err':>8} {'Iter':>6}")
+    print(f"{'Citation':<25} {'Passed':>8} {'Total':>8} {'Crit':>8} {'Iter':>6}")
     print("-" * 70)
 
-    for run in runs_with_pred[-10:]:  # Last 10
-        p = run.predicted
-        a = run.final_scores
-        pred_avg = (
-            p.rac_reviewer
-            + p.formula_reviewer
-            + p.parameter_reviewer
-            + p.integration_reviewer
-        ) / 4
-        act_avg = (
-            a.rac_reviewer
-            + a.formula_reviewer
-            + a.parameter_reviewer
-            + a.integration_reviewer
-        ) / 4
-        err = pred_avg - act_avg
+    for run in runs_with_reviews[-10:]:  # Last 10
+        rr = run.review_results
+        passed = sum(1 for r in rr.reviews if r.passed)
+        total = len(rr.reviews)
+        critical = rr.total_critical_issues
         citation = run.citation[:25]
         print(
-            f"{citation:<25} {pred_avg:>8.1f} {act_avg:>8.1f} {err:>+8.1f} {run.iterations_needed:>6}"
+            f"{citation:<25} {passed:>8} {total:>8} {critical:>8} {run.iterations_needed:>6}"
         )
 
 

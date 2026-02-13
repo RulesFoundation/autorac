@@ -14,12 +14,11 @@ src_path = str(Path(__file__).parent.parent / "src")
 sys.path.insert(0, src_path)
 
 from autorac import (
-    ActualScores,
     EncodingRun,
     ExperimentDB,
-    FinalScores,
     PipelineResult,
-    PredictedScores,
+    ReviewResult,
+    ReviewResults,
     ValidationResult,
 )
 
@@ -38,49 +37,42 @@ def experiment_db(temp_db_path):
 
 
 @pytest.fixture
-def sample_predicted_scores():
-    """Sample predicted scores for testing."""
-    return PredictedScores(
-        rac_reviewer=7.5,
-        formula_reviewer=7.0,
-        parameter_reviewer=8.0,
-        integration_reviewer=7.5,
-        ci_pass=True,
+def sample_review_results():
+    """Sample review results for testing."""
+    return ReviewResults(
+        reviews=[
+            ReviewResult(
+                reviewer="rac_reviewer",
+                passed=True,
+                items_checked=10,
+                items_passed=8,
+            ),
+            ReviewResult(
+                reviewer="formula_reviewer",
+                passed=True,
+                items_checked=10,
+                items_passed=7,
+            ),
+            ReviewResult(
+                reviewer="parameter_reviewer",
+                passed=True,
+                items_checked=10,
+                items_passed=8,
+            ),
+            ReviewResult(
+                reviewer="integration_reviewer",
+                passed=True,
+                items_checked=10,
+                items_passed=8,
+            ),
+        ],
         policyengine_match=0.90,
         taxsim_match=0.85,
-        confidence=0.6,
     )
 
 
 @pytest.fixture
-def sample_actual_scores():
-    """Sample actual scores for testing."""
-    return ActualScores(
-        rac_reviewer=8.0,
-        formula_reviewer=6.5,
-        parameter_reviewer=7.5,
-        integration_reviewer=8.0,
-        ci_pass=True,
-        policyengine_match=0.88,
-        taxsim_match=0.82,
-    )
-
-
-@pytest.fixture
-def sample_final_scores():
-    """Sample final scores for testing."""
-    return FinalScores(
-        rac_reviewer=8.0,
-        formula_reviewer=6.5,
-        parameter_reviewer=7.5,
-        integration_reviewer=8.0,
-        policyengine_match=0.88,
-        taxsim_match=0.82,
-    )
-
-
-@pytest.fixture
-def sample_encoding_run(sample_predicted_scores, sample_actual_scores):
+def sample_encoding_run(sample_review_results):
     """Create a sample encoding run."""
     run = EncodingRun(
         file_path="/path/to/statute.rac",
@@ -89,9 +81,8 @@ def sample_encoding_run(sample_predicted_scores, sample_actual_scores):
         agent_model="claude-opus-4-6",
         rac_content="# EITC\nEarnedIncome:\n  dtype: Money\n",
         statute_text="Sample statute text for EITC",
+        review_results=sample_review_results,
     )
-    run.predicted = sample_predicted_scores
-    run.actual = sample_actual_scores
     run.total_duration_ms = 4500
     return run
 
@@ -224,14 +215,6 @@ TestIncome:
 def mock_agent():
     """Create a mock agent for testing encoder harness."""
     mock = Mock()
-    mock.predict.return_value = PredictedScores(
-        rac_reviewer=8.0,
-        formula_reviewer=7.5,
-        parameter_reviewer=8.5,
-        integration_reviewer=8.0,
-        ci_pass=True,
-        confidence=0.7,
-    )
     mock.encode.return_value = "# Encoded content\n"
     mock.suggest.return_value = []
     return mock

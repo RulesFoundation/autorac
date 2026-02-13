@@ -12,11 +12,11 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from autorac import (
-    ActualScores,
     CalibrationMetrics,
     CalibrationSnapshot,
     ExperimentDB,
-    PredictedScores,
+    ReviewResult,
+    ReviewResults,
     compute_calibration,
     create_run,
     get_calibration_trend,
@@ -115,7 +115,6 @@ class TestComputeCalibration:
 
     def test_compute_calibration_with_data(self, experiment_db):
         """Test calibration computation with sample data."""
-        # Create runs with both predicted and actual scores
         for i in range(15):
             run = create_run(
                 file_path=f"/path/to/file{i}.rac",
@@ -123,25 +122,36 @@ class TestComputeCalibration:
                 agent_type="autorac:encoder",
                 agent_model="claude-opus-4-6",
                 rac_content="# content",
-            )
-            run.predicted = PredictedScores(
-                rac_reviewer=7.0 + (i % 3),
-                formula_reviewer=7.0,
-                parameter_reviewer=8.0,
-                integration_reviewer=7.5,
-                ci_pass=True,
-                policyengine_match=0.90,
-                taxsim_match=0.85,
-                confidence=0.6,
-            )
-            run.actual = ActualScores(
-                rac_reviewer=7.5 + (i % 2),
-                formula_reviewer=7.0,
-                parameter_reviewer=7.5,
-                integration_reviewer=8.0,
-                ci_pass=True,
-                policyengine_match=0.88,
-                taxsim_match=0.82,
+                review_results=ReviewResults(
+                    reviews=[
+                        ReviewResult(
+                            reviewer="rac_reviewer",
+                            passed=True,
+                            items_checked=10,
+                            items_passed=7 + (i % 3),
+                        ),
+                        ReviewResult(
+                            reviewer="formula_reviewer",
+                            passed=True,
+                            items_checked=10,
+                            items_passed=7,
+                        ),
+                        ReviewResult(
+                            reviewer="parameter_reviewer",
+                            passed=True,
+                            items_checked=10,
+                            items_passed=8,
+                        ),
+                        ReviewResult(
+                            reviewer="integration_reviewer",
+                            passed=True,
+                            items_checked=10,
+                            items_passed=8,
+                        ),
+                    ],
+                    policyengine_match=0.90,
+                    taxsim_match=0.85,
+                ),
             )
             experiment_db.log_run(run)
 
@@ -153,7 +163,6 @@ class TestComputeCalibration:
 
     def test_min_samples_filter(self, experiment_db):
         """Test that metrics with too few samples are excluded."""
-        # Create only 5 runs (less than default min_samples=10)
         for i in range(5):
             run = create_run(
                 file_path=f"/path/to/file{i}.rac",
@@ -161,23 +170,22 @@ class TestComputeCalibration:
                 agent_type="autorac:encoder",
                 agent_model="claude-opus-4-6",
                 rac_content="# content",
-            )
-            run.predicted = PredictedScores(
-                rac_reviewer=7.5,
-                formula_reviewer=7.0,
-                parameter_reviewer=8.0,
-                integration_reviewer=7.5,
-                ci_pass=True,
-                policyengine_match=0.90,
-                taxsim_match=0.85,
-                confidence=0.6,
-            )
-            run.actual = ActualScores(
-                rac_reviewer=8.0,
-                formula_reviewer=7.0,
-                parameter_reviewer=7.5,
-                integration_reviewer=8.0,
-                ci_pass=True,
+                review_results=ReviewResults(
+                    reviews=[
+                        ReviewResult(
+                            reviewer="rac_reviewer",
+                            passed=True,
+                            items_checked=10,
+                            items_passed=8,
+                        ),
+                        ReviewResult(
+                            reviewer="formula_reviewer",
+                            passed=True,
+                            items_checked=10,
+                            items_passed=7,
+                        ),
+                    ],
+                ),
             )
             experiment_db.log_run(run)
 
@@ -190,30 +198,31 @@ class TestComputeCalibration:
 
     def test_pass_rate_calculation(self, experiment_db):
         """Test pass rate is calculated correctly."""
-        # Create 4 runs, 3 passing
+        # Create 4 runs, 3 passing (all reviews pass) and 1 failing
         for i in range(4):
+            all_pass = i != 3
             run = create_run(
                 file_path=f"/path/to/file{i}.rac",
                 citation="26 USC 32",
                 agent_type="autorac:encoder",
                 agent_model="claude-opus-4-6",
                 rac_content="# content",
-            )
-            run.predicted = PredictedScores(
-                rac_reviewer=7.5,
-                formula_reviewer=7.0,
-                parameter_reviewer=8.0,
-                integration_reviewer=7.5,
-                ci_pass=True,
-                confidence=0.6,
-            )
-            run.actual = ActualScores(
-                rac_reviewer=8.0,
-                formula_reviewer=7.0,
-                parameter_reviewer=7.5,
-                integration_reviewer=8.0,
-                ci_pass=(i != 3),  # Last one fails
-                ci_error="Parse error" if i == 3 else None,
+                review_results=ReviewResults(
+                    reviews=[
+                        ReviewResult(
+                            reviewer="rac_reviewer",
+                            passed=all_pass,
+                            items_checked=10,
+                            items_passed=8 if all_pass else 3,
+                        ),
+                        ReviewResult(
+                            reviewer="formula_reviewer",
+                            passed=all_pass,
+                            items_checked=10,
+                            items_passed=7 if all_pass else 2,
+                        ),
+                    ],
+                ),
             )
             experiment_db.log_run(run)
 
@@ -337,12 +346,11 @@ class TestCalibrationTrend:
         assert trend == []
 
 
-class TestSamplePredictedVsActualData:
-    """Integration tests with realistic predicted vs actual data scenarios."""
+class TestSampleReviewData:
+    """Integration tests with realistic review data scenarios."""
 
-    def test_well_calibrated_agent(self, experiment_db):
-        """Test metrics for a well-calibrated agent."""
-        # Create runs where predictions closely match actuals
+    def test_high_pass_rate_agent(self, experiment_db):
+        """Test metrics for an agent with high pass rates."""
         for i in range(20):
             run = create_run(
                 file_path=f"/path/to/file{i}.rac",
@@ -350,32 +358,33 @@ class TestSamplePredictedVsActualData:
                 agent_type="autorac:encoder",
                 agent_model="claude-opus-4-6",
                 rac_content="# content",
-            )
-            # Small random-ish variation
-            base = 7.5 + (i % 3) * 0.5
-            run.predicted = PredictedScores(
-                rac_reviewer=base,
-                formula_reviewer=7.0,
-                parameter_reviewer=8.0,
-                integration_reviewer=7.5,
-                ci_pass=True,
-                confidence=0.8,
-            )
-            run.actual = ActualScores(
-                rac_reviewer=base + 0.2,  # Small difference
-                formula_reviewer=7.1,
-                parameter_reviewer=7.9,
-                integration_reviewer=7.6,
-                ci_pass=True,
+                review_results=ReviewResults(
+                    reviews=[
+                        ReviewResult(
+                            reviewer="rac_reviewer",
+                            passed=True,
+                            items_checked=10,
+                            items_passed=9,
+                        ),
+                        ReviewResult(
+                            reviewer="formula_reviewer",
+                            passed=True,
+                            items_checked=10,
+                            items_passed=9,
+                        ),
+                    ],
+                ),
             )
             experiment_db.log_run(run)
 
         snapshot = compute_calibration(experiment_db, min_samples=10)
-        assert snapshot.metrics["rac_reviewer"].mse < 0.5  # Low MSE
-        assert abs(snapshot.metrics["rac_reviewer"].bias) < 0.5  # Low bias
+        # Items rate should be high (9/10 = 0.9)
+        assert snapshot.metrics["rac_reviewer"].actual_mean == pytest.approx(
+            0.9, rel=0.01
+        )
 
-    def test_overconfident_agent(self, experiment_db):
-        """Test metrics for an overconfident agent."""
+    def test_low_pass_rate_agent(self, experiment_db):
+        """Test metrics for an agent with low pass rates."""
         for i in range(20):
             run = create_run(
                 file_path=f"/path/to/file{i}.rac",
@@ -383,54 +392,51 @@ class TestSamplePredictedVsActualData:
                 agent_type="autorac:encoder",
                 agent_model="claude-opus-4-6",
                 rac_content="# content",
-            )
-            run.predicted = PredictedScores(
-                rac_reviewer=9.0,  # Always predicts high
-                formula_reviewer=9.0,
-                parameter_reviewer=9.0,
-                integration_reviewer=9.0,
-                ci_pass=True,
-                confidence=0.95,
-            )
-            run.actual = ActualScores(
-                rac_reviewer=6.5,  # Actually lower
-                formula_reviewer=6.0,
-                parameter_reviewer=6.5,
-                integration_reviewer=6.0,
-                ci_pass=True,
+                review_results=ReviewResults(
+                    reviews=[
+                        ReviewResult(
+                            reviewer="rac_reviewer",
+                            passed=False,
+                            items_checked=10,
+                            items_passed=3,
+                            critical_issues=["Missing entity"],
+                        ),
+                    ],
+                ),
             )
             experiment_db.log_run(run)
 
         snapshot = compute_calibration(experiment_db, min_samples=10)
-        assert snapshot.metrics["rac_reviewer"].bias > 2.0  # Positive bias
-        assert snapshot.metrics["rac_reviewer"].mse > 5.0  # High MSE
+        # Items rate should be low (3/10 = 0.3)
+        assert snapshot.metrics["rac_reviewer"].actual_mean == pytest.approx(
+            0.3, rel=0.01
+        )
+        # Pass rate should be 0% (no run has all reviews passing)
+        assert snapshot.pass_rate == 0.0
 
-    def test_underconfident_agent(self, experiment_db):
-        """Test metrics for an underconfident agent."""
+    def test_mixed_results_agent(self, experiment_db):
+        """Test metrics for an agent with mixed results."""
         for i in range(20):
+            passes = i % 2 == 0
             run = create_run(
                 file_path=f"/path/to/file{i}.rac",
                 citation="26 USC 32",
                 agent_type="autorac:encoder",
                 agent_model="claude-opus-4-6",
                 rac_content="# content",
-            )
-            run.predicted = PredictedScores(
-                rac_reviewer=5.0,  # Always predicts low
-                formula_reviewer=5.0,
-                parameter_reviewer=5.0,
-                integration_reviewer=5.0,
-                ci_pass=True,
-                confidence=0.3,
-            )
-            run.actual = ActualScores(
-                rac_reviewer=8.5,  # Actually higher
-                formula_reviewer=8.0,
-                parameter_reviewer=8.5,
-                integration_reviewer=8.0,
-                ci_pass=True,
+                review_results=ReviewResults(
+                    reviews=[
+                        ReviewResult(
+                            reviewer="rac_reviewer",
+                            passed=passes,
+                            items_checked=10,
+                            items_passed=8 if passes else 4,
+                        ),
+                    ],
+                ),
             )
             experiment_db.log_run(run)
 
         snapshot = compute_calibration(experiment_db, min_samples=10)
-        assert snapshot.metrics["rac_reviewer"].bias < -3.0  # Negative bias
+        # Pass rate should be ~50%
+        assert snapshot.pass_rate == pytest.approx(0.5, rel=0.01)

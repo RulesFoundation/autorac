@@ -173,63 +173,45 @@ class OracleResult:
 
 
 @dataclass
-class FinalScores:
-    """Scores from validators after CI passes."""
+class ReviewResult:
+    """Result from a single reviewer (checklist-based)."""
 
-    rac_reviewer: float = 0.0
-    formula_reviewer: float = 0.0
-    parameter_reviewer: float = 0.0
-    integration_reviewer: float = 0.0
-    policyengine_match: Optional[float] = None
-    taxsim_match: Optional[float] = None
-    # Detailed oracle context (passed to LLM reviewers)
-    oracle_context: dict = field(
-        default_factory=dict
-    )  # {oracle_name: OracleResult as dict}
+    reviewer: str = ""  # "rac", "formula", "parameter", "integration"
+    passed: bool = False
+    items_checked: int = 0
+    items_passed: int = 0
+    critical_issues: list[str] = field(default_factory=list)
+    important_issues: list[str] = field(default_factory=list)
+    minor_issues: list[str] = field(default_factory=list)
+    lessons: str = ""
 
 
 @dataclass
-class PredictedScores:
-    """Upfront predictions for calibration tracking."""
+class ReviewResults:
+    """Aggregated results from all reviewers."""
 
-    # Dimension scores (0-10)
-    rac_reviewer: float = 0.0
-    formula_reviewer: float = 0.0
-    parameter_reviewer: float = 0.0
-    integration_reviewer: float = 0.0
-    # Pass/fail predictions
-    ci_pass: bool = True
+    reviews: list[ReviewResult] = field(default_factory=list)
     policyengine_match: Optional[float] = None
     taxsim_match: Optional[float] = None
-    # Confidence
-    confidence: float = 0.5  # 0-1 confidence in predictions
+    oracle_context: dict = field(default_factory=dict)
+    lessons: str = ""
+
+    @property
+    def passed(self) -> bool:
+        """All reviews passed."""
+        return all(r.passed for r in self.reviews) if self.reviews else False
+
+    @property
+    def total_critical_issues(self) -> int:
+        """Total critical issues across all reviews."""
+        return sum(len(r.critical_issues) for r in self.reviews)
 
 
-@dataclass
-class ActualScores:
-    """Actual scores from validation after encoding."""
-
-    # Dimension scores (0-10)
-    rac_reviewer: float = 0.0
-    formula_reviewer: float = 0.0
-    parameter_reviewer: float = 0.0
-    integration_reviewer: float = 0.0
-    # Pass/fail results
-    ci_pass: bool = False
-    ci_error: Optional[str] = None
-    policyengine_match: Optional[float] = None
-    taxsim_match: Optional[float] = None
-    reviewer_issues: list[str] = field(default_factory=list)
-
-
-@dataclass
-class AgentSuggestion:
-    """Suggestion from agent for framework improvement."""
-
-    category: str = "documentation"  # documentation, validation, tooling, etc.
-    description: str = ""
-    predicted_impact: str = "medium"  # low, medium, high
-    specific_change: Optional[str] = None
+# Backward-compat aliases for old code that references these types
+FinalScores = ReviewResults
+PredictedScores = ReviewResults
+ActualScores = ReviewResults
+AgentSuggestion = ReviewResult
 
 
 @dataclass
@@ -247,9 +229,9 @@ class EncodingRun:
     # Upfront analysis
     complexity: ComplexityFactors = field(default_factory=ComplexityFactors)
 
-    # Predictions and actuals (for calibration)
-    predicted: Optional[PredictedScores] = None
-    actual: Optional[ActualScores] = None
+    # Review results (replaces predicted/actual/final_scores/suggestions)
+    review_results: Optional[ReviewResults] = None
+    lessons: str = ""
 
     # Iteration tracking
     iteration: int = 1
@@ -260,27 +242,62 @@ class EncodingRun:
 
     # Final result
     total_duration_ms: int = 0
-    final_scores: Optional[FinalScores] = None
     rac_content: str = ""
 
     # Agent info
     agent_type: str = "encoder"
     agent_model: str = ""
 
-    # Suggestions for framework improvement
-    suggestions: list[AgentSuggestion] = field(default_factory=list)
-
     # Session linkage
     session_id: Optional[str] = None
 
+    # Backward-compat properties for old code that sets these
     @property
-    def predicted_scores(self) -> Optional[PredictedScores]:
+    def predicted(self) -> Optional[ReviewResults]:
+        return self.review_results
+
+    @predicted.setter
+    def predicted(self, value):
+        if value is not None:
+            self.review_results = value
+
+    @property
+    def actual(self) -> Optional[ReviewResults]:
+        return self.review_results
+
+    @actual.setter
+    def actual(self, value):
+        if value is not None:
+            self.review_results = value
+
+    @property
+    def final_scores(self) -> Optional[ReviewResults]:
+        return self.review_results
+
+    @final_scores.setter
+    def final_scores(self, value):
+        if value is not None:
+            self.review_results = value
+
+    @property
+    def predicted_scores(self) -> Optional[ReviewResults]:
         """Alias for backwards compatibility."""
-        return self.predicted
+        return self.review_results
 
     @predicted_scores.setter
-    def predicted_scores(self, value: Optional[PredictedScores]):
-        self.predicted = value
+    def predicted_scores(self, value):
+        if value is not None:
+            self.review_results = value
+
+    @property
+    def suggestions(self) -> list:
+        """Backward compat: return empty list."""
+        return []
+
+    @suggestions.setter
+    def suggestions(self, value):
+        """Backward compat: ignore."""
+        pass
 
     @property
     def iterations_needed(self) -> int:
@@ -306,6 +323,8 @@ def create_run(
     rac_content: str,
     statute_text: Optional[str] = None,
     parent_run_id: Optional[str] = None,
+    review_results: Optional[ReviewResults] = None,
+    lessons: str = "",
 ) -> EncodingRun:
     """Factory function to create an EncodingRun with defaults."""
     return EncodingRun(
@@ -317,6 +336,8 @@ def create_run(
         statute_text=statute_text,
         iteration=2 if parent_run_id else 1,
         parent_run_id=parent_run_id,
+        review_results=review_results,
+        lessons=lessons,
     )
 
 
@@ -374,6 +395,8 @@ class ExperimentDB:
             ("parent_run_id", "TEXT", None),
             ("actual_scores_json", "TEXT", None),
             ("suggestions_json", "TEXT", None),
+            ("review_results_json", "TEXT", None),
+            ("lessons", "TEXT", "''"),
         ]:
             try:
                 stmt = f"ALTER TABLE encoding_runs ADD COLUMN {col} {col_type}"
@@ -544,63 +567,29 @@ class ExperimentDB:
             ]
         )
 
-        final_scores_json = None
-        if run.final_scores:
-            final_scores_json = json.dumps(
+        # Serialize review_results (new checklist-based format)
+        review_results_json = None
+        if run.review_results:
+            review_results_json = json.dumps(
                 {
-                    "rac_reviewer": run.final_scores.rac_reviewer,
-                    "formula_reviewer": run.final_scores.formula_reviewer,
-                    "parameter_reviewer": run.final_scores.parameter_reviewer,
-                    "integration_reviewer": run.final_scores.integration_reviewer,
-                    "policyengine_match": run.final_scores.policyengine_match,
-                    "taxsim_match": run.final_scores.taxsim_match,
-                    "oracle_context": run.final_scores.oracle_context,
+                    "reviews": [
+                        {
+                            "reviewer": r.reviewer,
+                            "passed": r.passed,
+                            "items_checked": r.items_checked,
+                            "items_passed": r.items_passed,
+                            "critical_issues": r.critical_issues,
+                            "important_issues": r.important_issues,
+                            "minor_issues": r.minor_issues,
+                            "lessons": r.lessons,
+                        }
+                        for r in run.review_results.reviews
+                    ],
+                    "policyengine_match": run.review_results.policyengine_match,
+                    "taxsim_match": run.review_results.taxsim_match,
+                    "oracle_context": run.review_results.oracle_context,
+                    "lessons": run.review_results.lessons,
                 }
-            )
-
-        predicted_scores_json = None
-        if run.predicted:
-            predicted_scores_json = json.dumps(
-                {
-                    "rac_reviewer": run.predicted.rac_reviewer,
-                    "formula_reviewer": run.predicted.formula_reviewer,
-                    "parameter_reviewer": run.predicted.parameter_reviewer,
-                    "integration_reviewer": run.predicted.integration_reviewer,
-                    "ci_pass": run.predicted.ci_pass,
-                    "policyengine_match": run.predicted.policyengine_match,
-                    "taxsim_match": run.predicted.taxsim_match,
-                    "confidence": run.predicted.confidence,
-                }
-            )
-
-        actual_scores_json = None
-        if run.actual:
-            actual_scores_json = json.dumps(
-                {
-                    "rac_reviewer": run.actual.rac_reviewer,
-                    "formula_reviewer": run.actual.formula_reviewer,
-                    "parameter_reviewer": run.actual.parameter_reviewer,
-                    "integration_reviewer": run.actual.integration_reviewer,
-                    "ci_pass": run.actual.ci_pass,
-                    "ci_error": run.actual.ci_error,
-                    "policyengine_match": run.actual.policyengine_match,
-                    "taxsim_match": run.actual.taxsim_match,
-                    "reviewer_issues": run.actual.reviewer_issues,
-                }
-            )
-
-        suggestions_json = None
-        if run.suggestions:
-            suggestions_json = json.dumps(
-                [
-                    {
-                        "category": s.category,
-                        "description": s.description,
-                        "predicted_impact": s.predicted_impact,
-                        "specific_change": s.specific_change,
-                    }
-                    for s in run.suggestions
-                ]
             )
 
         cursor.execute(
@@ -609,8 +598,8 @@ class ExperimentDB:
             (id, timestamp, citation, file_path, complexity_json, iterations_json,
              total_duration_ms, final_scores_json, agent_type, agent_model, rac_content,
              predicted_scores_json, session_id, iteration, parent_run_id,
-             actual_scores_json, suggestions_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             actual_scores_json, suggestions_json, review_results_json, lessons)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
             (
                 run.id,
@@ -620,16 +609,18 @@ class ExperimentDB:
                 complexity_json,
                 iterations_json,
                 run.total_duration_ms,
-                final_scores_json,
+                None,  # final_scores_json (legacy, no longer written)
                 run.agent_type,
                 run.agent_model,
                 run.rac_content,
-                predicted_scores_json,
+                None,  # predicted_scores_json (legacy, no longer written)
                 run.session_id,
                 run.iteration,
                 run.parent_run_id,
-                actual_scores_json,
-                suggestions_json,
+                None,  # actual_scores_json (legacy, no longer written)
+                None,  # suggestions_json (legacy, no longer written)
+                review_results_json,
+                run.lessons,
             ),
         )
 
@@ -679,54 +670,40 @@ class ExperimentDB:
 
         return [self._row_to_run(row) for row in rows]
 
-    def update_actual_scores(self, run_id: str, actual: ActualScores) -> None:
-        """Update a run with actual scores after validation."""
+    def update_review_results(self, run_id: str, review_results: ReviewResults) -> None:
+        """Update a run with review results after validation."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        actual_scores_json = json.dumps(
+        review_results_json = json.dumps(
             {
-                "rac_reviewer": actual.rac_reviewer,
-                "formula_reviewer": actual.formula_reviewer,
-                "parameter_reviewer": actual.parameter_reviewer,
-                "integration_reviewer": actual.integration_reviewer,
-                "ci_pass": actual.ci_pass,
-                "ci_error": actual.ci_error,
-                "policyengine_match": actual.policyengine_match,
-                "taxsim_match": actual.taxsim_match,
-                "reviewer_issues": actual.reviewer_issues,
+                "reviews": [
+                    {
+                        "reviewer": r.reviewer,
+                        "passed": r.passed,
+                        "items_checked": r.items_checked,
+                        "items_passed": r.items_passed,
+                        "critical_issues": r.critical_issues,
+                        "important_issues": r.important_issues,
+                        "minor_issues": r.minor_issues,
+                        "lessons": r.lessons,
+                    }
+                    for r in review_results.reviews
+                ],
+                "policyengine_match": review_results.policyengine_match,
+                "taxsim_match": review_results.taxsim_match,
+                "oracle_context": review_results.oracle_context,
+                "lessons": review_results.lessons,
             }
         )
 
         cursor.execute(
-            "UPDATE encoding_runs SET actual_scores_json = ? WHERE id = ?",
-            (actual_scores_json, run_id),
+            "UPDATE encoding_runs SET review_results_json = ? WHERE id = ?",
+            (review_results_json, run_id),
         )
 
         conn.commit()
         conn.close()
-
-    def get_calibration_data(self) -> list[tuple[PredictedScores, ActualScores]]:
-        """Get pairs of predicted and actual scores for calibration analysis.
-
-        Only returns runs that have BOTH predicted and actual scores.
-        """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        cursor.execute(
-            "SELECT * FROM encoding_runs WHERE predicted_scores_json IS NOT NULL AND actual_scores_json IS NOT NULL"
-        )
-        rows = cursor.fetchall()
-        conn.close()
-
-        pairs = []
-        for row in rows:
-            run = self._row_to_run(row)
-            if run.predicted and run.actual:
-                pairs.append((run.predicted, run.actual))
-
-        return pairs
 
     def get_error_stats(self) -> dict:
         """Get error type distribution."""
@@ -771,8 +748,15 @@ class ExperimentDB:
         }
 
     def _row_to_run(self, row) -> EncodingRun:
-        """Convert database row to EncodingRun."""
-        # Handle various schema versions (11, 13, or 17 columns)
+        """Convert database row to EncodingRun.
+
+        Handles various schema versions:
+        - 11 columns: original schema
+        - 13 columns: added predicted_scores, session_id
+        - 17 columns: added iteration, parent_run_id, actual_scores, suggestions
+        - 19 columns: added review_results_json, lessons
+        """
+        # Extract columns by position with defaults for missing columns
         if len(row) == 11:
             (
                 id,
@@ -793,6 +777,8 @@ class ExperimentDB:
             parent_run_id = None
             actual_scores_json = None
             suggestions_json = None
+            review_results_json = None
+            lessons = ""
         elif len(row) == 13:
             (
                 id,
@@ -813,7 +799,9 @@ class ExperimentDB:
             parent_run_id = None
             actual_scores_json = None
             suggestions_json = None
-        else:
+            review_results_json = None
+            lessons = ""
+        elif len(row) == 17:
             (
                 id,
                 timestamp,
@@ -833,6 +821,31 @@ class ExperimentDB:
                 actual_scores_json,
                 suggestions_json,
             ) = row
+            review_results_json = None
+            lessons = ""
+        else:
+            # 19+ columns (new schema with review_results_json, lessons)
+            (
+                id,
+                timestamp,
+                citation,
+                file_path,
+                complexity_json,
+                iterations_json,
+                total_duration_ms,
+                final_scores_json,
+                agent_type,
+                agent_model,
+                rac_content,
+                predicted_scores_json,
+                session_id,
+                iteration,
+                parent_run_id,
+                actual_scores_json,
+                suggestions_json,
+                review_results_json,
+                lessons,
+            ) = row[:19]
 
         # Parse complexity
         c = json.loads(complexity_json) if complexity_json else {}
@@ -867,67 +880,68 @@ class ExperimentDB:
                     )
                 )
 
-        # Parse final scores
-        final_scores = None
-        if final_scores_json:
-            f = json.loads(final_scores_json)
-            final_scores = FinalScores(
-                rac_reviewer=f.get("rac_reviewer", 0),
-                formula_reviewer=f.get("formula_reviewer", 0),
-                parameter_reviewer=f.get("parameter_reviewer", 0),
-                integration_reviewer=f.get("integration_reviewer", 0),
-                policyengine_match=f.get("policyengine_match"),
-                taxsim_match=f.get("taxsim_match"),
-                oracle_context=f.get("oracle_context", {}),
+        # Parse review_results (new format first, fall back to legacy)
+        review_results = None
+        if review_results_json:
+            rr = json.loads(review_results_json)
+            review_results = ReviewResults(
+                reviews=[
+                    ReviewResult(
+                        reviewer=r.get("reviewer", ""),
+                        passed=r.get("passed", False),
+                        items_checked=r.get("items_checked", 0),
+                        items_passed=r.get("items_passed", 0),
+                        critical_issues=r.get("critical_issues", []),
+                        important_issues=r.get("important_issues", []),
+                        minor_issues=r.get("minor_issues", []),
+                        lessons=r.get("lessons", ""),
+                    )
+                    for r in rr.get("reviews", [])
+                ],
+                policyengine_match=rr.get("policyengine_match"),
+                taxsim_match=rr.get("taxsim_match"),
+                oracle_context=rr.get("oracle_context", {}),
+                lessons=rr.get("lessons", ""),
             )
+        elif final_scores_json or actual_scores_json or predicted_scores_json:
+            # Backward compat: convert old numeric scores to ReviewResults
+            # Derive pass_rate from scores (score >= 7.0 = passed)
+            reviews = []
+            # Use actual_scores if available, else final_scores, else predicted
+            score_data = None
+            for json_str in [
+                actual_scores_json,
+                final_scores_json,
+                predicted_scores_json,
+            ]:
+                if json_str:
+                    score_data = json.loads(json_str)
+                    break
 
-        # Parse predicted scores
-        predicted = None
-        if predicted_scores_json:
-            p = json.loads(predicted_scores_json)
-            predicted = PredictedScores(
-                rac_reviewer=p.get("rac_reviewer", p.get("rac", 0)),
-                formula_reviewer=p.get("formula_reviewer", p.get("formula", 0)),
-                parameter_reviewer=p.get("parameter_reviewer", p.get("param", 0)),
-                integration_reviewer=p.get(
-                    "integration_reviewer", p.get("integration", 0)
-                ),
-                ci_pass=p.get("ci_pass", True),
-                policyengine_match=p.get("policyengine_match"),
-                taxsim_match=p.get("taxsim_match"),
-                confidence=p.get("confidence", 0.5),
-            )
+            if score_data:
+                for reviewer_name in [
+                    "rac_reviewer",
+                    "formula_reviewer",
+                    "parameter_reviewer",
+                    "integration_reviewer",
+                ]:
+                    score = score_data.get(reviewer_name, 0)
+                    if score is not None:
+                        reviews.append(
+                            ReviewResult(
+                                reviewer=reviewer_name,
+                                passed=float(score) >= 7.0,
+                                items_checked=10,
+                                items_passed=int(float(score)),
+                            )
+                        )
 
-        # Parse actual scores
-        actual = None
-        if actual_scores_json:
-            a = json.loads(actual_scores_json)
-            actual = ActualScores(
-                rac_reviewer=a.get("rac_reviewer", 0),
-                formula_reviewer=a.get("formula_reviewer", 0),
-                parameter_reviewer=a.get("parameter_reviewer", 0),
-                integration_reviewer=a.get("integration_reviewer", 0),
-                ci_pass=a.get("ci_pass", False),
-                ci_error=a.get("ci_error"),
-                policyengine_match=a.get("policyengine_match"),
-                taxsim_match=a.get("taxsim_match"),
-                reviewer_issues=a.get("reviewer_issues", []),
-            )
-
-        # Parse suggestions
-        suggestions = (
-            [
-                AgentSuggestion(
-                    category=s_data.get("category", "documentation"),
-                    description=s_data.get("description", ""),
-                    predicted_impact=s_data.get("predicted_impact", "medium"),
-                    specific_change=s_data.get("specific_change"),
+                review_results = ReviewResults(
+                    reviews=reviews,
+                    policyengine_match=score_data.get("policyengine_match"),
+                    taxsim_match=score_data.get("taxsim_match"),
+                    oracle_context=score_data.get("oracle_context", {}),
                 )
-                for s_data in json.loads(suggestions_json)
-            ]
-            if suggestions_json
-            else []
-        )
 
         return EncodingRun(
             id=id,
@@ -935,17 +949,15 @@ class ExperimentDB:
             citation=citation,
             file_path=file_path,
             complexity=complexity,
-            predicted=predicted,
-            actual=actual,
+            review_results=review_results,
+            lessons=lessons or "",
             iteration=iteration or 1,
             parent_run_id=parent_run_id,
             iterations=iterations,
             total_duration_ms=total_duration_ms or 0,
-            final_scores=final_scores,
             agent_type=agent_type or "encoder",
             agent_model=agent_model or "",
             rac_content=rac_content or "",
-            suggestions=suggestions,
             session_id=session_id,
         )
 

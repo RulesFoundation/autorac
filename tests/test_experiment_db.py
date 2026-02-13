@@ -10,8 +10,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from autorac import (
-    AgentSuggestion,
     ExperimentDB,
+    ReviewResult,
+    ReviewResults,
     create_run,
 )
 
@@ -117,76 +118,77 @@ class TestLogAndRetrieveRuns:
         assert retrieved.agent_model == sample_encoding_run.agent_model
         assert retrieved.rac_content == sample_encoding_run.rac_content
 
-    def test_log_run_with_predicted_scores(
-        self, experiment_db, sample_predicted_scores
-    ):
-        """Test logging a run with predicted scores."""
+    def test_log_run_with_review_results(self, experiment_db, sample_review_results):
+        """Test logging a run with review results."""
         run = create_run(
             file_path="/path/to/file.rac",
             citation="26 USC 32",
             agent_type="autorac:encoder",
             agent_model="claude-opus-4-6",
             rac_content="# content",
+            review_results=sample_review_results,
         )
-        run.predicted = sample_predicted_scores
 
         experiment_db.log_run(run)
         retrieved = experiment_db.get_run(run.id)
 
-        assert retrieved.predicted is not None
-        assert retrieved.predicted.rac_reviewer == sample_predicted_scores.rac_reviewer
-        assert retrieved.predicted.ci_pass == sample_predicted_scores.ci_pass
-        assert retrieved.predicted.confidence == sample_predicted_scores.confidence
+        assert retrieved.review_results is not None
+        assert len(retrieved.review_results.reviews) == 4
+        assert retrieved.review_results.reviews[0].reviewer == "rac_reviewer"
+        assert retrieved.review_results.reviews[0].passed is True
+        assert retrieved.review_results.policyengine_match == 0.90
 
-    def test_log_run_with_actual_scores(self, experiment_db, sample_actual_scores):
-        """Test logging a run with actual scores."""
+    def test_log_run_with_lessons(self, experiment_db):
+        """Test logging a run with lessons."""
         run = create_run(
             file_path="/path/to/file.rac",
             citation="26 USC 32",
             agent_type="autorac:encoder",
             agent_model="claude-opus-4-6",
             rac_content="# content",
+            lessons="Learned that bracket syntax needs special handling.",
         )
-        run.actual = sample_actual_scores
 
         experiment_db.log_run(run)
         retrieved = experiment_db.get_run(run.id)
 
-        assert retrieved.actual is not None
-        assert retrieved.actual.rac_reviewer == sample_actual_scores.rac_reviewer
-        assert retrieved.actual.ci_pass == sample_actual_scores.ci_pass
-        assert retrieved.actual.reviewer_issues == sample_actual_scores.reviewer_issues
+        assert (
+            retrieved.lessons == "Learned that bracket syntax needs special handling."
+        )
 
-    def test_log_run_with_suggestions(self, experiment_db):
-        """Test logging a run with suggestions."""
+    def test_log_run_with_review_issues(self, experiment_db):
+        """Test logging a run with review issues at different severity levels."""
+        review_results = ReviewResults(
+            reviews=[
+                ReviewResult(
+                    reviewer="rac_reviewer",
+                    passed=False,
+                    items_checked=5,
+                    items_passed=3,
+                    critical_issues=["Missing entity declaration"],
+                    important_issues=["Citation format incorrect"],
+                    minor_issues=["Style: prefer lowercase"],
+                ),
+            ],
+        )
+
         run = create_run(
             file_path="/path/to/file.rac",
             citation="26 USC 32",
             agent_type="autorac:encoder",
             agent_model="claude-opus-4-6",
             rac_content="# content",
+            review_results=review_results,
         )
-        run.suggestions = [
-            AgentSuggestion(
-                category="documentation",
-                description="Add example for brackets",
-                predicted_impact="high",
-                specific_change="Add bracket example to section 3",
-            ),
-            AgentSuggestion(
-                category="validator",
-                description="CI check too strict",
-                predicted_impact="low",
-            ),
-        ]
 
         experiment_db.log_run(run)
         retrieved = experiment_db.get_run(run.id)
 
-        assert len(retrieved.suggestions) == 2
-        assert retrieved.suggestions[0].category == "documentation"
-        assert retrieved.suggestions[0].predicted_impact == "high"
-        assert retrieved.suggestions[1].category == "validator"
+        review = retrieved.review_results.reviews[0]
+        assert review.passed is False
+        assert review.critical_issues == ["Missing entity declaration"]
+        assert review.important_issues == ["Citation format incorrect"]
+        assert review.minor_issues == ["Style: prefer lowercase"]
 
     def test_get_nonexistent_run_returns_none(self, experiment_db):
         """Test that getting a nonexistent run returns None."""
@@ -194,11 +196,11 @@ class TestLogAndRetrieveRuns:
         assert result is None
 
 
-class TestUpdateActualScores:
-    """Tests for updating actual scores after validation."""
+class TestUpdateReviewResults:
+    """Tests for updating review results after validation."""
 
-    def test_update_actual_scores(self, experiment_db, sample_actual_scores):
-        """Test updating a run with actual scores."""
+    def test_update_review_results(self, experiment_db, sample_review_results):
+        """Test updating a run with review results."""
         run = create_run(
             file_path="/path/to/file.rac",
             citation="26 USC 32",
@@ -208,19 +210,19 @@ class TestUpdateActualScores:
         )
         experiment_db.log_run(run)
 
-        # Initially no actual scores
+        # Initially no review results
         retrieved = experiment_db.get_run(run.id)
-        assert retrieved.actual is None
+        assert retrieved.review_results is None
 
-        # Update with actual scores
-        experiment_db.update_actual_scores(run.id, sample_actual_scores)
+        # Update with review results
+        experiment_db.update_review_results(run.id, sample_review_results)
 
-        # Now has actual scores
+        # Now has review results
         retrieved = experiment_db.get_run(run.id)
-        assert retrieved.actual is not None
-        assert retrieved.actual.rac_reviewer == 8.0
-        assert retrieved.actual.ci_pass is True
-        assert retrieved.actual.policyengine_match == 0.88
+        assert retrieved.review_results is not None
+        assert len(retrieved.review_results.reviews) == 4
+        assert retrieved.review_results.reviews[0].passed is True
+        assert retrieved.review_results.policyengine_match == 0.90
 
 
 class TestListRunsWithFilters:
@@ -293,54 +295,49 @@ class TestListRunsWithFilters:
         assert len(runs) == 1
 
 
-class TestCalibrationData:
-    """Tests for getting calibration data."""
+class TestReviewResultsProperties:
+    """Tests for ReviewResults properties."""
 
-    def test_get_calibration_data_empty(self, experiment_db):
-        """Test getting calibration data when no data exists."""
-        data = experiment_db.get_calibration_data()
-        assert data == []
-
-    def test_get_calibration_data_skips_incomplete_runs(
-        self, experiment_db, sample_predicted_scores
-    ):
-        """Test that runs without both predicted and actual scores are skipped."""
-        # Run with only predicted scores
-        run1 = create_run(
-            file_path="/path/to/file1.rac",
-            citation="26 USC 32",
-            agent_type="autorac:encoder",
-            agent_model="claude-opus-4-6",
-            rac_content="# content",
+    def test_passed_all_pass(self):
+        """Test passed property when all reviews pass."""
+        rr = ReviewResults(
+            reviews=[
+                ReviewResult(reviewer="rac_reviewer", passed=True),
+                ReviewResult(reviewer="formula_reviewer", passed=True),
+            ]
         )
-        run1.predicted = sample_predicted_scores
-        experiment_db.log_run(run1)
+        assert rr.passed is True
 
-        # Run with no scores
-        run2 = create_run(
-            file_path="/path/to/file2.rac",
-            citation="26 USC 32",
-            agent_type="autorac:encoder",
-            agent_model="claude-opus-4-6",
-            rac_content="# content",
+    def test_passed_one_fails(self):
+        """Test passed property when one review fails."""
+        rr = ReviewResults(
+            reviews=[
+                ReviewResult(reviewer="rac_reviewer", passed=True),
+                ReviewResult(reviewer="formula_reviewer", passed=False),
+            ]
         )
-        experiment_db.log_run(run2)
+        assert rr.passed is False
 
-        data = experiment_db.get_calibration_data()
-        assert len(data) == 0
+    def test_passed_empty_reviews(self):
+        """Test passed property with no reviews."""
+        rr = ReviewResults(reviews=[])
+        assert rr.passed is False
 
-    def test_get_calibration_data_with_complete_runs(
-        self, experiment_db, sample_encoding_run
-    ):
-        """Test getting calibration data with complete runs."""
-        experiment_db.log_run(sample_encoding_run)
-
-        data = experiment_db.get_calibration_data()
-        assert len(data) == 1
-
-        pred, actual = data[0]
-        assert pred.rac_reviewer == 7.5
-        assert actual.rac_reviewer == 8.0
+    def test_total_critical_issues(self):
+        """Test total_critical_issues counts across all reviews."""
+        rr = ReviewResults(
+            reviews=[
+                ReviewResult(
+                    reviewer="rac",
+                    critical_issues=["issue1", "issue2"],
+                ),
+                ReviewResult(
+                    reviewer="formula",
+                    critical_issues=["issue3"],
+                ),
+            ]
+        )
+        assert rr.total_critical_issues == 3
 
 
 class TestSessionLogging:
@@ -474,17 +471,71 @@ class TestRowToRunSchemaVersions:
         run = experiment_db._row_to_run(row)
         assert run.id == "test-id-13"
         assert run.session_id == "sess-123"
-        assert run.predicted is not None
-        assert run.predicted.rac_reviewer == 8.0
+        # Old predicted_scores_json is converted to review_results
+        assert run.review_results is not None
+        assert len(run.review_results.reviews) == 4
         assert run.iteration == 1
 
+    def test_row_with_19_columns(self, experiment_db):
+        """Test _row_to_run with 19-column schema (new review_results_json, lessons)."""
+        import json
 
-class TestPredictedScoresSetter:
-    """Test the predicted_scores property setter."""
+        review_results = json.dumps(
+            {
+                "reviews": [
+                    {
+                        "reviewer": "rac_reviewer",
+                        "passed": True,
+                        "items_checked": 10,
+                        "items_passed": 8,
+                        "critical_issues": [],
+                        "important_issues": [],
+                        "minor_issues": [],
+                        "lessons": "",
+                    }
+                ],
+                "policyengine_match": 0.95,
+                "taxsim_match": None,
+                "oracle_context": {},
+                "lessons": "Some lessons",
+            }
+        )
+        row = (
+            "test-id-19",
+            "2024-01-01T00:00:00",
+            "26 USC 32",
+            "/path/file.rac",
+            "{}",
+            "[]",
+            3000,
+            None,  # final_scores_json (legacy)
+            "encoder",
+            "opus",
+            "content",
+            None,  # predicted_scores_json (legacy)
+            "sess-456",
+            1,
+            None,
+            None,  # actual_scores_json (legacy)
+            None,  # suggestions_json (legacy)
+            review_results,
+            "Some lessons",
+        )
+        run = experiment_db._row_to_run(row)
+        assert run.id == "test-id-19"
+        assert run.review_results is not None
+        assert len(run.review_results.reviews) == 1
+        assert run.review_results.reviews[0].passed is True
+        assert run.review_results.policyengine_match == 0.95
+        assert run.lessons == "Some lessons"
 
-    def test_predicted_scores_setter(self):
-        """Test EncodingRun.predicted_scores setter sets .predicted."""
-        from autorac import EncodingRun, PredictedScores
+
+class TestBackwardCompatProperties:
+    """Test backward-compat properties on EncodingRun."""
+
+    def test_predicted_setter_sets_review_results(self):
+        """Test EncodingRun.predicted setter sets review_results."""
+        from autorac import EncodingRun, ReviewResults
 
         run = EncodingRun(
             file_path="/path.rac",
@@ -493,10 +544,36 @@ class TestPredictedScoresSetter:
             agent_model="opus",
             rac_content="content",
         )
-        scores = PredictedScores(rac_reviewer=8.0, confidence=0.7)
-        run.predicted_scores = scores
-        assert run.predicted is scores
-        assert run.predicted_scores is scores
+        rr = ReviewResults()
+        run.predicted = rr
+        assert run.review_results is rr
+        assert run.predicted is rr
+
+    def test_final_scores_setter_sets_review_results(self):
+        """Test EncodingRun.final_scores setter sets review_results."""
+        from autorac import EncodingRun, ReviewResults
+
+        run = EncodingRun(
+            file_path="/path.rac",
+            citation="26 USC 1",
+            agent_type="encoder",
+            agent_model="opus",
+            rac_content="content",
+        )
+        rr = ReviewResults()
+        run.final_scores = rr
+        assert run.review_results is rr
+        assert run.final_scores is rr
+
+    def test_suggestions_property_returns_empty_list(self):
+        """Test EncodingRun.suggestions returns empty list."""
+        from autorac import EncodingRun
+
+        run = EncodingRun()
+        assert run.suggestions == []
+        # Setting should not raise
+        run.suggestions = ["something"]
+        assert run.suggestions == []
 
 
 class TestMigration:

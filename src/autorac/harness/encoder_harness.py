@@ -11,7 +11,6 @@ The harness orchestrates:
 Uses Claude Code CLI (subprocess) for agent calls - cheaper than direct API.
 """
 
-import json
 import re
 import subprocess
 import time
@@ -22,10 +21,8 @@ from typing import Optional
 from autorac.constants import DEFAULT_CLI_MODEL, DEFAULT_MODEL
 
 from .experiment_db import (
-    AgentSuggestion,
     EncodingRun,
     ExperimentDB,
-    PredictedScores,
     create_run,
 )
 from .validator_pipeline import PipelineResult, ValidatorPipeline
@@ -151,23 +148,23 @@ class EncoderHarness:
         agent_model = agent_model or DEFAULT_MODEL
         start = time.time()
 
-        # Step 1: Get predictions from agent
-        predicted = self._get_predictions(citation, statute_text)
-
-        # Step 2: Encode
+        # Step 1: Encode
         rac_content = self._encode(citation, statute_text, output_path)
 
         encoding_duration = int((time.time() - start) * 1000)
 
-        # Step 3: Validate
+        # Step 2: Validate
         validation_start = time.time()
         validation_result = self.pipeline.validate(output_path)
         validation_duration = int((time.time() - validation_start) * 1000)
 
-        # Step 4: Get suggestions
-        suggestions = self._get_suggestions(citation, rac_content, validation_result)
+        # Step 3: Get lessons from failures
+        lessons = self._get_lessons(citation, rac_content, validation_result)
 
-        # Step 5: Log everything
+        # Step 4: Log everything
+        review_results = validation_result.to_review_results()
+        review_results.lessons = lessons
+
         run = create_run(
             file_path=str(output_path),
             citation=citation,
@@ -175,12 +172,10 @@ class EncoderHarness:
             agent_model=agent_model,
             rac_content=rac_content,
             statute_text=statute_text,
+            review_results=review_results,
+            lessons=lessons,
         )
-        run.predicted = predicted
-        run.actual = validation_result.to_actual_scores()
-        run.suggestions = suggestions
-        run.encoding_duration_ms = encoding_duration
-        run.validation_duration_ms = validation_duration
+        run.total_duration_ms = encoding_duration + validation_duration
 
         self.db.log_run(run)
 
@@ -226,73 +221,7 @@ class EncoderHarness:
 
         return iterations
 
-    def _get_predictions(self, citation: str, statute_text: str) -> PredictedScores:
-        """
-        Ask Claude Code to predict scores before encoding.
-
-        Uses Claude Code CLI subprocess for cheaper execution.
-        """
-        prompt = f"""Predict quality scores for encoding the following statute into RAC DSL.
-
-Citation: {citation}
-
-Statute Text:
-{statute_text[:2000]}{"..." if len(statute_text) > 2000 else ""}
-
-Score each dimension from 1-10. Output ONLY valid JSON:
-{{
-  "rac_reviewer": <float 1-10>,
-  "formula_reviewer": <float 1-10>,
-  "parameter_reviewer": <float 1-10>,
-  "integration_reviewer": <float 1-10>,
-  "ci_pass": <boolean>,
-  "policyengine_match": <float 0-1>,
-  "taxsim_match": <float 0-1>,
-  "confidence": <float 0-1>,
-  "reasoning": "<brief explanation>"
-}}
-"""
-
-        try:
-            output, returncode = run_claude_code(
-                prompt,
-                model=DEFAULT_CLI_MODEL,
-                timeout=60,
-                cwd=self.config.rac_us_path,
-            )
-
-            # Parse JSON from output
-            json_match = re.search(r"\{[^{}]*\}", output, re.DOTALL)
-            if json_match:
-                data = json.loads(json_match.group())
-            else:
-                raise ValueError("No JSON found in output")
-
-            return PredictedScores(
-                rac_reviewer=float(data.get("rac_reviewer", 7.0)),
-                formula_reviewer=float(data.get("formula_reviewer", 7.0)),
-                parameter_reviewer=float(data.get("parameter_reviewer", 7.0)),
-                integration_reviewer=float(data.get("integration_reviewer", 7.0)),
-                ci_pass=bool(data.get("ci_pass", True)),
-                policyengine_match=float(data.get("policyengine_match", 0.85))
-                if data.get("policyengine_match") is not None
-                else None,
-                taxsim_match=float(data.get("taxsim_match", 0.85))
-                if data.get("taxsim_match") is not None
-                else None,
-                confidence=float(data.get("confidence", 0.5)),
-            )
-
-        except Exception as e:
-            print(f"Warning: Failed to get predictions: {e}")
-            return PredictedScores(
-                rac_reviewer=6.0,
-                formula_reviewer=6.0,
-                parameter_reviewer=6.0,
-                integration_reviewer=6.0,
-                ci_pass=False,
-                confidence=0.3,
-            )
+    # _get_predictions removed - predictions no longer used in checklist model
 
     def _encode(self, citation: str, statute_text: str, output_path: Path) -> str:
         """
@@ -371,18 +300,18 @@ Use the Write tool to create the .rac file at the specified path.
             output_path.write_text(fallback)
             return fallback
 
-    def _get_suggestions(
+    def _get_lessons(
         self,
         citation: str,
         rac_content: str,
         validation_result: PipelineResult,
-    ) -> list[AgentSuggestion]:
+    ) -> str:
         """
-        Ask Claude Code for framework improvement suggestions.
+        Ask Claude Code for lessons learned from encoding attempt.
 
-        Based on validation errors, suggests improvements.
+        Based on validation errors, extracts lessons as free text.
         """
-        # Only get suggestions if there were failures
+        # Only get lessons if there were failures
         failures = [
             (name, result)
             for name, result in validation_result.results.items()
@@ -390,7 +319,7 @@ Use the Write tool to create the .rac file at the specified path.
         ]
 
         if not failures:
-            return []
+            return ""
 
         # Build validation summary
         validation_summary = []
@@ -403,20 +332,13 @@ Use the Write tool to create the .rac file at the specified path.
                 f"  {name}: {status}{score_str}{error_str}{issues_str}"
             )
 
-        prompt = f"""Analyze encoding attempt for {citation} and suggest framework improvements.
+        prompt = f"""Analyze encoding attempt for {citation} and summarize lessons learned.
 
 Validation Results:
 {chr(10).join(validation_summary)}
 
-Output ONLY valid JSON array:
-[
-  {{
-    "category": "documentation" | "agent_prompt" | "validator" | "dsl",
-    "description": "<what to improve>",
-    "predicted_impact": "high" | "medium" | "low",
-    "specific_change": "<exact change, or null>"
-  }}
-]
+Write a brief paragraph summarizing what went wrong and what to do differently next time.
+Output ONLY the lessons text, no JSON or formatting.
 """
 
         try:
@@ -427,35 +349,15 @@ Output ONLY valid JSON array:
                 cwd=self.config.rac_us_path,
             )
 
-            # Parse JSON array from output
-            json_match = re.search(r"\[[\s\S]*\]", output)
-            if json_match:
-                data = json.loads(json_match.group())
-            else:
-                raise ValueError("No JSON array found in output")
-
-            return [
-                AgentSuggestion(
-                    category=item.get("category", "documentation"),
-                    description=item.get("description", ""),
-                    predicted_impact=item.get("predicted_impact", "medium"),
-                    specific_change=item.get("specific_change"),
-                )
-                for item in data
-            ]
+            return output.strip()
 
         except Exception as e:
-            print(f"Warning: Failed to get suggestions: {e}")
+            print(f"Warning: Failed to get lessons: {e}")
 
-            return [
-                AgentSuggestion(
-                    category="validator",
-                    description=f"{name} failed: {result.error or 'unknown'}",
-                    predicted_impact="medium",
-                    specific_change=None,
-                )
+            return "; ".join(
+                f"{name} failed: {result.error or 'unknown'}"
                 for name, result in failures
-            ]
+            )
 
 
 def run_encoding_experiment(

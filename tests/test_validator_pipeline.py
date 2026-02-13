@@ -22,7 +22,7 @@ from autorac import (
     ValidatorPipeline,
     validate_file,
 )
-from autorac.harness.experiment_db import ActualScores
+from autorac.harness.experiment_db import ReviewResults
 from autorac.harness.validator_pipeline import (
     _REVIEW_JSON_FORMAT,
     FORMULA_REVIEWER_PROMPT,
@@ -174,7 +174,7 @@ class TestDataclasses:
         assert r.error is None
         assert r.raw_output is None
 
-    def test_pipeline_result_to_actual_scores(self):
+    def test_pipeline_result_to_review_results(self):
         results = {
             "ci": ValidationResult("ci", True, None, [], 100),
             "rac_reviewer": ValidationResult("rac_reviewer", True, 8.0, [], 500),
@@ -191,23 +191,30 @@ class TestDataclasses:
             "taxsim": ValidationResult("taxsim", True, 0.85, [], 100),
         }
         pr = PipelineResult(results=results, total_duration_ms=1000, all_passed=True)
-        actual = pr.to_actual_scores()
-        assert isinstance(actual, ActualScores)
-        assert actual.rac_reviewer == 8.0
-        assert actual.formula_reviewer == 7.5
-        assert actual.parameter_reviewer == 7.0
-        assert actual.integration_reviewer == 6.5
-        assert actual.ci_pass is True
-        assert actual.policyengine_match == 0.9
-        assert actual.taxsim_match == 0.85
+        rr = pr.to_review_results()
+        assert isinstance(rr, ReviewResults)
+        assert len(rr.reviews) == 4
+        assert rr.reviews[0].reviewer == "rac_reviewer"
+        assert rr.reviews[0].passed is True
+        assert rr.policyengine_match == 0.9
+        assert rr.taxsim_match == 0.85
 
-    def test_pipeline_result_to_actual_scores_missing_results(self):
-        """to_actual_scores handles missing result keys gracefully."""
+    def test_pipeline_result_to_actual_scores_backward_compat(self):
+        """to_actual_scores is backward compat alias for to_review_results."""
+        results = {
+            "rac_reviewer": ValidationResult("rac_reviewer", True, 8.0, [], 500),
+        }
+        pr = PipelineResult(results=results, total_duration_ms=0, all_passed=True)
+        rr = pr.to_actual_scores()
+        assert isinstance(rr, ReviewResults)
+
+    def test_pipeline_result_to_review_results_missing(self):
+        """to_review_results handles missing result keys gracefully."""
         pr = PipelineResult(results={}, total_duration_ms=0, all_passed=False)
-        actual = pr.to_actual_scores()
-        assert actual.rac_reviewer == 0.0
-        assert actual.ci_pass is False
-        assert actual.policyengine_match is None
+        rr = pr.to_review_results()
+        assert len(rr.reviews) == 4  # Still creates entries for all 4 reviewers
+        assert all(not r.passed for r in rr.reviews)
+        assert rr.policyengine_match is None
 
     def test_pipeline_result_ci_pass_property(self):
         results = {"ci": ValidationResult("ci", True)}
@@ -226,9 +233,10 @@ class TestDataclasses:
             ),
         }
         pr = PipelineResult(results=results, total_duration_ms=0, all_passed=False)
-        actual = pr.to_actual_scores()
-        assert "parse error" in actual.reviewer_issues
-        assert "missing import" in actual.reviewer_issues
+        rr = pr.to_review_results()
+        # rac_reviewer should have the issue as critical (since it failed)
+        rac_review = next(r for r in rr.reviews if r.reviewer == "rac_reviewer")
+        assert "missing import" in rac_review.critical_issues
 
 
 # =========================================================================

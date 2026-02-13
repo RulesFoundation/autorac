@@ -24,6 +24,8 @@ from .harness import (
     PipelineResult,
     PredictedScores,
     PredictionScores,
+    ReviewResult,
+    ReviewResults,
     ValidationResult,
     # Validator Pipeline
     ValidatorPipeline,
@@ -44,6 +46,8 @@ __all__ = [
     "ComplexityFactors",
     "IterationError",
     "Iteration",
+    "ReviewResult",
+    "ReviewResults",
     "FinalScores",
     "PredictedScores",
     "ActualScores",

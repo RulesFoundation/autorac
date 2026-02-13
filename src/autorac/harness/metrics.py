@@ -99,6 +99,8 @@ def compute_calibration(
     """
     Compute calibration metrics from experiment database.
 
+    Uses review_results (checklist-based) to compute pass rates per reviewer.
+
     Args:
         db: Experiment database
         min_samples: Minimum samples required per metric
@@ -106,9 +108,12 @@ def compute_calibration(
     Returns:
         CalibrationSnapshot with all metrics
     """
-    data = db.get_calibration_data()
+    runs = db.get_recent_runs(limit=1000)
 
-    if not data:
+    # Filter to runs with review results
+    runs_with_reviews = [r for r in runs if r.review_results]
+
+    if not runs_with_reviews:
         return CalibrationSnapshot(
             timestamp=datetime.now(),
             metrics={},
@@ -116,50 +121,45 @@ def compute_calibration(
             pass_rate=0.0,
         )
 
-    # Extract score pairs for each metric
+    # Extract pass rate pairs for each reviewer
+    # For backward compat with CalibrationMetrics, we use (1.0, 1.0) for pass
+    # and (1.0, 0.0) for fail (predicted=1.0 since we always expect pass)
     metric_pairs: dict[str, list[tuple[float, float]]] = {}
 
-    ci_actuals = []
+    for run in runs_with_reviews:
+        for review in run.review_results.reviews:
+            pass_val = 1.0 if review.passed else 0.0
+            items_rate = (
+                review.items_passed / review.items_checked
+                if review.items_checked > 0
+                else pass_val
+            )
+            metric_pairs.setdefault(review.reviewer, []).append((1.0, items_rate))
 
-    for pred, actual in data:
-        # Numeric dimensions
-        for dim in [
-            "rac_reviewer",
-            "formula_reviewer",
-            "parameter_reviewer",
-            "integration_reviewer",
-        ]:
-            pred_val = getattr(pred, dim, None)
-            act_val = getattr(actual, dim, None)
-            if pred_val is not None and act_val is not None:
-                metric_pairs.setdefault(dim, []).append((pred_val, act_val))
+        # Oracle dimensions
+        if run.review_results.policyengine_match is not None:
+            metric_pairs.setdefault("policyengine_match", []).append(
+                (1.0, run.review_results.policyengine_match)
+            )
+        if run.review_results.taxsim_match is not None:
+            metric_pairs.setdefault("taxsim_match", []).append(
+                (1.0, run.review_results.taxsim_match)
+            )
 
-        # Optional oracle dimensions
-        for dim in ["policyengine_match", "taxsim_match"]:
-            pred_val = getattr(pred, dim, None)
-            act_val = getattr(actual, dim, None)
-            if pred_val is not None and act_val is not None:
-                metric_pairs.setdefault(dim, []).append((pred_val, act_val))
-
-        # Track CI pass rate
-        if actual.ci_pass is not None:
-            ci_actuals.append(actual.ci_pass)
-
-    # Compute metrics for each score type (only if enough samples)
+    # Compute metrics for each reviewer (only if enough samples)
     metrics = {}
     for name, pairs in metric_pairs.items():
         if len(pairs) >= min_samples:
             metrics[name] = _compute_metric(name, pairs)
 
-    # Overall pass rate
-    pass_rate = 0.0
-    if ci_actuals:
-        pass_rate = sum(1 for p in ci_actuals if p) / len(ci_actuals)
+    # Overall pass rate (all reviews passed)
+    pass_count = sum(1 for r in runs_with_reviews if r.review_results.passed)
+    pass_rate = pass_count / len(runs_with_reviews)
 
     return CalibrationSnapshot(
         timestamp=datetime.now(),
         metrics=metrics,
-        total_runs=len(data),
+        total_runs=len(runs_with_reviews),
         pass_rate=pass_rate,
     )
 
