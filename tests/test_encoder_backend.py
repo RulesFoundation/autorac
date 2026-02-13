@@ -1,16 +1,16 @@
 """
 Tests for encoder backend abstraction.
 
-TDD: Write tests first, then implement the backends.
+Updated for self-contained backends (no plugin dependencies).
 """
 
 import os
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-# Import what we're going to build
+# Import what we're testing
 from autorac.harness.backends import (
     AgentSDKBackend,
     ClaudeCodeBackend,
@@ -22,10 +22,9 @@ from autorac.harness.backends import (
 
 @pytest.fixture(autouse=True)
 def mock_sdk_env(tmp_path):
-    """Provide API key and valid plugin path for AgentSDKBackend tests."""
+    """Provide API key for AgentSDKBackend tests."""
     with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
-        with patch.object(AgentSDKBackend, "DEFAULT_PLUGIN_PATH", tmp_path):
-            yield
+        yield
 
 
 class TestEncoderBackendInterface:
@@ -92,9 +91,9 @@ class TestClaudeCodeBackend:
             cmd = mock_run.call_args[0][0]
             assert "claude" in cmd
 
-    def test_encode_uses_plugin_agent(self):
-        """encode() uses the rac:RAC Encoder agent."""
-        backend = ClaudeCodeBackend(plugin_dir=Path("/path/to/plugins"))
+    def test_encode_uses_embedded_prompt(self):
+        """encode() uses embedded encoder prompt (no plugin agent)."""
+        backend = ClaudeCodeBackend()
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = Mock(
@@ -112,8 +111,12 @@ class TestClaudeCodeBackend:
             )
 
             cmd = mock_run.call_args[0][0]
-            # Should include agent flag
-            assert "--agent" in cmd or "-a" in " ".join(cmd)
+            # Should NOT include --agent or --plugin-dir (self-contained)
+            assert "--agent" not in cmd
+            assert "--plugin-dir" not in cmd
+            # Should include --print and -p flags
+            assert "--print" in cmd
+            assert "-p" in cmd
 
     def test_predict_returns_scores(self):
         """predict() returns score predictions."""
@@ -136,7 +139,7 @@ class TestClaudeCodeBackend:
 
 
 class TestAgentSDKBackend:
-    """Test the Claude Agent SDK backend (API approach)."""
+    """Test the Claude API backend (anthropic SDK)."""
 
     def test_backend_inherits_interface(self):
         """AgentSDKBackend implements EncoderBackend."""
@@ -157,27 +160,22 @@ class TestAgentSDKBackend:
 
     @pytest.mark.asyncio
     async def test_encode_async(self):
-        """encode_async() uses Agent SDK for async encoding."""
+        """encode_async() uses anthropic SDK for async encoding."""
         backend = AgentSDKBackend(api_key="test-key")
 
-        # Patch at the backend module level where the import happens
-        with patch.dict("sys.modules", {"claude_agent_sdk": Mock()}):
-            import sys
+        # Create mock for anthropic
+        mock_anthropic = Mock()
+        mock_client = Mock()
 
-            mock_sdk = sys.modules["claude_agent_sdk"]
+        mock_response = Mock()
+        mock_response.content = [Mock(text="test:\n  entity: TaxUnit")]
+        mock_response.usage = Mock(input_tokens=100, output_tokens=50)
 
-            # Mock async generator — use spec to limit attributes
-            # so hasattr(message, "usage") returns False
-            class MockMessage:
-                def __init__(self, result):
-                    self.result = result
+        mock_client.messages = Mock()
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        mock_anthropic.AsyncAnthropic = Mock(return_value=mock_client)
 
-            async def mock_gen():
-                yield MockMessage(result="test:\n  entity: TaxUnit")
-
-            mock_sdk.query = Mock(return_value=mock_gen())
-            mock_sdk.ClaudeAgentOptions = Mock()
-
+        with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
             resp = await backend.encode_async(
                 EncoderRequest(
                     citation="26 USC 1",
@@ -186,8 +184,8 @@ class TestAgentSDKBackend:
                 )
             )
 
-            # Should succeed and return content from the mock
-            assert resp.success or resp.rac_content  # Either success or got content
+            assert resp.success
+            assert resp.tokens is not None
 
     @pytest.mark.asyncio
     async def test_encode_batch_parallel(self):
@@ -332,11 +330,9 @@ class TestClaudeCodeBackendAdditional:
             scores = backend.predict("26 USC 1", "Statute text")
             assert scores.confidence == 0.3
 
-    def test_run_claude_code_with_plugin_dir(self, tmp_path):
-        """Test _run_claude_code includes plugin-dir when it exists."""
-        plugin_dir = tmp_path / "plugins"
-        plugin_dir.mkdir()
-        backend = ClaudeCodeBackend(plugin_dir=plugin_dir)
+    def test_run_claude_code_uses_print_flag(self):
+        """Test _run_claude_code uses --print flag (self-contained, no plugin)."""
+        backend = ClaudeCodeBackend()
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = Mock(stdout="test", stderr="", returncode=0)
@@ -344,7 +340,8 @@ class TestClaudeCodeBackendAdditional:
             backend._run_claude_code("test prompt")
 
             cmd = mock_run.call_args[0][0]
-            assert "--plugin-dir" in cmd
+            assert "--print" in cmd
+            assert "--plugin-dir" not in cmd
 
     def test_run_claude_code_timeout(self):
         """Test _run_claude_code handles timeout."""
@@ -385,73 +382,23 @@ class TestClaudeCodeBackendAdditional:
 class TestAgentSDKBackendAdditional:
     """Additional tests for AgentSDKBackend to cover missing lines."""
 
-    def test_plugin_path_does_not_exist(self, tmp_path):
-        """Test AgentSDKBackend raises error for nonexistent plugin path."""
-        with pytest.raises(ValueError, match="does not exist"):
-            AgentSDKBackend(
-                api_key="test-key",
-                plugin_path=tmp_path / "nonexistent",
-            )
-
     @pytest.mark.asyncio
-    async def test_encode_async_with_custom_agent_type(self, tmp_path):
-        """Test encode_async uses Task tool pattern for custom agent types."""
-        backend = AgentSDKBackend(api_key="test-key", plugin_path=tmp_path)
-
-        mock_sdk = Mock()
-
-        class MockMessage:
-            def __init__(self):
-                self.result = "encoded content"
-
-        async def mock_gen():
-            yield MockMessage()
-
-        mock_sdk.query = Mock(return_value=mock_gen())
-        mock_sdk.ClaudeAgentOptions = Mock()
-
-        with patch.dict("sys.modules", {"claude_agent_sdk": mock_sdk}):
-            resp = await backend.encode_async(
-                EncoderRequest(
-                    citation="26 USC 1",
-                    statute_text="Test",
-                    output_path=Path("/tmp/nonexistent.rac"),
-                    agent_type="custom:Agent",
-                )
-            )
-
-            assert resp.success
-            # Prompt should include "Use the Task tool"
-            call_args = mock_sdk.query.call_args
-            prompt = call_args[1].get("prompt", "") if call_args[1] else ""
-            if not prompt and call_args[0]:
-                prompt = ""
-
-    @pytest.mark.asyncio
-    async def test_encode_async_with_usage(self, tmp_path):
+    async def test_encode_async_with_usage(self):
         """Test encode_async captures token usage."""
-        backend = AgentSDKBackend(api_key="test-key", plugin_path=tmp_path)
+        backend = AgentSDKBackend(api_key="test-key")
 
-        mock_sdk = Mock()
+        mock_anthropic = Mock()
+        mock_client = Mock()
 
-        class MockUsage:
-            input_tokens = 100
-            output_tokens = 50
-            cache_read_input_tokens = 10
-            cache_creation_input_tokens = 5
+        mock_response = Mock()
+        mock_response.content = [Mock(text="encoded")]
+        mock_response.usage = Mock(input_tokens=100, output_tokens=50)
 
-        class MockMessage:
-            def __init__(self):
-                self.result = "encoded"
-                self.usage = MockUsage()
+        mock_client.messages = Mock()
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        mock_anthropic.AsyncAnthropic = Mock(return_value=mock_client)
 
-        async def mock_gen():
-            yield MockMessage()
-
-        mock_sdk.query = Mock(return_value=mock_gen())
-        mock_sdk.ClaudeAgentOptions = Mock()
-
-        with patch.dict("sys.modules", {"claude_agent_sdk": mock_sdk}):
+        with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
             resp = await backend.encode_async(
                 EncoderRequest(
                     citation="26 USC 1",
@@ -462,28 +409,29 @@ class TestAgentSDKBackendAdditional:
 
             assert resp.success
             assert resp.tokens is not None
+            assert resp.tokens.input_tokens == 100
+            assert resp.tokens.output_tokens == 50
 
     @pytest.mark.asyncio
     async def test_encode_async_reads_file_if_exists(self, tmp_path):
         """Test encode_async reads from output_path if it exists."""
-        backend = AgentSDKBackend(api_key="test-key", plugin_path=tmp_path)
+        backend = AgentSDKBackend(api_key="test-key")
 
         output_path = tmp_path / "output.rac"
         output_path.write_text("file_content:\n  entity: TaxUnit\n")
 
-        mock_sdk = Mock()
+        mock_anthropic = Mock()
+        mock_client = Mock()
 
-        class MockMessage:
-            def __init__(self):
-                self.result = "ignored"
+        mock_response = Mock()
+        mock_response.content = [Mock(text="ignored")]
+        mock_response.usage = Mock(input_tokens=10, output_tokens=5)
 
-        async def mock_gen():
-            yield MockMessage()
+        mock_client.messages = Mock()
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        mock_anthropic.AsyncAnthropic = Mock(return_value=mock_client)
 
-        mock_sdk.query = Mock(return_value=mock_gen())
-        mock_sdk.ClaudeAgentOptions = Mock()
-
-        with patch.dict("sys.modules", {"claude_agent_sdk": mock_sdk}):
+        with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
             resp = await backend.encode_async(
                 EncoderRequest(
                     citation="26 USC 1",
@@ -496,20 +444,20 @@ class TestAgentSDKBackendAdditional:
             assert "file_content" in resp.rac_content
 
     @pytest.mark.asyncio
-    async def test_encode_async_import_error(self, tmp_path):
-        """Test encode_async handles missing SDK import."""
-        backend = AgentSDKBackend(api_key="test-key", plugin_path=tmp_path)
+    async def test_encode_async_import_error(self):
+        """Test encode_async handles missing anthropic import."""
+        backend = AgentSDKBackend(api_key="test-key")
 
         import builtins
 
         orig_import = builtins.__import__
 
-        def no_sdk_import(name, *args, **kwargs):
-            if name == "claude_agent_sdk":
-                raise ImportError("No module named 'claude_agent_sdk'")
+        def no_anthropic_import(name, *args, **kwargs):
+            if name == "anthropic":
+                raise ImportError("No module named 'anthropic'")
             return orig_import(name, *args, **kwargs)
 
-        with patch("builtins.__import__", side_effect=no_sdk_import):
+        with patch("builtins.__import__", side_effect=no_anthropic_import):
             resp = await backend.encode_async(
                 EncoderRequest(
                     citation="26 USC 1",
@@ -522,20 +470,19 @@ class TestAgentSDKBackendAdditional:
             assert "not installed" in resp.error
 
     @pytest.mark.asyncio
-    async def test_encode_async_generic_error(self, tmp_path):
+    async def test_encode_async_generic_error(self):
         """Test encode_async handles generic exception."""
-        backend = AgentSDKBackend(api_key="test-key", plugin_path=tmp_path)
+        backend = AgentSDKBackend(api_key="test-key")
 
-        mock_sdk = Mock()
+        mock_anthropic = Mock()
+        mock_client = Mock()
+        mock_client.messages = Mock()
+        mock_client.messages.create = AsyncMock(
+            side_effect=RuntimeError("Connection failed")
+        )
+        mock_anthropic.AsyncAnthropic = Mock(return_value=mock_client)
 
-        async def mock_gen():
-            raise RuntimeError("Connection failed")
-            yield  # pragma: no cover
-
-        mock_sdk.query = Mock(return_value=mock_gen())
-        mock_sdk.ClaudeAgentOptions = Mock()
-
-        with patch.dict("sys.modules", {"claude_agent_sdk": mock_sdk}):
+        with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
             resp = await backend.encode_async(
                 EncoderRequest(
                     citation="26 USC 1",
@@ -551,9 +498,9 @@ class TestAgentSDKBackendAdditional:
 class TestAgentSDKPrediction:
     """Test AgentSDKBackend.predict() method."""
 
-    def test_predict_returns_default_scores(self, tmp_path):
+    def test_predict_returns_default_scores(self):
         """Test predict returns default PredictionScores."""
-        backend = AgentSDKBackend(api_key="test-key", plugin_path=tmp_path)
+        backend = AgentSDKBackend(api_key="test-key")
         scores = backend.predict("26 USC 1", "Statute text")
         assert scores.confidence == 0.5
 

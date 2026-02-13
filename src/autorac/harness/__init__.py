@@ -1,5 +1,6 @@
 # Encoding Harness
 # Feedback loop for AI-assisted statute encoding
+# Self-contained -- no external plugin dependencies.
 
 from .backends import (
     AgentSDKBackend,
@@ -31,6 +32,7 @@ from .metrics import (
     print_calibration_report,
     save_calibration_snapshot,
 )
+from .orchestrator import Orchestrator
 from .validator_pipeline import (
     PipelineResult,
     ValidationResult,
@@ -64,6 +66,8 @@ __all__ = [
     "EncoderRequest",
     "EncoderResponse",
     "PredictionScores",
+    # Orchestrator
+    "Orchestrator",
     # Calibration Metrics
     "CalibrationMetrics",
     "CalibrationSnapshot",

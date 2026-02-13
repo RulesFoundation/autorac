@@ -1,5 +1,7 @@
 # AutoRAC - AI-assisted RAC encoding
-# Feedback loop infrastructure for automated statute encoding
+# Self-contained encoding infrastructure -- no external plugin dependencies.
+
+__version__ = "0.2.0"
 
 from .constants import DEFAULT_CLI_MODEL, DEFAULT_MODEL, REVIEWER_CLI_MODEL
 from .harness import (
@@ -21,6 +23,8 @@ from .harness import (
     FinalScores,
     Iteration,
     IterationError,
+    # Orchestrator
+    Orchestrator,
     PipelineResult,
     PredictedScores,
     PredictionScores,
@@ -38,6 +42,7 @@ from .harness import (
 )
 
 __all__ = [
+    "__version__",
     "DEFAULT_MODEL",
     "DEFAULT_CLI_MODEL",
     "REVIEWER_CLI_MODEL",
@@ -64,6 +69,8 @@ __all__ = [
     "EncoderRequest",
     "EncoderResponse",
     "PredictionScores",
+    # Orchestrator
+    "Orchestrator",
     # Calibration Metrics
     "CalibrationMetrics",
     "CalibrationSnapshot",

@@ -80,27 +80,15 @@ class TestRunClaudeCode:
 class TestRunClaudeCodeAdditional:
     """Additional tests for run_claude_code covering missing branches."""
 
-    def test_with_plugin_dir(self, tmp_path):
-        """Test run_claude_code with plugin_dir."""
-        plugin_dir = tmp_path / "plugins"
-        plugin_dir.mkdir()
-
+    def test_no_plugin_dir_flag(self):
+        """Test run_claude_code does NOT include --plugin-dir (self-contained)."""
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = Mock(stdout="output", stderr="", returncode=0)
-            output, code = run_claude_code("test", plugin_dir=plugin_dir)
+            output, code = run_claude_code("test")
 
             cmd = mock_run.call_args[0][0]
-            assert "--plugin-dir" in cmd
-
-    def test_with_agent(self):
-        """Test run_claude_code with agent parameter."""
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = Mock(stdout="output", stderr="", returncode=0)
-            output, code = run_claude_code("test", agent="rac:encoder")
-
-            cmd = mock_run.call_args[0][0]
-            assert "--agent" in cmd
-            assert "rac:encoder" in cmd
+            assert "--plugin-dir" not in cmd
+            assert "--agent" not in cmd
 
     def test_generic_exception(self):
         """Test run_claude_code handles generic exception."""
@@ -112,28 +100,11 @@ class TestRunClaudeCodeAdditional:
             assert code == 1
 
 
-class TestEncoderConfigAutoDetect:
-    """Tests for EncoderConfig auto-detection of plugin path."""
+class TestEncoderConfigSelfContained:
+    """Tests for self-contained EncoderConfig (no plugin dependency)."""
 
-    def test_auto_detect_plugin_path(self, tmp_path):
-        """Test auto-detection of rac-claude plugin directory."""
-        rac_us = tmp_path / "rac-us"
-        rac_us.mkdir()
-        rac = tmp_path / "rac"
-        rac.mkdir()
-        # Create rac-claude sibling with plugin.json
-        rac_claude = tmp_path / "rac-claude"
-        rac_claude.mkdir()
-        (rac_claude / "plugin.json").write_text('{"name": "rac-claude"}')
-
-        config = EncoderConfig(
-            rac_us_path=rac_us,
-            rac_path=rac,
-        )
-        assert config.rac_plugin_path == rac_claude
-
-    def test_no_plugin_found(self, tmp_path):
-        """Test when no plugin is auto-detected."""
+    def test_config_has_no_plugin_path(self, tmp_path):
+        """Test EncoderConfig has no rac_plugin_path (self-contained)."""
         rac_us = tmp_path / "rac-us"
         rac_us.mkdir()
         rac = tmp_path / "rac"
@@ -143,7 +114,7 @@ class TestEncoderConfigAutoDetect:
             rac_us_path=rac_us,
             rac_path=rac,
         )
-        assert config.rac_plugin_path is None
+        assert not hasattr(config, "rac_plugin_path")
 
 
 class TestIterateUntilPass:

@@ -2,11 +2,13 @@
 AutoRAC CLI - Command line interface for encoding experiments.
 
 Primary workflow:
-  1. /encode (slash command) invokes RAC Encoder agent
-  2. Agent iterates until CI passes, tracking errors and fixes
-  3. autorac validate <file.rac> runs final validation
-  4. autorac log records the full journey
+  1. autorac encode "26 USC 21" runs the full pipeline
+  2. Orchestrator encodes, validates, reviews, and logs
+  3. autorac validate <file.rac> runs standalone validation
+  4. autorac log records encoding runs
   5. autorac stats shows patterns for improvement
+
+Self-contained -- no external plugin dependencies.
 """
 
 import argparse
@@ -1328,11 +1330,11 @@ def cmd_coverage(args):
 
 
 def cmd_encode(args):
-    """Encode a statute using SDK orchestrator with full logging."""
+    """Encode a statute using the self-contained orchestrator."""
     import asyncio
     from datetime import datetime
 
-    from .harness.sdk_orchestrator import SDKOrchestrator
+    from .harness.orchestrator import Orchestrator
 
     # Parse citation to get output path
     # Keep original case for subsection letters (a), (b), etc.
@@ -1356,17 +1358,14 @@ def cmd_encode(args):
     print(f"DB: {args.db}")
     print()
 
-    # Initialize experiment database
-    args.db.parent.mkdir(parents=True, exist_ok=True)
-    experiment_db = ExperimentDB(args.db)
-
     # Create output directory
     output_path.mkdir(parents=True, exist_ok=True)
 
-    # Initialize orchestrator WITH experiment_db
-    orchestrator = SDKOrchestrator(
+    # Initialize orchestrator with experiment DB
+    args.db.parent.mkdir(parents=True, exist_ok=True)
+    orchestrator = Orchestrator(
         model=args.model,
-        experiment_db=experiment_db,
+        db_path=args.db,
     )
 
     print(f"Starting encoding at {datetime.now().strftime('%H:%M:%S')}...")

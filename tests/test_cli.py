@@ -1408,7 +1408,7 @@ class TestCmdEncode:
         mock_orchestrator.encode = mock_encode
 
         with patch(
-            "autorac.harness.sdk_orchestrator.SDKOrchestrator",
+            "autorac.harness.orchestrator.Orchestrator",
             return_value=mock_orchestrator,
         ):
             with pytest.raises(SystemExit) as exc_info:
@@ -1439,7 +1439,7 @@ class TestCmdEncode:
         mock_orchestrator.encode = mock_encode
 
         with patch(
-            "autorac.harness.sdk_orchestrator.SDKOrchestrator",
+            "autorac.harness.orchestrator.Orchestrator",
             return_value=mock_orchestrator,
         ):
             with pytest.raises(SystemExit) as exc_info:
@@ -1471,7 +1471,7 @@ class TestCmdEncode:
         mock_orchestrator.encode = mock_encode
 
         with patch(
-            "autorac.harness.sdk_orchestrator.SDKOrchestrator",
+            "autorac.harness.orchestrator.Orchestrator",
             return_value=mock_orchestrator,
         ):
             with pytest.raises(SystemExit) as exc_info:

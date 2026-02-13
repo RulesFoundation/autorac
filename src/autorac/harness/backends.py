@@ -3,9 +3,9 @@ Encoder backends - abstraction for different Claude invocation methods.
 
 Two backends:
 1. ClaudeCodeBackend - uses Claude Code CLI (subprocess), works with Max subscription
-2. AgentSDKBackend - uses Claude Agent SDK (API), enables massive parallelization
+2. AgentSDKBackend - uses Claude API (anthropic SDK), enables parallelization
 
-Both implement the same interface, so EncoderHarness can use either.
+Both use embedded prompts -- no external plugin dependencies.
 """
 
 import asyncio
@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from autorac.constants import DEFAULT_CLI_MODEL, DEFAULT_MODEL
+from autorac.prompts.encoder import get_encoder_prompt
 
 from .experiment_db import TokenUsage
 
@@ -31,7 +32,6 @@ class EncoderRequest:
     citation: str
     statute_text: str
     output_path: Path
-    agent_type: str = "rac:RAC Encoder"
     model: str = DEFAULT_CLI_MODEL
     timeout: int = 300
 
@@ -80,34 +80,24 @@ class ClaudeCodeBackend(EncoderBackend):
     Backend using Claude Code CLI (subprocess).
 
     Works with Max subscription - no API billing.
-    Best for interactive use.
+    Uses embedded prompts -- no external plugin needed.
     """
 
     def __init__(
         self,
-        plugin_dir: Optional[Path] = None,
         cwd: Optional[Path] = None,
     ):
-        self.plugin_dir = plugin_dir
         self.cwd = cwd or Path.cwd()
 
     def encode(self, request: EncoderRequest) -> EncoderResponse:
-        """Encode using Claude Code CLI."""
+        """Encode using Claude Code CLI with embedded encoder prompt."""
         start = time.time()
 
-        prompt = f"""Encode {request.citation} into RAC format.
-
-Write the output to: {request.output_path}
-
-Statute Text:
-{request.statute_text}
-
-Use the Write tool to create the .rac file at the specified path.
-"""
+        prompt = get_encoder_prompt(request.citation, str(request.output_path))
+        prompt += f"\n\nStatute Text:\n{request.statute_text}\n"
 
         output, returncode = self._run_claude_code(
             prompt=prompt,
-            agent=request.agent_type,
             model=request.model,
             timeout=request.timeout,
         )
@@ -194,7 +184,6 @@ Score each dimension from 1-10. Output ONLY valid JSON:
     def _run_claude_code(
         self,
         prompt: str,
-        agent: Optional[str] = None,
         model: str = DEFAULT_CLI_MODEL,
         timeout: int = 300,
     ) -> tuple[str, int]:
@@ -203,12 +192,6 @@ Score each dimension from 1-10. Output ONLY valid JSON:
 
         if model:
             cmd.extend(["--model", model])
-
-        if self.plugin_dir and self.plugin_dir.exists():
-            cmd.extend(["--plugin-dir", str(self.plugin_dir)])
-
-        if agent:
-            cmd.extend(["--agent", agent])
 
         cmd.extend(["-p", prompt])
 
@@ -234,99 +217,54 @@ Score each dimension from 1-10. Output ONLY valid JSON:
 
 class AgentSDKBackend(EncoderBackend):
     """
-    Backend using Claude Agent SDK (API).
+    Backend using Claude API (anthropic SDK).
 
     Requires ANTHROPIC_API_KEY - pay per token.
-    Enables massive parallelization for batch encoding.
-
-    Uses the same agent definitions as the Claude Code plugin by loading
-    the rac-claude plugin via the SDK's plugins option.
+    Enables parallelization for batch encoding.
+    Uses embedded prompts -- no external plugin needed.
     """
-
-    # Default path to rac-claude plugin (sibling directory)
-    DEFAULT_PLUGIN_PATH = (
-        Path(__file__).parent.parent.parent.parent.parent / "rac-claude"
-    )
 
     def __init__(
         self,
         api_key: Optional[str] = None,
         model: str | None = None,
-        plugin_path: Optional[Path] = None,
     ):
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not self.api_key:
             raise ValueError("ANTHROPIC_API_KEY required for AgentSDKBackend")
         self.model = model or DEFAULT_MODEL
-        self.plugin_path = (
-            Path(plugin_path) if plugin_path else self.DEFAULT_PLUGIN_PATH
-        )
-
-        if not self.plugin_path.exists():
-            raise ValueError(f"Plugin path does not exist: {self.plugin_path}")
 
     def encode(self, request: EncoderRequest) -> EncoderResponse:
-        """Synchronous encode using Agent SDK (runs async under the hood)."""
+        """Synchronous encode using API (runs async under the hood)."""
         return asyncio.run(self.encode_async(request))
 
     async def encode_async(self, request: EncoderRequest) -> EncoderResponse:
-        """Async encode using Agent SDK with rac-claude plugin.
-
-        Uses the same agent definitions as Claude Code CLI by loading
-        the rac-claude plugin.
-        """
+        """Async encode using Claude API with embedded prompts."""
         start = time.time()
 
         try:
-            # Import here to avoid dependency if not using SDK backend
-            from claude_agent_sdk import ClaudeAgentOptions, query
+            import anthropic
 
-            prompt = f"""Encode {request.citation} into RAC format.
+            client = anthropic.AsyncAnthropic(api_key=self.api_key)
 
-Write the output to: {request.output_path}
+            prompt = get_encoder_prompt(request.citation, str(request.output_path))
+            prompt += f"\n\nStatute Text:\n{request.statute_text}\n"
 
-Statute Text:
-{request.statute_text}
-
-Use the Write tool to create the .rac file at the specified path.
-"""
-
-            # Configure SDK to load the rac-claude plugin
-            # This gives access to the same agents as Claude Code CLI
-            options = ClaudeAgentOptions(
+            response = await client.messages.create(
                 model=self.model,
-                allowed_tools=["Read", "Write", "Edit", "Grep", "Glob", "Task", "Bash"],
-                # Load rac-claude plugin for agent definitions
-                plugins=[{"type": "local", "path": str(self.plugin_path)}],
-                # Load rac-claude agent definitions from plugin
-                setting_sources=["project"],
+                max_tokens=16384,
+                messages=[{"role": "user", "content": prompt}],
             )
 
-            # If a specific agent is requested, use the Task tool pattern
-            # to invoke it (same as Claude Code CLI does)
-            if request.agent_type and request.agent_type != "rac:RAC Encoder":
-                prompt = f"""Use the Task tool to invoke the {request.agent_type} agent with this prompt:
-
-{prompt}
-"""
-
             result_content = ""
-            token_usage = TokenUsage()
+            for block in response.content:
+                if hasattr(block, "text"):
+                    result_content += block.text
 
-            async for message in query(prompt=prompt, options=options):
-                if hasattr(message, "result"):
-                    result_content = message.result
-                # Capture token usage from API response
-                if hasattr(message, "usage"):
-                    usage = message.usage
-                    token_usage = TokenUsage(
-                        input_tokens=getattr(usage, "input_tokens", 0),
-                        output_tokens=getattr(usage, "output_tokens", 0),
-                        cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0),
-                        cache_creation_tokens=getattr(
-                            usage, "cache_creation_input_tokens", 0
-                        ),
-                    )
+            token_usage = TokenUsage(
+                input_tokens=response.usage.input_tokens,
+                output_tokens=response.usage.output_tokens,
+            )
 
             duration_ms = int((time.time() - start) * 1000)
 
@@ -348,7 +286,7 @@ Use the Write tool to create the .rac file at the specified path.
             return EncoderResponse(
                 rac_content="",
                 success=False,
-                error="claude_agent_sdk not installed. Run: pip install claude-agent-sdk",
+                error="anthropic SDK not installed. Run: pip install anthropic",
                 duration_ms=int((time.time() - start) * 1000),
             )
         except Exception as e:
@@ -367,7 +305,7 @@ Use the Write tool to create the .rac file at the specified path.
         """
         Encode multiple statutes in parallel.
 
-        This is the key advantage of the SDK backend - massive parallelization.
+        This is the key advantage of the API backend - parallelization.
         """
         semaphore = asyncio.Semaphore(max_concurrent)
 
@@ -379,6 +317,6 @@ Use the Write tool to create the .rac file at the specified path.
         return await asyncio.gather(*tasks)
 
     def predict(self, citation: str, statute_text: str) -> PredictionScores:
-        """Predict scores using Agent SDK."""
+        """Predict scores using API."""
         # For now, use defaults - prediction is less critical than encoding
         return PredictionScores(confidence=0.5)

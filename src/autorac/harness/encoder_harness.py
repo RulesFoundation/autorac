@@ -2,13 +2,12 @@
 Encoder Harness - wraps encoder agent with prediction and logging.
 
 The harness orchestrates:
-1. Agent predicts scores before encoding
-2. Agent encodes the statute
-3. Agent suggests framework improvements
-4. Validators run in parallel
-5. Everything is logged for calibration
+1. Agent encodes the statute using embedded prompts
+2. Validators run in parallel
+3. Everything is logged for calibration
 
-Uses Claude Code CLI (subprocess) for agent calls - cheaper than direct API.
+Self-contained -- no dependency on external plugins.
+Uses Claude Code CLI (subprocess) for agent calls.
 """
 
 import re
@@ -19,6 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 from autorac.constants import DEFAULT_CLI_MODEL, DEFAULT_MODEL
+from autorac.prompts.encoder import get_encoder_prompt
 
 from .experiment_db import (
     EncodingRun,
@@ -30,22 +30,18 @@ from .validator_pipeline import PipelineResult, ValidatorPipeline
 
 def run_claude_code(
     prompt: str,
-    agent: Optional[str] = None,
     model: str = DEFAULT_CLI_MODEL,
     timeout: int = 300,
     cwd: Optional[Path] = None,
-    plugin_dir: Optional[Path] = None,
 ) -> tuple[str, int]:
     """
     Run Claude Code CLI as subprocess.
 
     Args:
-        prompt: The prompt to send
-        agent: Optional agent type (e.g., "rac:RAC Encoder")
+        prompt: The prompt to send (should include system prompt if needed)
         model: Model to use (opus, haiku) - never sonnet
         timeout: Timeout in seconds
         cwd: Working directory
-        plugin_dir: Directory containing Claude Code plugins
 
     Returns:
         Tuple of (output text, return code)
@@ -54,12 +50,6 @@ def run_claude_code(
 
     if model:
         cmd.extend(["--model", model])
-
-    if plugin_dir and plugin_dir.exists():
-        cmd.extend(["--plugin-dir", str(plugin_dir)])
-
-    if agent:
-        cmd.extend(["--agent", agent])
 
     # Add the prompt
     cmd.extend(["-p", prompt])
@@ -91,36 +81,20 @@ class EncoderConfig:
     rac_us_path: Path
     rac_path: Path
     db_path: Path = Path("experiments.db")
-    rac_plugin_path: Optional[Path] = None  # Path to rac-claude plugin
     enable_oracles: bool = True
     max_iterations: int = 3
     score_threshold: float = 7.0  # Minimum score to accept
 
-    def __post_init__(self):
-        # Auto-detect rac-claude plugin if not specified
-        if self.rac_plugin_path is None:
-            # Try common locations
-            candidates = [
-                self.rac_us_path.parent / "rac-claude",
-                Path.home() / "RulesFoundation" / "rac-claude",
-                Path.home() / ".claude" / "plugins" / "rac-claude",
-            ]
-            for candidate in candidates:
-                if candidate.exists() and (candidate / "plugin.json").exists():
-                    self.rac_plugin_path = candidate
-                    break
-
 
 class EncoderHarness:
     """
-    Wraps encoder agent with prediction, validation, and logging.
+    Wraps encoder agent with validation and logging.
 
-    The harness implements the encode-predict-validate-learn loop:
-    1. Before encoding, agent predicts expected scores
-    2. Agent encodes statute to RAC
-    3. Validators run in parallel
-    4. Results logged for calibration analysis
-    5. Agent suggests improvements based on errors
+    The harness implements the encode-validate-learn loop:
+    1. Agent encodes statute to RAC using embedded prompts
+    2. Validators run in parallel
+    3. Results logged for calibration analysis
+    4. Agent suggests improvements based on errors
     """
 
     def __init__(self, config: EncoderConfig):
@@ -221,33 +195,23 @@ class EncoderHarness:
 
         return iterations
 
-    # _get_predictions removed - predictions no longer used in checklist model
-
     def _encode(self, citation: str, statute_text: str, output_path: Path) -> str:
         """
         Invoke Claude Code to encode the statute to RAC format.
 
-        Uses the rac:RAC Encoder agent from the plugin.
+        Uses the embedded encoder prompt -- no external plugin needed.
         """
-        # Use the rac-claude plugin's encoder agent
-        prompt = f"""Encode {citation} into RAC format.
+        prompt = get_encoder_prompt(citation, str(output_path))
 
-Write the output to: {output_path}
-
-Statute Text:
-{statute_text}
-
-Use the Write tool to create the .rac file at the specified path.
-"""
+        # Append statute text to the prompt
+        prompt += f"\n\nStatute Text:\n{statute_text}\n"
 
         try:
             output, returncode = run_claude_code(
                 prompt,
-                agent="rac:RAC Encoder",
                 model=DEFAULT_CLI_MODEL,
                 timeout=300,
                 cwd=self.config.rac_us_path,
-                plugin_dir=self.config.rac_plugin_path,
             )
 
             # Check if file was created

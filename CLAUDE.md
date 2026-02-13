@@ -1,52 +1,45 @@
 # AutoRAC
 
-AI-assisted RAC encoding infrastructure. Provides the feedback loop for automated statute encoding.
+AI-assisted RAC encoding infrastructure. Fully self-contained -- `pip install autorac` is all you need.
 
-## Two Encoding Approaches
+## Quick start
 
-AutoRAC supports two ways to encode statutes:
-
-### 1. Interactive (Claude Code Plugin) - Recommended
-
-Uses Claude Code with Max subscription. No API billing.
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Claude Code Session (Max subscription)                      │
-│    └── /encode "26 USC 32"                                  │
-│          └── Task(rac:RAC Encoder)                          │
-│                └── Write, Edit, Grep tools                  │
-│                      └── rac-us/statute/26/32.rac           │
-└─────────────────────────────────────────────────────────────┘
+```bash
+pip install autorac
+autorac encode "26 USC 21"
 ```
 
-**How to use:**
-1. Install rac-claude plugin
-2. Run `/encode "26 USC 32"` in Claude Code
-3. Agent encodes, validates, logs journey
+This runs the full pipeline: analyze statute, encode subsections, validate against oracles (PolicyEngine/TAXSIM), run 4 LLM reviewers, and log everything.
 
-### 2. Programmatic (Agent SDK) - For Batch/Parallel
+## Two backends
 
-Uses Claude Agent SDK with API key. Pay per token, but enables massive parallelization.
+### 1. CLI backend (default)
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Python Script / CI Pipeline                                 │
-│    └── AgentSDKBackend(api_key=...)                         │
-│          └── encode_batch(requests, max_concurrent=10)      │
-│                └── 10 parallel encoding agents              │
-│                      └── 10x faster for batch jobs          │
-└─────────────────────────────────────────────────────────────┘
+Uses Claude Code CLI subprocess. Works with Max subscription. No API billing.
+
+```bash
+autorac encode "26 USC 32"
 ```
 
-**How to use:**
+### 2. API backend
+
+Uses Claude API directly (anthropic SDK). Works on Modal or any server.
+
+```python
+from autorac import Orchestrator
+
+orchestrator = Orchestrator(backend="api", model="claude-opus-4-6")
+run = await orchestrator.encode("26 USC 21")
+```
+
+For batch encoding:
+
 ```python
 from autorac import AgentSDKBackend, EncoderRequest
 from pathlib import Path
 
 backend = AgentSDKBackend()  # Requires ANTHROPIC_API_KEY
 
-# Encode 50 statutes in parallel
 requests = [
     EncoderRequest(
         citation=f"26 USC {section}",
@@ -59,75 +52,63 @@ requests = [
 responses = await backend.encode_batch(requests, max_concurrent=10)
 ```
 
-**Install:** `pip install autorac[sdk]`
-
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                          AutoRAC                                 │
-├─────────────────────────────────────────────────────────────────┤
-│  Encoder Backends                                                │
-│    ├── ClaudeCodeBackend (subprocess, Max subscription)         │
-│    └── AgentSDKBackend (API, parallelization)                   │
-├─────────────────────────────────────────────────────────────────┤
-│  3-Tier Validator Pipeline (tiers run in order)                  │
-│    ├── Tier 1: CI (rac pytest) - instant, catches syntax        │
-│    ├── Tier 2: Oracles (PE/TAXSIM) - fast ~10s, comparison data │
-│    └── Tier 3: LLM reviewers - uses oracle context to diagnose  │
-├─────────────────────────────────────────────────────────────────┤
-│  Experiment DB                                                   │
-│    ├── encoding_id, file, timestamp                             │
-│    ├── iterations, errors, fixes                                │
-│    └── final_scores, session_transcript                         │
-├─────────────────────────────────────────────────────────────────┤
-│  Calibration Metrics                                             │
-│    ├── MSE, MAE, bias per metric                                │
-│    ├── Trend analysis over time                                 │
-│    └── Confidence calibration                                   │
-└─────────────────────────────────────────────────────────────────┘
++-----------------------------------------------------------------+
+|                          AutoRAC                                  |
++-----------------------------------------------------------------+
+|  Orchestrator (self-contained, embedded prompts)                  |
+|    Phase 1: Analysis (subsection tree, encoding order)           |
+|    Phase 2: Encoding (parallel per-subsection)                   |
+|    Phase 3: Oracle validation (PE + TAXSIM)                      |
+|    Phase 4: LLM review (4 reviewers in parallel)                 |
+|    Phase 5: Logging and reporting                                |
++-----------------------------------------------------------------+
+|  Embedded Prompts (src/autorac/prompts/)                          |
+|    encoder.py, validator.py, reviewers.py                        |
++-----------------------------------------------------------------+
+|  Encoder Backends                                                 |
+|    ClaudeCodeBackend (subprocess)                                |
+|    AgentSDKBackend (API, parallelization)                        |
++-----------------------------------------------------------------+
+|  3-Tier Validator Pipeline                                        |
+|    Tier 1: CI (rac pytest) - instant, catches syntax             |
+|    Tier 2: Oracles (PE/TAXSIM) - fast ~10s, comparison data     |
+|    Tier 3: LLM reviewers - uses oracle context to diagnose       |
++-----------------------------------------------------------------+
+|  Experiment DB (SQLite)                                           |
++-----------------------------------------------------------------+
 ```
-
-## 3-Tier Validation
-
-Validation runs in order with oracle results feeding into LLM reviewers:
-
-| Tier | What | Time | Cost | Purpose |
-|------|------|------|------|---------|
-| 1. CI | rac pytest | instant | free | Catches syntax/format errors |
-| 2. Oracles | PE + TAXSIM | ~10s | free | Generates comparison data |
-| 3. LLM Reviewers | 4 specialists | ~30s | API cost | Diagnoses WHY discrepancies exist |
-
-Oracles run before LLM reviewers because they're fast/free and provide essential
-diagnostic context. LLMs can then investigate *why* encodings differ from consensus.
 
 ## Components
 
-- `src/harness/backends.py` - Encoder backends (ClaudeCode, AgentSDK)
-- `src/harness/experiment_db.py` - SQLite experiment logging
-- `src/harness/validator_pipeline.py` - Parallel validator execution
-- `src/harness/encoder_harness.py` - Wraps encoder with prediction
-- `src/harness/metrics.py` - Calibration computation
+- `src/autorac/prompts/` - Embedded agent prompts (encoder, validator, 4 reviewers)
+- `src/autorac/harness/orchestrator.py` - Main pipeline orchestrator
+- `src/autorac/harness/backends.py` - Encoder backends (ClaudeCode, AgentSDK)
+- `src/autorac/harness/experiment_db.py` - SQLite experiment logging
+- `src/autorac/harness/validator_pipeline.py` - Parallel validator execution
+- `src/autorac/harness/encoder_harness.py` - Low-level encoder harness
+- `src/autorac/harness/metrics.py` - Calibration computation
 
 ## Commands
 
 ```bash
 # Setup
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .          # CLI backend only
-pip install -e ".[sdk]"   # With Agent SDK for parallel encoding
+pip install -e .
+
+# Encode a statute (full pipeline)
+autorac encode "26 USC 21"
+
+# Validate a .rac file
+autorac validate path/to/file.rac
 
 # Run tests
 pytest tests/ -v
-
-# View calibration
-python -m autorac.metrics --db experiments.db
 ```
 
-## Related Repos
+## Related repos
 
 - **rac** - DSL parser, executor, runtime
 - **rac-us** - US statute encodings
 - **rac-validators** - External calculator validation (PolicyEngine, TAXSIM)
-- **rac-claude** - Claude Code plugin with /encode command
