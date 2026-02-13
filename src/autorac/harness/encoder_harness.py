@@ -45,7 +45,7 @@ def run_claude_code(
     Args:
         prompt: The prompt to send
         agent: Optional agent type (e.g., "rac:RAC Encoder")
-        model: Model to use (sonnet, opus, haiku)
+        model: Model to use (opus, haiku) - never sonnet
         timeout: Timeout in seconds
         cwd: Working directory
         plugin_dir: Directory containing Claude Code plugins
