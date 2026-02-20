@@ -342,7 +342,7 @@ def create_run(
 
 
 class EncodingDB:
-    """SQLite-based experiment database."""
+    """SQLite-based encoding database."""
 
     def __init__(self, db_path: Path):
         self.db_path = Path(db_path)

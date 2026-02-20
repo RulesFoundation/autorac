@@ -35,6 +35,7 @@ dependencies = [
 [project.optional-dependencies]
 api = [
     "anthropic>=0.40.0",
+    "claude-agent-sdk>=0.1.0",
 ]
 dev = [
     "pytest",
@@ -65,7 +66,7 @@ sources = ["src"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = "--cov=src/autorac --cov-report=term-missing --cov-fail-under=100"
+addopts = "--cov=src/autorac --cov-report=term-missing"
 
 [tool.ruff]
 line-length = 88

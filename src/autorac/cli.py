@@ -58,7 +58,7 @@ def main():
 
     # log command
     log_parser = subparsers.add_parser(
-        "log", help="Log an encoding run to experiment DB"
+        "log", help="Log an encoding run to encoding DB"
     )
     log_parser.add_argument("--citation", required=True, help="Legal citation")
     log_parser.add_argument(
@@ -1362,7 +1362,7 @@ def cmd_encode(args):
     # Create output directory
     output_path.mkdir(parents=True, exist_ok=True)
 
-    # Initialize SDK orchestrator with experiment DB
+    # Initialize SDK orchestrator with encoding DB
     args.db.parent.mkdir(parents=True, exist_ok=True)
     encoding_db = EncodingDB(args.db)
     orchestrator = SDKOrchestrator(

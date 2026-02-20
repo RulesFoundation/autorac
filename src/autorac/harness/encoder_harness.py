@@ -331,7 +331,7 @@ def run_encoding_experiment(
     config: Optional[EncoderConfig] = None,
 ) -> list[tuple[EncodingRun, PipelineResult]]:
     """
-    Convenience function to run a full encoding experiment.
+    Convenience function to run a full encoding pipeline.
 
     Args:
         citation: Legal citation (e.g., "26 USC 1(h)(1)(E)")

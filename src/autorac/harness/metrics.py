@@ -97,12 +97,12 @@ def compute_calibration(
     min_samples: int = 10,
 ) -> CalibrationSnapshot:
     """
-    Compute calibration metrics from experiment database.
+    Compute calibration metrics from encoding database.
 
     Uses review_results (checklist-based) to compute pass rates per reviewer.
 
     Args:
-        db: Experiment database
+        db: Encoding database
         min_samples: Minimum samples required per metric
 
     Returns:

@@ -153,7 +153,7 @@ class PipelineResult:
     )  # Context passed to LLM reviewers
 
     def to_review_results(self) -> ReviewResults:
-        """Convert pipeline results to ReviewResults for experiment DB."""
+        """Convert pipeline results to ReviewResults for encoding DB."""
         reviews = []
         for name in [
             "rac_reviewer",

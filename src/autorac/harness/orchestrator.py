@@ -180,7 +180,7 @@ class Orchestrator:
         Args:
             model: Model to use. For CLI backend, short names like "opus".
                    For API backend, full model IDs like "claude-opus-4-6".
-            db_path: Path to experiment database. None to skip logging.
+            db_path: Path to encoding database. None to skip logging.
             backend: "cli" for Claude Code CLI, "api" for direct API calls.
             api_key: Anthropic API key (required for API backend).
         """

@@ -503,12 +503,12 @@ class TestSyncTranscriptsToSupabase:
 
 class TestSyncSdkSessionsToSupabase:
     def test_no_experiments_db(self):
-        with patch("autorac.supabase_sync.EXPERIMENTS_DB", Path("/nonexistent/path")):
+        with patch("autorac.supabase_sync.ENCODINGS_DB", Path("/nonexistent/path")):
             result = sync_sdk_sessions_to_supabase()
             assert result["total"] == 0
 
     def test_sync_session(self, tmp_path):
-        db_path = tmp_path / "experiments.db"
+        db_path = tmp_path / "encodings.db"
         conn = sqlite3.connect(str(db_path))
         conn.execute("""
             CREATE TABLE sessions (
@@ -553,13 +553,13 @@ class TestSyncSdkSessionsToSupabase:
             data=[{"id": "test"}]
         )
 
-        with patch("autorac.supabase_sync.EXPERIMENTS_DB", db_path):
+        with patch("autorac.supabase_sync.ENCODINGS_DB", db_path):
             result = sync_sdk_sessions_to_supabase(client=mock_client)
             assert result["synced"] == 1
             assert result["total"] == 1
 
     def test_sync_with_session_filter(self, tmp_path):
-        db_path = tmp_path / "experiments.db"
+        db_path = tmp_path / "encodings.db"
         conn = sqlite3.connect(str(db_path))
         conn.execute("""
             CREATE TABLE sessions (
@@ -598,14 +598,14 @@ class TestSyncSdkSessionsToSupabase:
             data=[{"id": "test"}]
         )
 
-        with patch("autorac.supabase_sync.EXPERIMENTS_DB", db_path):
+        with patch("autorac.supabase_sync.ENCODINGS_DB", db_path):
             result = sync_sdk_sessions_to_supabase(
                 session_id="sdk-test-1", client=mock_client
             )
             assert result["synced"] == 1
 
     def test_sync_failure(self, tmp_path):
-        db_path = tmp_path / "experiments.db"
+        db_path = tmp_path / "encodings.db"
         conn = sqlite3.connect(str(db_path))
         conn.execute("""
             CREATE TABLE sessions (
@@ -644,12 +644,12 @@ class TestSyncSdkSessionsToSupabase:
             "Error"
         )
 
-        with patch("autorac.supabase_sync.EXPERIMENTS_DB", db_path):
+        with patch("autorac.supabase_sync.ENCODINGS_DB", db_path):
             result = sync_sdk_sessions_to_supabase(client=mock_client)
             assert result["failed"] == 1
 
     def test_creates_client_if_not_provided(self, tmp_path):
-        db_path = tmp_path / "experiments.db"
+        db_path = tmp_path / "encodings.db"
         conn = sqlite3.connect(str(db_path))
         conn.execute("""
             CREATE TABLE sessions (
@@ -681,7 +681,7 @@ class TestSyncSdkSessionsToSupabase:
         conn.close()
 
         mock_client = MagicMock()
-        with patch("autorac.supabase_sync.EXPERIMENTS_DB", db_path):
+        with patch("autorac.supabase_sync.ENCODINGS_DB", db_path):
             with patch(
                 "autorac.supabase_sync.get_supabase_client", return_value=mock_client
             ):

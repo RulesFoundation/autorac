@@ -4,7 +4,7 @@ SDK-based Encoding Orchestrator with full logging.
 Uses Claude Agent SDK for complete control over the encoding workflow.
 Logs EVERYTHING: every message, tool call, response, token counts.
 
-This is the scientific-grade orchestrator for calibration experiments.
+This is the scientific-grade orchestrator for calibration encodings.
 """
 
 import asyncio
@@ -460,7 +460,7 @@ class SDKOrchestrator:
             run.total_tokens = self._sum_tokens(run.agent_runs)
             run.total_cost_usd = self._sum_cost(run.agent_runs)
 
-            # Log to experiment DB if available
+            # Log to encoding DB if available
             if self.encoding_db:
                 self._log_to_db(run)
 
