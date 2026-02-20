@@ -556,9 +556,7 @@ class SDKOrchestrator:
                                 # Tool result content
                                 if hasattr(block, "content"):
                                     result_text = str(block.content)[:5000]
-                                    text_parts.append(
-                                        f"[Tool Result: {len(result_text)} chars]"
-                                    )
+                                    text_parts.append(result_text)
                                     msg.tool_output = result_text
                         msg.content = (
                             "\n".join(text_parts)
@@ -1225,7 +1223,7 @@ Write .rac files to the output path. Run tests after each file."""
                     "agent_type": agent_run.agent_type,
                     "summary": msg.summary,
                     "tool_input": msg.tool_input,
-                    "tool_output": msg.tool_output[:1000] if msg.tool_output else None,
+                    "tool_output": msg.tool_output[:5000] if msg.tool_output else None,
                     "tokens": {
                         "input": msg.tokens.input_tokens if msg.tokens else 0,
                         "output": msg.tokens.output_tokens if msg.tokens else 0,
