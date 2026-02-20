@@ -40,7 +40,7 @@ from autorac.prompts.reviewers import (
 )
 from autorac.prompts.validator import VALIDATOR_PROMPT
 
-from .experiment_db import ExperimentDB, TokenUsage
+from .encoding_db import EncodingDB, TokenUsage
 from .validator_pipeline import ValidatorPipeline
 
 
@@ -198,7 +198,7 @@ class Orchestrator:
         else:
             self.model = model or DEFAULT_MODEL
 
-        self.experiment_db = ExperimentDB(db_path) if db_path else None
+        self.encoding_db = EncodingDB(db_path) if db_path else None
 
     async def encode(
         self,
@@ -249,8 +249,8 @@ class Orchestrator:
 
         try:
             # Create DB session
-            if self.experiment_db:
-                self.experiment_db.start_session(
+            if self.encoding_db:
+                self.encoding_db.start_session(
                     model=self.model,
                     cwd=str(Path.cwd()),
                     session_id=run.session_id,
@@ -335,7 +335,7 @@ class Orchestrator:
             run.total_tokens = self._sum_tokens(run.agent_runs)
             run.total_cost_usd = self._sum_cost(run.agent_runs)
 
-            if self.experiment_db:
+            if self.encoding_db:
                 self._log_to_db(run)
 
         except Exception as e:
@@ -901,10 +901,10 @@ Write .rac files to the output path. Run tests after each file.
 
     def _log_agent_run(self, session_id: str, agent_run: AgentRun) -> None:
         """Log a single agent run to the DB."""
-        if not self.experiment_db:
+        if not self.encoding_db:
             return
 
-        self.experiment_db.log_event(
+        self.encoding_db.log_event(
             session_id=session_id,
             event_type="agent_start",
             content=agent_run.prompt[:2000],
@@ -924,7 +924,7 @@ Write .rac files to the output path. Run tests after each file.
             )
         )
 
-        self.experiment_db.log_event(
+        self.encoding_db.log_event(
             session_id=session_id,
             event_type="agent_end",
             content=agent_run.result[:2000] if agent_run.result else "",
@@ -944,11 +944,11 @@ Write .rac files to the output path. Run tests after each file.
 
     def _log_to_db(self, run: EncodingRun) -> None:
         """Finalize session in DB with totals."""
-        if not self.experiment_db:
+        if not self.encoding_db:
             return
 
         if run.total_tokens:
-            self.experiment_db.update_session_tokens(
+            self.encoding_db.update_session_tokens(
                 session_id=run.session_id,
                 input_tokens=run.total_tokens.input_tokens,
                 output_tokens=run.total_tokens.output_tokens,

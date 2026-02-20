@@ -20,7 +20,7 @@ from typing import List, Optional
 
 from autorac.constants import DEFAULT_MODEL
 
-from .experiment_db import ExperimentDB, TokenUsage
+from .encoding_db import EncodingDB, TokenUsage
 from .validator_pipeline import ValidatorPipeline
 
 
@@ -242,7 +242,7 @@ class SDKOrchestrator:
         api_key: Optional[str] = None,
         model: str | None = None,
         plugin_path: Optional[Path] = None,
-        experiment_db: Optional[ExperimentDB] = None,
+        encoding_db: Optional[EncodingDB] = None,
     ):
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not self.api_key:
@@ -250,7 +250,7 @@ class SDKOrchestrator:
 
         self.model = model or DEFAULT_MODEL
         self.plugin_path = plugin_path or self._find_plugin_path()
-        self.experiment_db = experiment_db
+        self.encoding_db = encoding_db
 
     @staticmethod
     def _find_plugin_path() -> Path:
@@ -293,8 +293,8 @@ class SDKOrchestrator:
 
         try:
             # Create DB session FIRST so all agent data survives crashes
-            if self.experiment_db:
-                self.experiment_db.start_session(
+            if self.encoding_db:
+                self.encoding_db.start_session(
                     model=self.model,
                     cwd=str(Path.cwd()),
                     session_id=run.session_id,
@@ -461,7 +461,7 @@ class SDKOrchestrator:
             run.total_cost_usd = self._sum_cost(run.agent_runs)
 
             # Log to experiment DB if available
-            if self.experiment_db:
+            if self.encoding_db:
                 self._log_to_db(run)
 
         except Exception as e:
@@ -1198,11 +1198,11 @@ Write .rac files to the output path. Run tests after each file."""
 
         Called after each _run_agent() so data survives crashes.
         """
-        if not self.experiment_db:
+        if not self.encoding_db:
             return
 
         # Log agent start
-        self.experiment_db.log_event(
+        self.encoding_db.log_event(
             session_id=session_id,
             event_type="agent_start",
             content=agent_run.prompt,
@@ -1214,7 +1214,7 @@ Write .rac files to the output path. Run tests after each file."""
 
         # Log each message
         for msg in agent_run.messages:
-            self.experiment_db.log_event(
+            self.encoding_db.log_event(
                 session_id=session_id,
                 event_type=f"agent_{msg.role}",
                 tool_name=msg.tool_name,
@@ -1262,7 +1262,7 @@ Write .rac files to the output path. Run tests after each file."""
             phase_summary += f" - ${phase_cost:.2f}"
 
         # Log agent end
-        self.experiment_db.log_event(
+        self.encoding_db.log_event(
             session_id=session_id,
             event_type="agent_end",
             content=agent_run.result or "",
@@ -1284,12 +1284,12 @@ Write .rac files to the output path. Run tests after each file."""
 
     def _log_to_db(self, run: OrchestratorRun) -> None:
         """Finalize session in DB with totals. Agent runs already logged incrementally."""
-        if not self.experiment_db:
+        if not self.encoding_db:
             return
 
         # Update session totals
         if run.total_tokens:
-            self.experiment_db.update_session_tokens(
+            self.encoding_db.update_session_tokens(
                 session_id=run.session_id,
                 input_tokens=run.total_tokens.input_tokens,
                 output_tokens=run.total_tokens.output_tokens,

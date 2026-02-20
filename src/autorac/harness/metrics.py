@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from .experiment_db import ExperimentDB
+from .encoding_db import EncodingDB
 
 
 @dataclass
@@ -93,7 +93,7 @@ def _compute_metric(name: str, pairs: list[tuple[float, float]]) -> CalibrationM
 
 
 def compute_calibration(
-    db: ExperimentDB,
+    db: EncodingDB,
     min_samples: int = 10,
 ) -> CalibrationSnapshot:
     """

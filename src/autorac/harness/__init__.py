@@ -10,12 +10,13 @@ from .backends import (
     EncoderResponse,
     PredictionScores,
 )
-from .experiment_db import (
+from .encoding_db import (
     ActualScores,
     AgentSuggestion,
     ComplexityFactors,
+    EncodingDB,
     EncodingRun,
-    ExperimentDB,
+    ExperimentDB,  # backward compat alias
     FinalScores,
     Iteration,
     IterationError,
@@ -41,8 +42,9 @@ from .validator_pipeline import (
 )
 
 __all__ = [
-    # Experiment DB
-    "ExperimentDB",
+    # Encoding DB
+    "EncodingDB",
+    "ExperimentDB",  # backward compat
     "EncodingRun",
     "ComplexityFactors",
     "IterationError",

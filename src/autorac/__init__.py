@@ -17,9 +17,10 @@ from .harness import (
     EncoderBackend,
     EncoderRequest,
     EncoderResponse,
+    # Encoding DB
+    EncodingDB,
     EncodingRun,
-    # Experiment DB
-    ExperimentDB,
+    ExperimentDB,  # backward compat
     FinalScores,
     Iteration,
     IterationError,
@@ -46,7 +47,8 @@ __all__ = [
     "DEFAULT_MODEL",
     "DEFAULT_CLI_MODEL",
     "REVIEWER_CLI_MODEL",
-    "ExperimentDB",
+    "EncodingDB",
+    "ExperimentDB",  # backward compat
     "EncodingRun",
     "ComplexityFactors",
     "IterationError",

@@ -1,5 +1,5 @@
 """
-Experiment Database - tracks encoding runs for continuous improvement.
+Encoding Database - tracks encoding runs for continuous improvement.
 
 Key insight: We learn from the JOURNEY (errors, fixes, iterations),
 not from comparing predictions to actuals.
@@ -341,7 +341,7 @@ def create_run(
     )
 
 
-class ExperimentDB:
+class EncodingDB:
     """SQLite-based experiment database."""
 
     def __init__(self, db_path: Path):
@@ -1529,3 +1529,7 @@ class ExperimentDB:
             version_label=version_label,
             metadata={"path": str(spec_path)},
         )
+
+
+# Backward compatibility alias
+ExperimentDB = EncodingDB

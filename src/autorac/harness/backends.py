@@ -22,7 +22,7 @@ from typing import List, Optional
 from autorac.constants import DEFAULT_CLI_MODEL, DEFAULT_MODEL
 from autorac.prompts.encoder import get_encoder_prompt
 
-from .experiment_db import TokenUsage
+from .encoding_db import TokenUsage
 
 
 @dataclass

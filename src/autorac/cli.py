@@ -1,5 +1,5 @@
 """
-AutoRAC CLI - Command line interface for encoding experiments.
+AutoRAC CLI - Command line interface for statute encoding.
 
 Primary workflow:
   1. autorac encode "26 USC 21" runs the full pipeline
@@ -16,9 +16,9 @@ import json
 import sys
 from pathlib import Path
 
-from .harness.experiment_db import (
+from .harness.encoding_db import (
+    EncodingDB,
     EncodingRun,
-    ExperimentDB,
     Iteration,
     IterationError,
     ReviewResult,
@@ -27,7 +27,7 @@ from .harness.experiment_db import (
 from .harness.validator_pipeline import ValidatorPipeline
 
 # Default DB path - can be overridden with --db
-DEFAULT_DB = Path.home() / "RulesFoundation" / "autorac" / "experiments.db"
+DEFAULT_DB = Path.home() / "RulesFoundation" / "autorac" / "encodings.db"
 
 
 def main():
@@ -86,11 +86,11 @@ def main():
     log_parser.add_argument(
         "--session", type=str, help="Session ID to link this run to"
     )
-    log_parser.add_argument("--db", type=Path, default=Path("experiments.db"))
+    log_parser.add_argument("--db", type=Path, default=Path("encodings.db"))
 
     # stats command
     stats_parser = subparsers.add_parser("stats", help="Show encoding statistics")
-    stats_parser.add_argument("--db", type=Path, default=Path("experiments.db"))
+    stats_parser.add_argument("--db", type=Path, default=Path("encodings.db"))
 
     # calibration command
     calibration_parser = subparsers.add_parser(
@@ -600,7 +600,7 @@ def cmd_benchmark(args):
 
 def cmd_log(args):
     """Log an encoding run."""
-    db = ExperimentDB(args.db)
+    db = EncodingDB(args.db)
 
     # Parse errors
     errors_data = json.loads(args.errors) if args.errors else []
@@ -685,7 +685,7 @@ def cmd_stats(args):
         print("Run some encodings first to collect data.")
         sys.exit(1)
 
-    db = ExperimentDB(args.db)
+    db = EncodingDB(args.db)
 
     # Iteration stats
     iter_stats = db.get_iteration_stats()
@@ -730,7 +730,7 @@ def cmd_calibration(args):
         print(f"Database not found: {args.db}")
         sys.exit(1)
 
-    db = ExperimentDB(args.db)
+    db = EncodingDB(args.db)
     runs = db.get_recent_runs(limit=args.limit)
 
     # Filter to runs with review results
@@ -932,7 +932,7 @@ def cmd_runs(args):
         print(f"Database not found: {args.db}")
         sys.exit(1)
 
-    db = ExperimentDB(args.db)
+    db = EncodingDB(args.db)
     runs = db.get_recent_runs(limit=args.limit)
 
     if not runs:
@@ -1334,7 +1334,7 @@ def cmd_encode(args):
     import asyncio
     from datetime import datetime
 
-    from .harness.experiment_db import ExperimentDB
+    from .harness.encoding_db import EncodingDB
     from .harness.sdk_orchestrator import SDKOrchestrator
 
     # Parse citation to get output path
@@ -1364,10 +1364,10 @@ def cmd_encode(args):
 
     # Initialize SDK orchestrator with experiment DB
     args.db.parent.mkdir(parents=True, exist_ok=True)
-    experiment_db = ExperimentDB(args.db)
+    encoding_db = EncodingDB(args.db)
     orchestrator = SDKOrchestrator(
         model=args.model,
-        experiment_db=experiment_db,
+        encoding_db=encoding_db,
     )
 
     print(f"Starting encoding at {datetime.now().strftime('%H:%M:%S')}...")
@@ -1420,7 +1420,7 @@ def cmd_encode(args):
 
 def cmd_session_start(args):
     """Start a new session."""
-    db = ExperimentDB(args.db)
+    db = EncodingDB(args.db)
     session = db.start_session(model=args.model, cwd=args.cwd or str(Path.cwd()))
 
     # Output just the session ID for hooks to capture
@@ -1429,14 +1429,14 @@ def cmd_session_start(args):
 
 def cmd_session_end(args):
     """End a session."""
-    db = ExperimentDB(args.db)
+    db = EncodingDB(args.db)
     db.end_session(args.session)
     print(f"Session {args.session} ended")
 
 
 def cmd_log_event(args):
     """Log an event to a session."""
-    db = ExperimentDB(args.db)
+    db = EncodingDB(args.db)
 
     metadata = {}
     if args.metadata:
@@ -1458,7 +1458,7 @@ def cmd_log_event(args):
 
 def cmd_sessions(args):
     """List recent sessions."""
-    db = ExperimentDB(args.db)
+    db = EncodingDB(args.db)
     sessions = db.get_recent_sessions(limit=args.limit)
 
     if not sessions:
@@ -1477,7 +1477,7 @@ def cmd_sessions(args):
 
 def cmd_session_show(args):
     """Show a session transcript."""
-    db = ExperimentDB(args.db)
+    db = EncodingDB(args.db)
 
     session = db.get_session(args.session_id)
     if not session:
@@ -1537,7 +1537,7 @@ def cmd_session_show(args):
 
 def cmd_session_stats(args):
     """Show session statistics."""
-    db = ExperimentDB(args.db)
+    db = EncodingDB(args.db)
     stats = db.get_session_stats()
 
     print("=== Session Statistics ===")

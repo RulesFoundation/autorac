@@ -1,7 +1,7 @@
 """
 Supabase sync for autorac encoding runs.
 
-Syncs local SQLite experiment DB to Supabase for the public dashboard.
+Syncs local SQLite encoding DB to Supabase for the public dashboard.
 """
 
 import json
@@ -136,19 +136,19 @@ def sync_all_runs(
     Sync all runs from local SQLite to Supabase.
 
     Args:
-        db_path: Path to local experiments.db
+        db_path: Path to local encodings.db
         data_source: REQUIRED - one of 'reviewer_agent', 'ci_only', 'mock', 'manual_estimate'
         client: Optional Supabase client
 
     Returns:
         Dict with sync stats
     """
-    from .harness.experiment_db import ExperimentDB
+    from .harness.encoding_db import EncodingDB
 
     if client is None:
         client = get_supabase_client()
 
-    db = ExperimentDB(db_path)
+    db = EncodingDB(db_path)
     runs = db.get_recent_runs(limit=1000)  # Get all runs
 
     synced = 0
@@ -284,7 +284,9 @@ def sync_transcripts_to_supabase(
     }
 
 
-EXPERIMENTS_DB = Path.home() / "RulesFoundation" / "autorac" / "experiments.db"
+ENCODINGS_DB = Path.home() / "RulesFoundation" / "autorac" / "encodings.db"
+# Backward compat: fall back to old name
+_LEGACY_DB = Path.home() / "RulesFoundation" / "autorac" / "experiments.db"
 
 
 def sync_sdk_sessions_to_supabase(
@@ -292,7 +294,7 @@ def sync_sdk_sessions_to_supabase(
     client: Optional[Client] = None,
 ) -> dict:
     """
-    Sync SDK orchestrator sessions from experiments.db to Supabase.
+    Sync SDK orchestrator sessions from encodings.db to Supabase.
 
     Args:
         session_id: Optional filter by session ID
@@ -303,13 +305,14 @@ def sync_sdk_sessions_to_supabase(
     """
     import sqlite3
 
-    if not EXPERIMENTS_DB.exists():
-        return {"total": 0, "synced": 0, "failed": 0, "error": "No experiments.db"}
+    db_path = ENCODINGS_DB if ENCODINGS_DB.exists() else _LEGACY_DB
+    if not db_path.exists():
+        return {"total": 0, "synced": 0, "failed": 0, "error": "No encodings.db"}
 
     if client is None:
         client = get_supabase_client()
 
-    conn = sqlite3.connect(str(EXPERIMENTS_DB))
+    conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
 
     # Get sessions (SDK sessions start with "sdk-")

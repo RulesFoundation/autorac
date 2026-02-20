@@ -29,7 +29,7 @@ import yaml
 
 from autorac.constants import REVIEWER_CLI_MODEL
 
-from .experiment_db import ExperimentDB, ReviewResult, ReviewResults
+from .encoding_db import EncodingDB, ReviewResult, ReviewResults
 
 
 def run_claude_code(
@@ -203,22 +203,22 @@ class ValidatorPipeline:
         rac_path: Path,
         enable_oracles: bool = True,
         max_workers: int = 4,
-        experiment_db: Optional[ExperimentDB] = None,
+        encoding_db: Optional[EncodingDB] = None,
         session_id: Optional[str] = None,
     ):
         self.rac_us_path = Path(rac_us_path)
         self.rac_path = Path(rac_path)
         self.enable_oracles = enable_oracles
         self.max_workers = max_workers
-        self.experiment_db = experiment_db
+        self.encoding_db = encoding_db
         self.session_id = session_id
 
     def _log_event(
         self, event_type: str, content: str = "", metadata: Optional[dict] = None
     ):
         """Log a validation event if session tracking is enabled."""
-        if self.experiment_db and self.session_id:
-            self.experiment_db.log_event(
+        if self.encoding_db and self.session_id:
+            self.encoding_db.log_event(
                 session_id=self.session_id,
                 event_type=event_type,
                 content=content,

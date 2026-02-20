@@ -20,9 +20,9 @@ from typing import Optional
 from autorac.constants import DEFAULT_CLI_MODEL, DEFAULT_MODEL
 from autorac.prompts.encoder import get_encoder_prompt
 
-from .experiment_db import (
+from .encoding_db import (
+    EncodingDB,
     EncodingRun,
-    ExperimentDB,
     create_run,
 )
 from .validator_pipeline import PipelineResult, ValidatorPipeline
@@ -80,7 +80,7 @@ class EncoderConfig:
 
     rac_us_path: Path
     rac_path: Path
-    db_path: Path = Path("experiments.db")
+    db_path: Path = Path("encodings.db")
     enable_oracles: bool = True
     max_iterations: int = 3
     score_threshold: float = 7.0  # Minimum score to accept
@@ -99,7 +99,7 @@ class EncoderHarness:
 
     def __init__(self, config: EncoderConfig):
         self.config = config
-        self.db = ExperimentDB(config.db_path)
+        self.db = EncodingDB(config.db_path)
         self.pipeline = ValidatorPipeline(
             rac_us_path=config.rac_us_path,
             rac_path=config.rac_path,
