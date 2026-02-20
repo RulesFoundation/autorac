@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from autorac import (
-    ExperimentDB,
+    EncodingDB,
     ReviewResult,
     ReviewResults,
     create_run,
@@ -71,12 +71,12 @@ class TestCreateRun:
         assert run.parent_run_id == "abc12345"
 
 
-class TestExperimentDBInit:
-    """Tests for ExperimentDB initialization."""
+class TestEncodingDBInit:
+    """Tests for EncodingDB initialization."""
 
     def test_creates_database_file(self, temp_db_path):
         """Test that database file is created."""
-        ExperimentDB(temp_db_path)
+        EncodingDB(temp_db_path)
         assert temp_db_path.exists()
 
     def test_creates_tables(self, experiment_db, temp_db_path):
@@ -609,8 +609,8 @@ class TestMigration:
         conn.commit()
         conn.close()
 
-        # Now init ExperimentDB — should migrate
-        ExperimentDB(temp_db_path)
+        # Now init EncodingDB — should migrate
+        EncodingDB(temp_db_path)
 
         # Old table should be gone
         conn = sqlite3.connect(temp_db_path)

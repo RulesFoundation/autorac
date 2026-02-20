@@ -399,7 +399,7 @@ class TestTokenHelpers:
             assert result.output_tokens == 0
 
     def test_sum_tokens_with_data(self, tmp_path):
-        from autorac.harness.experiment_db import TokenUsage
+        from autorac.harness.encoding_db import TokenUsage
 
         with patch.object(SDKOrchestrator, "_find_plugin_path", return_value=tmp_path):
             orch = SDKOrchestrator(api_key="key")
@@ -463,7 +463,7 @@ class TestTokenHelpers:
 
 class TestPrintReport:
     def test_print_report(self, tmp_path):
-        from autorac.harness.experiment_db import TokenUsage
+        from autorac.harness.encoding_db import TokenUsage
 
         with patch.object(SDKOrchestrator, "_find_plugin_path", return_value=tmp_path):
             orch = SDKOrchestrator(api_key="key")
@@ -548,13 +548,13 @@ class TestLogAgentRun:
             orch._log_agent_run("session-id", agent_run)
 
     def test_log_with_db(self, tmp_path):
-        from autorac.harness.experiment_db import ExperimentDB
+        from autorac.harness.encoding_db import EncodingDB
 
-        db = ExperimentDB(tmp_path / "test.db")
+        db = EncodingDB(tmp_path / "test.db")
         session = db.start_session(model="test")
 
         with patch.object(SDKOrchestrator, "_find_plugin_path", return_value=tmp_path):
-            orch = SDKOrchestrator(api_key="key", experiment_db=db)
+            orch = SDKOrchestrator(api_key="key", encoding_db=db)
             agent_run = AgentRun(
                 agent_type="test",
                 prompt="test prompt",
@@ -567,13 +567,13 @@ class TestLogAgentRun:
 
     def test_log_with_tools_and_cost(self, tmp_path):
         """Test _log_agent_run with tool counts and cost."""
-        from autorac.harness.experiment_db import ExperimentDB
+        from autorac.harness.encoding_db import EncodingDB
 
-        db = ExperimentDB(tmp_path / "test.db")
+        db = EncodingDB(tmp_path / "test.db")
         session = db.start_session(model="test")
 
         with patch.object(SDKOrchestrator, "_find_plugin_path", return_value=tmp_path):
-            orch = SDKOrchestrator(api_key="key", experiment_db=db)
+            orch = SDKOrchestrator(api_key="key", encoding_db=db)
             agent_run = AgentRun(
                 agent_type="test",
                 prompt="test",
@@ -603,12 +603,12 @@ class TestLogAgentRun:
 
 class TestLogToDb:
     def test_log_to_db(self, tmp_path):
-        from autorac.harness.experiment_db import ExperimentDB, TokenUsage
+        from autorac.harness.encoding_db import EncodingDB, TokenUsage
 
-        db = ExperimentDB(tmp_path / "test.db")
+        db = EncodingDB(tmp_path / "test.db")
 
         with patch.object(SDKOrchestrator, "_find_plugin_path", return_value=tmp_path):
-            orch = SDKOrchestrator(api_key="key", experiment_db=db)
+            orch = SDKOrchestrator(api_key="key", encoding_db=db)
             run = OrchestratorRun(
                 citation="26 USC 1",
                 session_id="test-session",
@@ -774,12 +774,12 @@ class TestEncodeWorkflow:
     @pytest.mark.asyncio
     async def test_encode_with_experiment_db(self, tmp_path):
         """Encoding with experiment_db logs session."""
-        from autorac.harness.experiment_db import ExperimentDB
+        from autorac.harness.encoding_db import EncodingDB
 
-        db = ExperimentDB(tmp_path / "test.db")
+        db = EncodingDB(tmp_path / "test.db")
 
         with patch.object(SDKOrchestrator, "_find_plugin_path", return_value=tmp_path):
-            orch = SDKOrchestrator(api_key="key", experiment_db=db)
+            orch = SDKOrchestrator(api_key="key", encoding_db=db)
 
             async def mock_run_agent(agent_key, prompt, phase, model):
                 run = AgentRun(
@@ -1242,7 +1242,7 @@ class TestLogToDbNoDB:
         """_log_to_db returns early when no experiment_db."""
         with patch.object(SDKOrchestrator, "_find_plugin_path", return_value=tmp_path):
             orch = SDKOrchestrator(api_key="key")
-            assert orch.experiment_db is None
+            assert orch.encoding_db is None
             run = OrchestratorRun(citation="26 USC 1", session_id="test")
             orch._log_to_db(run)  # Should not raise
 

@@ -77,7 +77,7 @@ responses = await backend.encode_batch(requests, max_concurrent=10)
 |    Tier 2: Oracles (PE/TAXSIM) - fast ~10s, comparison data     |
 |    Tier 3: LLM reviewers - uses oracle context to diagnose       |
 +-----------------------------------------------------------------+
-|  Experiment DB (SQLite)                                           |
+|  Encoding DB (SQLite)                                             |
 +-----------------------------------------------------------------+
 ```
 
@@ -86,7 +86,7 @@ responses = await backend.encode_batch(requests, max_concurrent=10)
 - `src/autorac/prompts/` - Embedded agent prompts (encoder, validator, 4 reviewers)
 - `src/autorac/harness/orchestrator.py` - Main pipeline orchestrator
 - `src/autorac/harness/backends.py` - Encoder backends (ClaudeCode, AgentSDK)
-- `src/autorac/harness/experiment_db.py` - SQLite experiment logging
+- `src/autorac/harness/encoding_db.py` - SQLite encoding session logging
 - `src/autorac/harness/validator_pipeline.py` - Parallel validator execution
 - `src/autorac/harness/encoder_harness.py` - Low-level encoder harness
 - `src/autorac/harness/metrics.py` - Calibration computation

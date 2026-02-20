@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from autorac import (
     CalibrationMetrics,
     CalibrationSnapshot,
-    ExperimentDB,
+    EncodingDB,
     ReviewResult,
     ReviewResults,
     compute_calibration,
@@ -279,7 +279,7 @@ class TestCalibrationTrend:
         """Test saving and retrieving calibration trends."""
         # First need to initialize the calibration_snapshots table
         # by creating the experiment db
-        ExperimentDB(temp_db_path)
+        EncodingDB(temp_db_path)
 
         # Create a snapshot and save it
         snapshot = CalibrationSnapshot(
@@ -311,7 +311,7 @@ class TestCalibrationTrend:
         """Test that trend limit works correctly."""
         import time
 
-        ExperimentDB(temp_db_path)
+        EncodingDB(temp_db_path)
 
         # Create multiple snapshots
         for i in range(5):

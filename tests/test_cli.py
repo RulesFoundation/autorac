@@ -36,9 +36,9 @@ from autorac.cli import (
     cmd_validate,
     main,
 )
-from autorac.harness.experiment_db import (
+from autorac.harness.encoding_db import (
     EncodingRun,
-    ExperimentDB,
+    EncodingDB,
     Iteration,
     IterationError,
     ReviewResult,
@@ -849,7 +849,7 @@ class TestCmdStats:
 
     def test_stats_with_data(self, capsys, tmp_path):
         db_path = tmp_path / "test.db"
-        db = ExperimentDB(db_path)
+        db = EncodingDB(db_path)
         run = EncodingRun(
             citation="26 USC 1",
             file_path="test.rac",
@@ -875,7 +875,7 @@ class TestCmdStats:
 
     def test_stats_with_parse_error(self, capsys, tmp_path):
         db_path = tmp_path / "test.db"
-        db = ExperimentDB(db_path)
+        db = EncodingDB(db_path)
         run = EncodingRun(
             citation="26 USC 1",
             file_path="test.rac",
@@ -898,7 +898,7 @@ class TestCmdStats:
 
     def test_stats_with_import_error(self, capsys, tmp_path):
         db_path = tmp_path / "test.db"
-        db = ExperimentDB(db_path)
+        db = EncodingDB(db_path)
         run = EncodingRun(
             citation="26 USC 1",
             file_path="test.rac",
@@ -921,7 +921,7 @@ class TestCmdStats:
 
     def test_stats_no_errors(self, capsys, tmp_path):
         db_path = tmp_path / "test.db"
-        db = ExperimentDB(db_path)
+        db = EncodingDB(db_path)
         run = EncodingRun(
             citation="26 USC 1",
             file_path="test.rac",
@@ -951,7 +951,7 @@ class TestCmdCalibration:
 
     def test_no_calibration_data(self, capsys, tmp_path):
         db_path = tmp_path / "test.db"
-        ExperimentDB(db_path)
+        EncodingDB(db_path)
         args = MagicMock()
         args.db = db_path
         args.limit = 50
@@ -961,7 +961,7 @@ class TestCmdCalibration:
 
     def test_calibration_with_data(self, capsys, tmp_path):
         db_path = tmp_path / "test.db"
-        db = ExperimentDB(db_path)
+        db = EncodingDB(db_path)
 
         for i in range(3):
             run = EncodingRun(
@@ -1101,7 +1101,7 @@ class TestCmdRuns:
 
     def test_no_runs(self, capsys, tmp_path):
         db_path = tmp_path / "test.db"
-        ExperimentDB(db_path)
+        EncodingDB(db_path)
         args = MagicMock()
         args.db = db_path
         args.limit = 20
@@ -1111,7 +1111,7 @@ class TestCmdRuns:
 
     def test_runs_with_data(self, capsys, tmp_path):
         db_path = tmp_path / "test.db"
-        db = ExperimentDB(db_path)
+        db = EncodingDB(db_path)
         run = EncodingRun(
             citation="26 USC 1",
             file_path="test.rac",
@@ -1506,7 +1506,7 @@ class TestSessionCommands:
 
     def test_session_end(self, capsys, tmp_path):
         db_path = tmp_path / "test.db"
-        db = ExperimentDB(db_path)
+        db = EncodingDB(db_path)
         session = db.start_session(model="test")
         args = MagicMock()
         args.session = session.id
@@ -1517,7 +1517,7 @@ class TestSessionCommands:
 
     def test_log_event(self, capsys, tmp_path):
         db_path = tmp_path / "test.db"
-        db = ExperimentDB(db_path)
+        db = EncodingDB(db_path)
         session = db.start_session(model="test")
         args = MagicMock()
         args.session = session.id
@@ -1532,7 +1532,7 @@ class TestSessionCommands:
 
     def test_log_event_invalid_metadata(self, capsys, tmp_path):
         db_path = tmp_path / "test.db"
-        db = ExperimentDB(db_path)
+        db = EncodingDB(db_path)
         session = db.start_session(model="test")
         args = MagicMock()
         args.session = session.id
@@ -1547,7 +1547,7 @@ class TestSessionCommands:
 
     def test_sessions_list(self, capsys, tmp_path):
         db_path = tmp_path / "test.db"
-        db = ExperimentDB(db_path)
+        db = EncodingDB(db_path)
         session = db.start_session(model="test-model")
         db.end_session(session.id)
 
@@ -1560,7 +1560,7 @@ class TestSessionCommands:
 
     def test_sessions_empty(self, capsys, tmp_path):
         db_path = tmp_path / "test.db"
-        ExperimentDB(db_path)
+        EncodingDB(db_path)
         args = MagicMock()
         args.db = db_path
         args.limit = 20
@@ -1570,7 +1570,7 @@ class TestSessionCommands:
 
     def test_session_show_not_found(self, capsys, tmp_path):
         db_path = tmp_path / "test.db"
-        ExperimentDB(db_path)
+        EncodingDB(db_path)
         args = MagicMock()
         args.session_id = "nonexistent"
         args.db = db_path
@@ -1581,7 +1581,7 @@ class TestSessionCommands:
 
     def test_session_show_text(self, capsys, tmp_path):
         db_path = tmp_path / "test.db"
-        db = ExperimentDB(db_path)
+        db = EncodingDB(db_path)
         session = db.start_session(model="test")
         db.log_event(
             session.id,
@@ -1606,7 +1606,7 @@ class TestSessionCommands:
 
     def test_session_show_json(self, capsys, tmp_path):
         db_path = tmp_path / "test.db"
-        db = ExperimentDB(db_path)
+        db = EncodingDB(db_path)
         session = db.start_session(model="test")
         db.log_event(session.id, "tool_call", content="x" * 600)
 
@@ -1621,7 +1621,7 @@ class TestSessionCommands:
 
     def test_session_stats(self, capsys, tmp_path):
         db_path = tmp_path / "test.db"
-        db = ExperimentDB(db_path)
+        db = EncodingDB(db_path)
         session = db.start_session(model="test")
         db.log_event(session.id, "tool_call", tool_name="Read")
         db.log_event(session.id, "tool_call", tool_name="Write")
@@ -1834,7 +1834,7 @@ class TestCmdCalibrationEdgeCases:
     def test_calibration_all_pass(self, capsys, tmp_path):
         """Test calibration with all reviews passing."""
         db_path = tmp_path / "test.db"
-        db = ExperimentDB(db_path)
+        db = EncodingDB(db_path)
 
         for i in range(3):
             run = EncodingRun(
@@ -1871,7 +1871,7 @@ class TestCmdCalibrationEdgeCases:
     def test_calibration_some_fail(self, capsys, tmp_path):
         """Test calibration with some reviews failing."""
         db_path = tmp_path / "test.db"
-        db = ExperimentDB(db_path)
+        db = EncodingDB(db_path)
 
         for i in range(3):
             run = EncodingRun(

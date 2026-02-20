@@ -15,7 +15,7 @@ sys.path.insert(0, src_path)
 
 from autorac import (
     EncodingRun,
-    ExperimentDB,
+    EncodingDB,
     PipelineResult,
     ReviewResult,
     ReviewResults,
@@ -33,7 +33,7 @@ def temp_db_path():
 @pytest.fixture
 def experiment_db(temp_db_path):
     """Create a temporary experiment database."""
-    return ExperimentDB(temp_db_path)
+    return EncodingDB(temp_db_path)
 
 
 @pytest.fixture

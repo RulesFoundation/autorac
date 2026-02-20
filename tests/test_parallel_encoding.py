@@ -13,7 +13,7 @@ import pytest
 src_path = str(Path(__file__).parent.parent / "src")
 sys.path.insert(0, src_path)
 
-from autorac.harness.experiment_db import TokenUsage
+from autorac.harness.encoding_db import TokenUsage
 from autorac.harness.sdk_orchestrator import (
     AgentRun,
     AnalyzerOutput,
@@ -728,10 +728,10 @@ class TestIncrementalDBLogging:
 
     def test_log_agent_run_writes_to_db(self, orchestrator, tmp_path):
         """_log_agent_run should write agent data to experiment DB immediately."""
-        from autorac.harness.experiment_db import ExperimentDB
+        from autorac.harness.encoding_db import EncodingDB
 
-        db = ExperimentDB(tmp_path / "test.db")
-        orchestrator.experiment_db = db
+        db = EncodingDB(tmp_path / "test.db")
+        orchestrator.encoding_db = db
 
         session_id = "test-session-001"
         db.start_session(model="claude-opus-4-6", cwd="/tmp", session_id=session_id)
@@ -755,7 +755,7 @@ class TestIncrementalDBLogging:
 
     def test_log_agent_run_noop_without_db(self, orchestrator):
         """_log_agent_run should silently no-op when no experiment_db is set."""
-        orchestrator.experiment_db = None
+        orchestrator.encoding_db = None
         agent_run = AgentRun(
             agent_type="encoder",
             prompt="test",
@@ -766,10 +766,10 @@ class TestIncrementalDBLogging:
 
     def test_session_created_at_encode_start(self, orchestrator, tmp_path):
         """DB session should be created at the START of encode(), not the end."""
-        from autorac.harness.experiment_db import ExperimentDB
+        from autorac.harness.encoding_db import EncodingDB
 
-        db = ExperimentDB(tmp_path / "test.db")
-        orchestrator.experiment_db = db
+        db = EncodingDB(tmp_path / "test.db")
+        orchestrator.encoding_db = db
 
         # Track when session is created vs when agent runs
         created_sessions = []

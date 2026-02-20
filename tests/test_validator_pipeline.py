@@ -22,7 +22,7 @@ from autorac import (
     ValidatorPipeline,
     validate_file,
 )
-from autorac.harness.experiment_db import ReviewResults
+from autorac.harness.encoding_db import ReviewResults
 from autorac.harness.validator_pipeline import (
     _REVIEW_JSON_FORMAT,
     FORMULA_REVIEWER_PROMPT,
@@ -259,10 +259,10 @@ class TestValidatorPipelineInit:
         p = ValidatorPipeline(
             rac_us_path=rac_us,
             rac_path=rac,
-            experiment_db=db,
+            encoding_db=db,
             session_id="test-session",
         )
-        assert p.experiment_db == db
+        assert p.encoding_db == db
         assert p.session_id == "test-session"
 
 
@@ -278,7 +278,7 @@ class TestLogEvent:
         p = ValidatorPipeline(
             rac_us_path=rac_us,
             rac_path=rac,
-            experiment_db=db,
+            encoding_db=db,
             session_id="sess-1",
         )
         p._log_event("test_type", "test content", {"key": "val"})
@@ -1606,7 +1606,7 @@ class TestValidate:
             rac_us_path=rac_us,
             rac_path=rac,
             enable_oracles=False,
-            experiment_db=db,
+            encoding_db=db,
             session_id="test-session",
         )
         with patch("autorac.harness.validator_pipeline.subprocess.run") as mock_sub:

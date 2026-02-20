@@ -213,14 +213,14 @@ class TestSyncRunToSupabase:
 
 class TestSyncAllRuns:
     def test_sync_all_runs(self, tmp_path):
-        from autorac.harness.experiment_db import (
+        from autorac.harness.encoding_db import (
             EncodingRun,
-            ExperimentDB,
+            EncodingDB,
             Iteration,
         )
 
         db_path = tmp_path / "test.db"
-        db = ExperimentDB(db_path)
+        db = EncodingDB(db_path)
         run = EncodingRun(
             citation="26 USC 1",
             file_path="test.rac",
@@ -238,14 +238,14 @@ class TestSyncAllRuns:
         assert stats["synced"] >= 1
 
     def test_sync_all_runs_with_failure(self, tmp_path):
-        from autorac.harness.experiment_db import (
+        from autorac.harness.encoding_db import (
             EncodingRun,
-            ExperimentDB,
+            EncodingDB,
             Iteration,
         )
 
         db_path = tmp_path / "test.db"
-        db = ExperimentDB(db_path)
+        db = EncodingDB(db_path)
         run = EncodingRun(
             citation="26 USC 1",
             file_path="test.rac",
@@ -262,10 +262,10 @@ class TestSyncAllRuns:
         assert stats["failed"] >= 1
 
     def test_creates_client_if_not_provided(self, tmp_path):
-        from autorac.harness.experiment_db import ExperimentDB
+        from autorac.harness.encoding_db import EncodingDB
 
         db_path = tmp_path / "test.db"
-        ExperimentDB(db_path)
+        EncodingDB(db_path)
 
         mock_client = MagicMock()
         mock_client.table.return_value.upsert.return_value.execute.return_value = (
