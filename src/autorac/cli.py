@@ -1330,11 +1330,12 @@ def cmd_coverage(args):
 
 
 def cmd_encode(args):
-    """Encode a statute using the self-contained orchestrator."""
+    """Encode a statute using the SDK orchestrator with full logging."""
     import asyncio
     from datetime import datetime
 
-    from .harness.orchestrator import Orchestrator
+    from .harness.experiment_db import ExperimentDB
+    from .harness.sdk_orchestrator import SDKOrchestrator
 
     # Parse citation to get output path
     # Keep original case for subsection letters (a), (b), etc.
@@ -1361,11 +1362,12 @@ def cmd_encode(args):
     # Create output directory
     output_path.mkdir(parents=True, exist_ok=True)
 
-    # Initialize orchestrator with experiment DB
+    # Initialize SDK orchestrator with experiment DB
     args.db.parent.mkdir(parents=True, exist_ok=True)
-    orchestrator = Orchestrator(
+    experiment_db = ExperimentDB(args.db)
+    orchestrator = SDKOrchestrator(
         model=args.model,
-        db_path=args.db,
+        experiment_db=experiment_db,
     )
 
     print(f"Starting encoding at {datetime.now().strftime('%H:%M:%S')}...")
