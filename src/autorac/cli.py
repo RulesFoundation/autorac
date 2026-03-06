@@ -57,9 +57,7 @@ def main():
     )
 
     # log command
-    log_parser = subparsers.add_parser(
-        "log", help="Log an encoding run to encoding DB"
-    )
+    log_parser = subparsers.add_parser("log", help="Log an encoding run to encoding DB")
     log_parser.add_argument("--citation", required=True, help="Legal citation")
     log_parser.add_argument(
         "--file", type=Path, required=True, help="Path to .rac file"

@@ -1437,9 +1437,7 @@ class TestCmdEncode:
 
     def test_encode_with_errors(self, capsys, tmp_path):
         args = self._make_args(tmp_path, citation="26 USC 1", model=None)
-        mock_cls, exit_code = self._run_encode(
-            args, self._make_mock_run(success=False)
-        )
+        mock_cls, exit_code = self._run_encode(args, self._make_mock_run(success=False))
         assert exit_code == 1
 
     def test_encode_path_format(self, capsys, tmp_path):
