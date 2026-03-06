@@ -615,7 +615,8 @@ Output path: {output_path}
 3. **Only statute values** - No indexed/derived/computed values
 
 Write .rac files to the output path. Run tests after each file.
-{DSL_CHEATSHEET}"""
+{DSL_CHEATSHEET}
+{self._build_context_section()}"""
 
     def _parse_analyzer_output(self, analysis_text: str) -> list[SubsectionTask]:
         """Parse analyzer output into structured subsection tasks."""
@@ -781,8 +782,45 @@ Write .rac files to the output path. Run tests after each file.
             parts.append(f"Full statute text (excerpt):\n{statute_text[:5000]}")
 
         parts.append(DSL_CHEATSHEET)
+        context = self._build_context_section()
+        if context:
+            parts.append(context)
 
         return "\n".join(parts)
+
+    # ========================================================================
+    # Encoding context for agents
+    # ========================================================================
+
+    def _build_context_section(self) -> str:
+        """Build a context section pointing agents to past encodings.
+
+        Only useful for CLI backend (agents have filesystem/shell access).
+        API backend agents can't run sqlite3, so returns empty string.
+        """
+        if self.backend != Backend.CLI:
+            return ""
+
+        db_path = (
+            self.encoding_db.db_path
+            if self.encoding_db
+            else Path.home() / "RulesFoundation" / "autorac" / "encodings.db"
+        )
+        rac_us_path = Path.home() / "RulesFoundation" / "rac-us" / "statute"
+
+        return f"""
+
+## Past encoding reference (explore if useful for complex sections)
+
+Encoding DB: {db_path}
+Key table: encoding_runs — columns: citation, rac_content, lessons, iterations_json, review_results_json
+
+Example queries:
+  sqlite3 {db_path} "SELECT citation, lessons FROM encoding_runs WHERE lessons != '' ORDER BY timestamp DESC LIMIT 5"
+  sqlite3 {db_path} "SELECT rac_content FROM encoding_runs WHERE citation LIKE '%21%' AND rac_content != '' LIMIT 1"
+
+Existing .rac files: {rac_us_path}/
+Read any .rac file for reference on style and patterns."""
 
     # ========================================================================
     # Statute text fetching
