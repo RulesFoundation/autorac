@@ -1183,6 +1183,5 @@ class EncodingDB:
         conn.close()
 
 
-
 # Backward compatibility alias
 ExperimentDB = EncodingDB

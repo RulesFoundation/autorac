@@ -656,7 +656,9 @@ class TestAutoracVersion:
         retrieved = experiment_db.get_run(sample_encoding_run.id)
         assert retrieved.autorac_version == "0.2.0"
 
-    def test_version_defaults_empty_for_old_runs(self, experiment_db, sample_encoding_run):
+    def test_version_defaults_empty_for_old_runs(
+        self, experiment_db, sample_encoding_run
+    ):
         """Test that runs without autorac_version default to empty string."""
         sample_encoding_run.autorac_version = ""
         experiment_db.log_run(sample_encoding_run)
