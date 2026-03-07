@@ -464,7 +464,7 @@ class TestCmdCompile:
         mock_ir.variables = {"var1": MagicMock(), "var2": MagicMock()}
 
         mock_parse = MagicMock()
-        mock_convert = MagicMock()
+
         mock_compile = MagicMock(return_value=mock_ir)
         mock_execute = MagicMock()
 
@@ -493,7 +493,7 @@ class TestCmdCompile:
         mock_ir.variables = {"var1": MagicMock()}
 
         mock_parse = MagicMock()
-        mock_convert = MagicMock()
+
         mock_compile = MagicMock(return_value=mock_ir)
         mock_execute = MagicMock()
 
@@ -525,7 +525,7 @@ class TestCmdCompile:
         mock_result.scalars = {"var1": 100}
 
         mock_parse = MagicMock()
-        mock_convert = MagicMock()
+
         mock_compile = MagicMock(return_value=mock_ir)
         mock_execute = MagicMock(return_value=mock_result)
 
@@ -555,7 +555,7 @@ class TestCmdCompile:
         mock_result.scalars = {"var1": 100}
 
         mock_parse = MagicMock()
-        mock_convert = MagicMock()
+
         mock_compile = MagicMock(return_value=mock_ir)
         mock_execute = MagicMock(return_value=mock_result)
 
@@ -635,7 +635,7 @@ class TestCmdBenchmark:
         mock_ir.variables = {"var1": MagicMock(entity=None)}
 
         mock_parse = MagicMock()
-        mock_convert = MagicMock()
+
         mock_compile = MagicMock(return_value=mock_ir)
         mock_execute = MagicMock()
 
@@ -666,7 +666,7 @@ class TestCmdBenchmark:
         mock_ir.variables = {"var1": mock_var}
 
         mock_parse = MagicMock()
-        mock_convert = MagicMock()
+
         mock_compile = MagicMock(return_value=mock_ir)
         mock_execute = MagicMock()
 

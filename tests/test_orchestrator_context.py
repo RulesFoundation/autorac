@@ -110,7 +110,7 @@ class TestCriticalRulesInPrompts:
             citation="26 USC 21",
             output_path=Path("/tmp/test"),
         )
-        assert "COMPILE PRE-FLIGHT" in prompt
+        assert "COMPILE CHECK" in prompt
         assert "autorac test" in prompt
 
     def test_subsection_prompt_has_write_tests(self, cli_orchestrator):
@@ -146,7 +146,7 @@ class TestCriticalRulesInPrompts:
             output_path=Path("/tmp/test"),
             statute_text="Test text",
         )
-        assert "COMPILE PRE-FLIGHT" in prompt
+        assert "COMPILE CHECK" in prompt
         assert "autorac test" in prompt
 
     def test_fallback_prompt_has_write_tests(self, cli_orchestrator):

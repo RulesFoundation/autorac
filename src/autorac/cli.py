@@ -458,7 +458,9 @@ def cmd_compile(args):
         as_of = date_type.today()
 
     try:
-        from rac import parse, compile as rac_compile, execute as rac_execute
+        from rac import compile as rac_compile
+        from rac import execute as rac_execute
+        from rac import parse
 
         # Step 1: Parse
         rac_content = args.file.read_text()
@@ -528,7 +530,9 @@ def cmd_benchmark(args):
         as_of = date_type.today()
 
     try:
-        from rac import parse, compile as rac_compile, execute as rac_execute
+        from rac import compile as rac_compile
+        from rac import execute as rac_execute
+        from rac import parse
 
         # Parse and compile once
         rac_content = args.file.read_text()
