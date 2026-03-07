@@ -907,7 +907,9 @@ Write .rac files to the output path. Run `autorac test` after each file.
         section = parts_list[-1] if parts_list else "root"
         # Strip parentheses for filepath — "24(d)" → "d" (last path component)
         section_clean = section.replace("(", "/").replace(")", "").rstrip("/")
-        root_name = section_clean.split("/")[-1] if "/" in section_clean else section_clean
+        root_name = (
+            section_clean.split("/")[-1] if "/" in section_clean else section_clean
+        )
         root_file = f"{root_name}.rac"
 
         children_lines = []
@@ -997,7 +999,10 @@ Read any .rac file for reference on style and patterns."""
                 a = Arch(db_path=db_path)
                 section = a.get(citation)
                 if section and section.text:
-                    print(f"  Statute text loaded from atlas ({len(section.text)} chars)", flush=True)
+                    print(
+                        f"  Statute text loaded from atlas ({len(section.text)} chars)",
+                        flush=True,
+                    )
                     return section.text
 
                 # Try stripping subsection — e.g. "26 USC 24(d)" → "26 USC 24"
@@ -1005,10 +1010,15 @@ Read any .rac file for reference on style and patterns."""
                 if base_citation != citation:
                     section = a.get(base_citation)
                     if section and section.text:
-                        print(f"  Statute text loaded from atlas via {base_citation} ({len(section.text)} chars)", flush=True)
+                        print(
+                            f"  Statute text loaded from atlas via {base_citation} ({len(section.text)} chars)",
+                            flush=True,
+                        )
                         return section.text
         except ImportError:
-            print("  Warning: atlas not installed, cannot fetch statute text", flush=True)
+            print(
+                "  Warning: atlas not installed, cannot fetch statute text", flush=True
+            )
         except Exception as e:
             print(f"  Warning: atlas fetch failed: {e}", flush=True)
 
