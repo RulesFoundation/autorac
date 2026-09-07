@@ -3653,14 +3653,17 @@ _HEBREW_ORDINAL_CONTEXT_NOUN_PATTERN = re.compile(
 # A present participle ("ממתינה") begins with מ and a future verb ("ישהה")
 # with י; neither is a noun candidate here. The nouns that begin with those
 # letters ("ילדה", "יחידה", "מדרגה", "מיטה") are listed above.
-_HEBREW_FEMININE_WORD_BEFORE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])[\u0590-\u05ff]{2,}[\u05d4\u05ea]\\s+$"
+# A small unit of time after an ordinal-shaped fraction word makes a
+# fractional duration ("עשירית שנייה", "חמישית דקה"); a large one after a
+# noun makes an ordinal with a time adverbial ("מרפאה חמישית שנה לאחר").
+_HEBREW_SMALL_TIME_UNIT_AFTER_PATTERN = re.compile(
+    "\\s+(?:שנייה|שניה|שניות|דקה|דקות|שעה|שעות|שעת)(?![\u0590-\u05ff])"
 )
 # The verbs that govern a duration ("ממתינה עשירית שנייה", "תשהה עשירית
 # שנייה", "יופעל", "יידחה"): a word before the fraction word that is one of
 # these is a verb whatever its ending, and what follows is a duration.
 _HEBREW_DURATION_VERB_BEFORE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?:"
+    "(?<![\u0590-\u05ff])(?:\u05d5|\u05e9|כש|וכש)?(?:"
     "ממתין|ממתינה|ממתינים|ממתינות|המתין|המתינה|המתינו|ימתין|תמתין|ימתינו|להמתין|"
     "שוהה|שוהים|שוהות|שהה|שהתה|שהו|ישהה|תשהה|ישהו|לשהות|"
     "מופעל|מופעלת|הופעל|הופעלה|יופעל|תופעל|יופעלו|"
@@ -3671,22 +3674,26 @@ _HEBREW_DURATION_VERB_BEFORE_PATTERN = re.compile(
     "נפסק|נפסקת|נפסקה|ייפסק|תיפסק|נמשך|נמשכת|נמשכה|יימשך|תימשך|"
     "מתחיל|מתחילה|החל|החלה|יחל|תחל|יתחיל|תתחיל|"
     "נכנס|נכנסת|נכנסה|ייכנס|תיכנס|חל|חלה|יחול|תחול|"
+    "פועל|פועלת|פעל|פעלה|פעלו|יפעל|תפעל|יפעלו|"
     "ישולם|תשולם|שולם|שולמה|ישלם|תשלם|יינתן|תינתן|ניתן|ניתנה|יועבר|תועבר)\\s+$"
 )
 
 
-def _hebrew_feminine_noun_before(text: str, start: int) -> bool:
-    """Whether a feminine noun the ordinal may modify stands right before ``start``.
+def _hebrew_ordinal_context(text: str, start: int, unit_position: int) -> bool:
+    """Whether an ordinal-shaped fraction word before a time unit is an ordinal.
 
-    A listed noun, or a word ending in ה or ת that is not a verb governing
-    a duration: "מרפאה חמישית שנה לאחר" is a fifth clinic, "המתינה עשירית
-    שנייה לאחר" waits a tenth of a second.
+    A listed noun the ordinal modifies right before it says ordinal ("לידה
+    חמישית שנה לאחר"); a verb that governs a duration, with or without a
+    conjunction prefix, says duration ("והמתינה עשירית שנייה לאחר"); failing
+    both, the unit decides -- a fraction of a second, a minute or an hour is
+    a duration ("פעלה עשירית שנייה לאחר"), while a fifth something a year or
+    a month after is an ordinal ("מרפאה חמישית שנה לאחר").
     """
     if _search_before(_HEBREW_ORDINAL_CONTEXT_NOUN_PATTERN, text, start) is not None:
         return True
     if _search_before(_HEBREW_DURATION_VERB_BEFORE_PATTERN, text, start) is not None:
         return False
-    return _search_before(_HEBREW_FEMININE_WORD_BEFORE_PATTERN, text, start) is not None
+    return _HEBREW_SMALL_TIME_UNIT_AFTER_PATTERN.match(text, unit_position) is None
 
 
 _HEBREW_TEMPORAL_AFTER_UNIT_PATTERN = re.compile(
@@ -3715,9 +3722,9 @@ def _hebrew_fraction_unit_after(text: str, position: int, start: int) -> bool:
     # one: no clause context, and a noun the ordinal modifies right before
     # ("לידה חמישית שנה לאחר"); "המכשיר יופעל עשירית שנייה לאחר קבלת האות"
     # is a tenth of a second.
-    return _hebrew_fraction_context_before(
-        text, start
-    ) or not _hebrew_feminine_noun_before(text, start)
+    return _hebrew_fraction_context_before(text, start) or not _hebrew_ordinal_context(
+        text, start, position
+    )
 
 
 # Every word the numeric grammar reads, for the guards below.
@@ -3871,7 +3878,7 @@ _HEBREW_STRUCTURAL_PLURAL_NOUNS = (
 # guard ("תוספת 1, 2 או 3 שקלים"); "סעיף 5, 2 או 3 אחוזים" keeps section 5.
 _HEBREW_STRUCTURAL_SUPPLEMENT_NOUN = "תוספת"
 _HEBREW_CITATION_BEFORE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?:(?:לפי|על פי|מכוח)\\s+|בהתאם\\s+ל|(?:כאמור|האמור|כמפורט|המפורט|הקבוע|הקבועה|המנויה)\\s+ב)$"
+    "(?<![\u0590-\u05ff])(?:(?:לפי|על\\s+פי|מכוח)\\s+|בהתאם\\s+ל|(?:כאמור|האמור|כמפורט|המפורט|הקבוע|הקבועה|המנויה)\\s+ב)$"
 )
 _HEBREW_STRUCTURAL_SINGULAR_NOUNS = (
     "פרק|תוספת|חלק|סימן|סעיף קטן|סעיף|פסקת משנה|פסקה|לוח|טור|פרט|תקנה"
@@ -3887,7 +3894,7 @@ _HEBREW_STRUCTURAL_REFERENCE_PATTERN = re.compile(
     # A cited "תוספת" -- "לפי תוספת 5", "בהתאם לתוספת 5", "כאמור בתוספת 5",
     # with any whitespace after the citation word -- is a schedule; the
     # citation word joins the span.
-    "(?:(?:לפי|על פי|מכוח)\\s+|(?:בהתאם|כאמור|האמור|כמפורט|המפורט|הקבוע|הקבועה|המנויה)"
+    "(?:(?:לפי|על\\s+פי|מכוח)\\s+|(?:בהתאם|כאמור|האמור|כמפורט|המפורט|הקבוע|הקבועה|המנויה)"
     "\\s+)[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}\u05d4?"
     + _HEBREW_STRUCTURAL_SUPPLEMENT_NOUN
     + "\\s+(?:"
@@ -3938,11 +3945,10 @@ _HEBREW_STRUCTURAL_REFERENCE_PATTERN = re.compile(
     + ")"
     # A singular noun takes one item, or a pair joined by a conjunction --
     # never a comma, which ends the reference ("סעיף 1, 100 שקלים").
-    # A supplement: "תוספת" that no citation word precedes, with or without a
-    # prefix ("הקצבה תוגדל בתוספת 1, 2 או 3 אחוזים").
-    "|(?<!לפי\\s)(?<!לפי\\s\\s)(?<!לפי\\s\\s\\s)(?<!על פי\\s)(?<!על פי\\s\\s)(?<!על פי\\s\\s\\s)(?<!מכוח\\s)(?<!מכוח\\s\\s)(?<!מכוח\\s\\s\\s)(?<!בהתאם ל)(?<!כאמור ב)(?<!האמור ב)(?<!כמפורט ב)(?<!המפורט ב)(?<!הקבוע ב)(?<!הקבועה ב)(?<!המנויה ב)"
-    + _HEBREW_STRUCTURAL_SUPPLEMENT_NOUN
-    + "\\s+"
+    # A supplement: "תוספת" with or without a prefix ("הקצבה תוגדל בתוספת 1, 2
+    # או 3 אחוזים"). A cited one is taken by the citation branch first, which
+    # the scan reaches earlier.
+    "|" + _HEBREW_STRUCTURAL_SUPPLEMENT_NOUN + "\\s+"
     "(?:"
     + _HEBREW_STRUCTURAL_DIGIT_ITEM
     + _HEBREW_STRUCTURAL_NOT_A_QUANTITY_TAILED
