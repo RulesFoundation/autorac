@@ -3914,9 +3914,13 @@ def _iter_hebrew_shared_scale_range_matches(
             earlier_join = _search_before(
                 _HEBREW_RANGE_WALK_JOIN_PATTERN, text, cursor, 12
             )
-            if earlier_join is None:
+            if earlier_join is not None:
+                earlier_flush = len(text[: earlier_join.start()].rstrip())
+            elif cursor > 0 and text[cursor] == "\u05d5" and text[cursor - 1].isspace():
+                # A vav on the endpoint itself ("אחד ושניים ושלושה מיליון").
+                earlier_flush = len(text[:cursor].rstrip())
+            else:
                 break
-            earlier_flush = len(text[: earlier_join.start()].rstrip())
             earlier_printed = _search_before(
                 _HEBREW_DIGITS_BEFORE_PATTERN, text, earlier_flush, 32
             )

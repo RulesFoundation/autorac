@@ -18374,6 +18374,21 @@ def test_a_shared_scale_list_ending_with_a_vav_join():
         assert not ({1.0, 2.0, 200_000_000.0} & extract_numbers_from_text(text)), text
 
 
+def test_a_shared_scale_list_with_attached_vav_joins():
+    for text, expected in (
+        (
+            "הסכומים הם אחד ושניים ושלושה מיליון שקלים, בהתאמה",
+            {1_000_000.0, 2_000_000.0, 3_000_000.0},
+        ),
+        ("השיעורים הם אחד ושניים ושלושה אלפים אחוזים, בהתאמה", {10.0, 20.0, 30.0}),
+        ("הסכומים הם 1 ו־2 ו־3 מיליון שקלים", {1_000_000.0, 2_000_000.0, 3_000_000.0}),
+        ("הסכום הוא מאה ושלושה מיליון שקלים", {103_000_000.0}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+        assert not ({1.0, 2.0, 100.0} & extract_numbers_from_text(text)), text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
