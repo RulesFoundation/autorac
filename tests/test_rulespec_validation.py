@@ -16918,6 +16918,85 @@ def test_descending_scales_compose_into_one_number():
         assert _hebrew_recall(text) == {expected}, (text, _hebrew_recall(text))
 
 
+def test_a_range_preposition_before_a_scale_word_is_not_a_multiplier():
+    # "בין 3 למיליון" runs between 3 and a million; the prefixed scale word
+    # is the range's far endpoint, not the multiplier's scale.
+    for text, expected in (
+        ("סכום שבין 3 למיליון שקלים", {3.0, 1_000_000.0}),
+        ("בין 3 למיליון שקלים", {3.0, 1_000_000.0}),
+        ("מ־3 עד מיליון שקלים", {3.0, 1_000_000.0}),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert expected <= grounded and 3_000_000.0 not in grounded, (text, grounded)
+        assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+
+
+def test_a_printed_multiplier_composes_with_descending_spelled_scales():
+    for text, expected in (
+        ("סכום של 3 מיליון ומאתיים אלף שקלים", 3_200_000.0),
+        ("סכום של 2 מיליארד וחמש מאות מיליון שקלים", 2_500_000_000.0),
+        ("סכום של 3 מיליון וחצי שקלים", 3_500_000.0),
+        ("סכום של 1 מיליון ומאתיים אלף וחמש מאות שקלים", 1_200_500.0),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert grounded == {expected}, (text, grounded)
+        assert _hebrew_recall(text) == {expected}, (text, _hebrew_recall(text))
+    # A small spelled remainder composes too: three million and ten.
+    assert _hebrew_recall("סכום של 3 מיליון ועשרה שקלים") == {3_000_010.0}
+
+
+def test_a_fractional_or_mixed_multiplier_reads_with_its_scale():
+    for text, expected in (
+        ("סכום של חצי מיליון שקלים", 500_000.0),
+        ("סכום של מחצית מיליון שקלים", 500_000.0),
+        ("סכום של רבע מיליארד שקלים", 250_000_000.0),
+        ("סכום של שלושה וחצי מיליון שקלים", 3_500_000.0),
+        ("סכום של שניים ורבע מיליון שקלים", 2_250_000.0),
+        ("סכום של חצי מיליון ומאתיים אלף שקלים", 700_000.0),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert grounded == {expected}, (text, grounded)
+        assert _hebrew_recall(text) == {expected}, (text, _hebrew_recall(text))
+    # A bare fraction before a noun that is no scale word stays a fraction.
+    assert _hebrew_recall("חצי נקודת זיכוי") == {0.5}
+
+
+def test_an_irregular_feminine_noun_keeps_both_readings():
+    # A fund, a city or a road is feminine without ending in ה or ת, so a
+    # fifth fund a year after, or a fund a fifth of a year after, both
+    # stand; a plural or a masculine word before the fraction word does not.
+    for text in (
+        "נפתחה קרן חמישית שנה לאחר הקמת הקרן הקודמת",
+        "הוקמה עיר חמישית שנה לאחר הקמת העיר הקודמת",
+        "נסללה בעיר דרך חמישית שנה לאחר סלילת הדרך הקודמת",
+    ):
+        assert _hebrew_recall_with_alternatives(text) == {(5.0, (0.2,))}, (
+            text,
+            _hebrew_recall_with_alternatives(text),
+        )
+    for text in (
+        "הקרנות נסגרו חמישית שנה לאחר הקמתן",
+        "הקרן נסגרה חמישית שנה לאחר הקמתה",
+    ):
+        recall = _hebrew_recall_with_alternatives(text)
+        assert recall in ({(0.2, ())}, {(5.0, (0.2,))}), (text, recall)
+    assert _hebrew_recall_with_alternatives("הקרנות נסגרו חמישית שנה לאחר הקמתן") == {
+        (0.2, ())
+    }
+
+
+def test_a_construct_thousand_counts_its_multiplier():
+    for text, expected in (
+        ("שלושת אלפי השקלים", 3_000.0),
+        ("סכום של חמשת אלפי שקלים", 5_000.0),
+        ("סכום של שלושה מיליוני שקלים", 3_000_000.0),
+        ("סכום של שני מיליארדי שקלים", 2_000_000_000.0),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert grounded == {expected}, (text, grounded)
+        assert _hebrew_recall(text) == {expected}, (text, _hebrew_recall(text))
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

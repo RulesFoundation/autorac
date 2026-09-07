@@ -2004,6 +2004,7 @@ def _hebrew_alternation(words: Iterable[str]) -> str:
 _HEBREW_SCALE_VALUES = {
     "מאות": 100.0,
     "אלפים": 1000.0,
+    "אלפי": 1000.0,
     "אלף": 1000.0,
     **_HEBREW_MILLION_WORDS,
     **_HEBREW_BILLION_WORDS,
@@ -2242,6 +2243,25 @@ def _parse_hebrew_number_run(
                 and word_at(position + 1) in scale_words
             ):
                 count = (position + 1, scale_counts[word], {"unit"})
+            if count is None and word in _HEBREW_MIXED_FRACTION_VALUES:
+                # A fractional multiplier: "חצי מיליון" is 500,000.
+                count = (
+                    position + 1,
+                    _HEBREW_MIXED_FRACTION_VALUES[word],
+                    {"fraction"},
+                )
+            elif (
+                count is not None
+                and has_vav(count[0])
+                and words[count[0]][1:] in _HEBREW_MIXED_FRACTION_VALUES
+                and word_at(count[0] + 1) in scale_words
+            ):
+                # A mixed multiplier: "שלושה וחצי מיליון" is 3,500,000.
+                count = (
+                    count[0] + 1,
+                    count[1] + _HEBREW_MIXED_FRACTION_VALUES[words[count[0]][1:]],
+                    count[2] | {"fraction"},
+                )
             scale_word = word_at(count[0]) if count is not None else None
             if count is None or scale_word not in scale_words:
                 return None
@@ -2872,14 +2892,21 @@ _HEBREW_PRINTED_SCALE_PATTERN = re.compile(
         re.escape(w)
         for w in sorted(_HEBREW_MIXED_FRACTION_VALUES, key=len, reverse=True)
     )
-    + "))?\\s+[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}(?P<scale>"
+    + "))?\\s+(?P<scale>"
     + _hebrew_alternation(
         set(_HEBREW_BILLION_WORDS)
         | set(_HEBREW_MILLION_WORDS)
         | {"אלף", "אלפים", "אלפי"}
     )
-    + ")(?![\u0590-\u05ff])"
+    + ")(?![\u0590-\u05ff])(?:\\s+\u05d5(?P<after_tail>"
+    + "|".join(
+        re.escape(w)
+        for w in sorted(_HEBREW_MIXED_FRACTION_VALUES, key=len, reverse=True)
+    )
+    + "))?"
 )
+# The whitespace before a vav-bound spelled remainder ("3 מיליון ומאתיים אלף").
+_HEBREW_SPELLED_REMAINDER_GAP_PATTERN = re.compile("\\s+(?=\u05d5[\u0590-\u05ff])")
 _HEBREW_PRINTED_SCALE_VALUES = {
     **_HEBREW_BILLION_WORDS,
     **_HEBREW_MILLION_WORDS,
@@ -2889,19 +2916,66 @@ _HEBREW_PRINTED_SCALE_VALUES = {
 }
 
 
+def _hebrew_spelled_remainder_after(
+    text: str, end: int, scale: float
+) -> tuple[int, float] | None:
+    """A vav-bound spelled amount below ``scale`` right after ``end``.
+
+    "3 מיליון ומאתיים אלף" continues a printed multiplier with the next
+    scales down. Returns (its end, its value) or None.
+    """
+    gap = _HEBREW_SPELLED_REMAINDER_GAP_PATTERN.match(text, end)
+    if gap is None:
+        return None
+    tokens: list[tuple[int, int, str]] = []
+    for match in _HEBREW_WORD_TOKEN_PATTERN.finditer(text, gap.end()):
+        if not tokens and match.start() != gap.end():
+            return None
+        if tokens and text[tokens[-1][1] : match.start()].strip() != "":
+            break
+        tokens.append((match.start(), match.end(), match.group(0)))
+        if len(tokens) >= 16:
+            break
+    if not tokens:
+        return None
+    parsed = _parse_hebrew_number_run([token[2] for token in tokens], 0)
+    if parsed is None:
+        return None
+    consumed, value, _kinds = parsed
+    if not 0 < value < scale:
+        return None
+    return tokens[consumed - 1][1], value
+
+
 def _iter_hebrew_printed_scale_matches(
     text: str,
 ) -> list[tuple[tuple[int, int], float]]:
-    """Printed multipliers with a Hebrew scale word, as one amount each."""
+    """Printed multipliers with a Hebrew scale word, as one amount each.
+
+    A scale word carrying a prefix is not a multiplier's scale: "בין 3
+    למיליון" runs between 3 and a million, and each endpoint stands on its
+    own. A fractional tail after the scale word scales with it ("3 מיליון
+    וחצי"), and descending spelled scales after it compose ("3 מיליון
+    ומאתיים אלף" is 3,200,000).
+    """
     matches: list[tuple[tuple[int, int], float]] = []
     for match in _HEBREW_PRINTED_SCALE_PATTERN.finditer(text):
+        scale = _HEBREW_PRINTED_SCALE_VALUES[match.group("scale")]
         value = float(match.group("number").replace(",", ""))
         if match.group("tail"):
             value += _HEBREW_MIXED_FRACTION_VALUES[match.group("tail")]
-        value *= _HEBREW_PRINTED_SCALE_VALUES[match.group("scale")]
+        value *= scale
+        end = match.end()
+        if match.group("after_tail"):
+            value += _HEBREW_MIXED_FRACTION_VALUES[match.group("after_tail")] * scale
+        else:
+            remainder = _hebrew_spelled_remainder_after(text, end, scale)
+            if remainder is not None:
+                end, remainder_value = remainder
+                value += remainder_value
         if match.group("sign"):
             value = -value
-        matches.append((match.span(), value))
+        matches.append(((match.start(), end), value))
     return matches
 
 
@@ -3790,9 +3864,72 @@ _HEBREW_ORDINAL_CONTEXT_NOUN_PATTERN = re.compile(
 # A small unit of time after an ordinal-shaped fraction word makes a
 # fractional duration ("עשירית שנייה", "חמישית דקה"); a large one after a
 # noun makes an ordinal with a time adverbial ("מרפאה חמישית שנה לאחר").
-_HEBREW_FEMININE_WORD_BEFORE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])[\u0590-\u05ff]{2,}[\u05d4\u05ea]\\s+$"
+_HEBREW_WORD_BEFORE_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])(?P<word>[\u0590-\u05ff]{2,})\\s+$"
 )
+# Feminine singular nouns that end in neither ה nor ת: a fund, a city, a
+# land, a road, a stone, a wind, a soul, a cup, a fire, the sun, an eye, a
+# hand, a foot, an ear, a belly, a shoulder, a knee, a tooth, a tongue, a
+# bone, a bird, a square, a well, a vine, an arm, a yard, a wing, a time,
+# a finger, a palm.
+_HEBREW_IRREGULAR_FEMININE_NOUNS = frozenset(
+    {
+        "קרן",
+        "עיר",
+        "ארץ",
+        "דרך",
+        "אבן",
+        "רוח",
+        "נפש",
+        "כוס",
+        "אש",
+        "שמש",
+        "עין",
+        "יד",
+        "רגל",
+        "אוזן",
+        "בטן",
+        "כתף",
+        "ברך",
+        "שן",
+        "לשון",
+        "עצם",
+        "ציפור",
+        "צפור",
+        "כיכר",
+        "באר",
+        "גפן",
+        "זרוע",
+        "חצר",
+        "כנף",
+        "פעם",
+        "אצבע",
+        "כף",
+    }
+)
+_HEBREW_NOUN_PREFIX_LETTERS = frozenset("הבלמושכ")
+
+
+def _hebrew_word_before_can_be_feminine_singular(text: str, start: int) -> bool:
+    """Whether the word before ``start`` can be a feminine singular noun.
+
+    The regular shape ends in ה or ת; the irregular nouns are listed, and
+    read through up to two clitic prefixes ("הקרן", "בעיר", "ולדרך").
+    Without a word before it, nothing can carry the ordinal.
+    """
+    match = _search_before(_HEBREW_WORD_BEFORE_PATTERN, text, start)
+    if match is None:
+        return False
+    word = match.group("word")
+    if word[-1] in "\u05d4\u05ea":
+        return True
+    return any(
+        word[cut:] in _HEBREW_IRREGULAR_FEMININE_NOUNS
+        and all(letter in _HEBREW_NOUN_PREFIX_LETTERS for letter in word[:cut])
+        for cut in range(3)
+    )
+
+
 _HEBREW_SMALL_TIME_UNIT_AFTER_PATTERN = re.compile(
     "\\s+(?:שנייה|שניה|שניות|דקה|דקות|שעה|שעות|שעת)(?![\u0590-\u05ff])"
 )
@@ -3832,10 +3969,11 @@ def _hebrew_ordinal_context(text: str, start: int, unit_position: int) -> str:
     if _search_before(_HEBREW_DURATION_VERB_BEFORE_PATTERN, text, start) is not None:
         return "duration"
     # Agreement: a feminine singular ordinal modifies a feminine singular
-    # noun, which ends in ה or ת. A word before it of any other shape --
-    # a plural ("העובדים נעדרו"), a masculine singular ("העובד נעדר") --
-    # cannot be that noun, and the fraction word reads as a duration.
-    if _search_before(_HEBREW_FEMININE_WORD_BEFORE_PATTERN, text, start) is None:
+    # noun -- the regular shape ends in ה or ת, and the irregular nouns
+    # ("קרן", "עיר") are listed. A word before it that can be neither, a
+    # plural ("העובדים נעדרו") or a masculine singular ("העובד נעדר"),
+    # cannot carry the ordinal, and the fraction word reads as a duration.
+    if not _hebrew_word_before_can_be_feminine_singular(text, start):
         return "duration"
     return "ambiguous"
 
