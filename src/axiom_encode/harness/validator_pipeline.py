@@ -2742,13 +2742,20 @@ def _iter_hebrew_compound_number_matches(
             ):
                 index += 1
                 continue
-            parsed = _parse_hebrew_number_run(
-                words,
-                index,
-                _hebrew_money_context_before(text, tokens[start + index][0]),
-                text_separate_after,
+            run_money_context = _hebrew_money_context_before(
+                text, tokens[start + index][0]
             )
-            if parsed is not None and parsed[2] & _HEBREW_SCALE_KINDS:
+            parsed = _parse_hebrew_number_run(
+                words, index, run_money_context, text_separate_after
+            )
+            # Under a money amount the words up to a percent-marked word
+            # count a rate of their own; without one the whole scaled count
+            # is the rate ("שלושת אלפים וחמש מאות%" is 3,500 percent).
+            if (
+                parsed is not None
+                and parsed[2] & _HEBREW_SCALE_KINDS
+                and run_money_context
+            ):
                 marked = next(
                     (
                         offset
@@ -3215,6 +3222,13 @@ def _iter_hebrew_percent_phrase_matches(
                 _SLASH_BEFORE_NUMBER_PATTERN, text, match.start("digits")
             ):
                 continue
+            # A remainder of a printed scale amount before it ("3 אלפים
+            # ו־200 אחוזים" is 3,200 percent) is the printed pass's, unless
+            # a money amount makes the digits a rate of their own.
+            if _hebrew_digits_continue_printed_scale_amount(
+                text, match.start("digits")
+            ):
+                continue
             count_value = float(match.group("digits").replace(",", ""))
             digits_start = match.start("digits")
             if _hebrew_unary_sign_at(text, digits_start - 1):
@@ -3283,16 +3297,20 @@ def _iter_hebrew_percent_phrase_matches(
             # multiplier ("3 אלפים אחוזים וחצי"): the printed pass reads
             # the whole rate, tail included; a count of one is not it.
             continue
-        if count_value is not None and mixed is None:
-            # A count that begins with a scale word a printed multiplier
-            # precedes ("1.5 מיליון אחוזים") is that multiplier's: the
-            # printed pass reads the whole rate.
-            first = _HEBREW_WORD_TOKEN_PATTERN.match(text, count_start)
+        if count_value is not None and mixed is None and run:
+            # A run that begins with a scale word a printed multiplier
+            # precedes ("1.5 מיליון אחוזים", "3 אלפים וחמש מאות אחוזים") is
+            # that multiplier's, remainder and all: the printed pass reads
+            # the whole rate. Under a money amount the remainder counts a
+            # rate of its own ("סכום של 3 מיליון ועשרים אחוזים").
+            run_head = run[0]
             if (
-                first is not None
-                and first.group(0) in _HEBREW_SCALE_VALUES
-                and _search_before(_HEBREW_DIGITS_BEFORE_PATTERN, text, count_start, 32)
+                run_head.group(0) in _HEBREW_SCALE_VALUES
+                and _search_before(
+                    _HEBREW_DIGITS_BEFORE_PATTERN, text, run_head.start(), 32
+                )
                 is not None
+                and not _hebrew_money_context_before(text, run_head.start())
             ):
                 continue
         if count_value is None and tail is None and tail_count is None:
@@ -3370,6 +3388,34 @@ _HEBREW_PRINTED_SCALE_PATTERN = re.compile(
 # The conjunction before a printed lower-scale remainder: "3 מיליון ו־200
 # אלף", "ו-200", "ו 200".
 _HEBREW_PRINTED_REMAINDER_JOIN_PATTERN = re.compile("\\s+\u05d5[\u05be-]?\\s*")
+_HEBREW_PRINTED_REMAINDER_JOIN_BEFORE_PATTERN = re.compile("\\s+\u05d5[\u05be-]?\\s*$")
+
+
+def _hebrew_digits_continue_printed_scale_amount(text: str, position: int) -> bool:
+    """Whether the digits at ``position`` are a remainder of a printed scale amount.
+
+    "3 אלפים ו־200": the 200 continues the 3,000, and whatever unit follows
+    belongs to the whole. Under a money amount the digits count a rate or a
+    quantity of their own instead.
+    """
+    join = _search_before(
+        _HEBREW_PRINTED_REMAINDER_JOIN_BEFORE_PATTERN, text, position, 6
+    )
+    if join is None:
+        return False
+    scale_end = len(text[: join.start()].rstrip())
+    scale_word = _search_before(_HEBREW_SCALE_WORD_BEFORE_PATTERN, text, scale_end, 24)
+    if scale_word is None:
+        return False
+    multiplier_end = len(text[: scale_word.start()].rstrip())
+    return _search_before(
+        _HEBREW_DIGITS_BEFORE_PATTERN, text, multiplier_end, 32
+    ) is not None and not _hebrew_money_context_before(text, scale_word.start())
+
+
+_HEBREW_SCALE_WORD_BEFORE_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])(?:" + _HEBREW_PRINTED_SCALE_WORDS + ")\\s*$"
+)
 # A printed remainder below every scale: "3 מיליון ו־200 שקלים" is
 # 3,000,200. Not a rate ("ו־20 אחוזים", "ו־20%"), not another multiplier.
 _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN = re.compile(
@@ -3394,6 +3440,24 @@ _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN = re.compile(
     + _HEBREW_PRINTED_SCALE_WORDS
     + "|אחוז)[\u0590-\u05ff]*)"
 )
+
+
+# Outside a money context a percent unit after the remainder makes the whole
+# a rate ("3 אלפים ו־200 אחוזים" is 3,200 percent), so the remainder is read
+# without the percent lookaheads and the unit is read after it.
+_HEBREW_PRINTED_PLAIN_REMAINDER_ANY_PATTERN = re.compile(
+    _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN.pattern.replace(
+        "(?![\\d.,/\u2044%])(?!\\s*[/\u2044%])", "(?![\\d.,/\u2044])(?!\\s*[/\u2044])"
+    ).replace("|אחוז)[\u0590-\u05ff]*)", ")[\u0590-\u05ff]*)")
+)
+
+
+def _hebrew_printed_plain_remainder_pattern(money_context: bool) -> "re.Pattern[str]":
+    return (
+        _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN
+        if money_context
+        else _HEBREW_PRINTED_PLAIN_REMAINDER_ANY_PATTERN
+    )
 
 
 def _hebrew_printed_plain_remainder_value(match: "re.Match[str]") -> float | None:
@@ -3646,11 +3710,13 @@ def _hebrew_spelled_remainder_after(
         # "ושני שלישים" is two thirds, a fraction with its own reading, not
         # a remainder of two.
         return None
-    if _HEBREW_PERCENT_WORD_PATTERN.match(text, tokens[consumed - 1][1]) is not None:
-        # "ועשרים אחוזים" is a rate, not a remainder of twenty.
-        return None
-    if _HEBREW_PERCENT_SIGN_AFTER_PATTERN.match(text, tokens[consumed - 1][1]):
-        # "ועשרים%" likewise.
+    if money_context and (
+        _HEBREW_PERCENT_WORD_PATTERN.match(text, tokens[consumed - 1][1]) is not None
+        or _HEBREW_PERCENT_SIGN_AFTER_PATTERN.match(text, tokens[consumed - 1][1])
+    ):
+        # "סכום של 3 מיליון ועשרים אחוזים": the twenty counts a rate, not
+        # the million's remainder. Without a money amount the whole is the
+        # rate: "3 אלפים וחמש מאות אחוזים" is 3,500 percent.
         return None
     if money_context and _HEBREW_SEPARATE_QUANTITY_AFTER_PATTERN.match(
         text, _hebrew_printed_continuation_end(text, tokens[consumed - 1][1])
@@ -3693,7 +3759,8 @@ def _hebrew_percent_unit_after(text: str, end: int) -> tuple[int, float] | None:
     if unit is None:
         return None
     tail = _HEBREW_PERCENT_TAIL_AFTER_PATTERN.match(text, unit.end())
-    if tail is None:
+    if tail is None or _HEBREW_UNIT_AFTER_PATTERN.match(text, tail.end()):
+        # "אחוזים וחצי שקל": the half is the shekel's, not the rate's.
         return unit.end(), 0.0
     if tail.group("tail"):
         return tail.end(), _HEBREW_MIXED_FRACTION_VALUES[tail.group("tail")]
@@ -3895,7 +3962,7 @@ def _iter_hebrew_printed_scale_matches(
             value += next_value
             end, floor = next_end, next_floor
             index += 1
-        plain = _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN.match(text, end)
+        plain = _hebrew_printed_plain_remainder_pattern(money_context).match(text, end)
         if (
             plain is not None
             and money_context
@@ -3930,9 +3997,12 @@ def _iter_hebrew_printed_scale_matches(
             or _span_overlaps((spelled_start, spelled_end), part_spans)
         ):
             continue
-        plain = _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN.match(text, spelled_end)
+        spelled_money = _hebrew_money_context_before(text, spelled_start)
+        plain = _hebrew_printed_plain_remainder_pattern(spelled_money).match(
+            text, spelled_end
+        )
         if plain is None or (
-            _hebrew_money_context_before(text, spelled_start)
+            spelled_money
             and _HEBREW_SEPARATE_QUANTITY_AFTER_PATTERN.match(text, plain.end())
         ):
             continue
@@ -8281,8 +8351,12 @@ def _iter_direct_percentage_rate_matches(
     values: list[tuple[tuple[int, int], float]] = []
     for match in _DIRECT_PERCENTAGE_PATTERN.finditer(text):
         # The denominator of a fraction before the sign ("1/2%", "1 ⁄ 2%")
-        # is no rate of its own; the fraction is read whole elsewhere.
+        # is no rate of its own; the fraction is read whole elsewhere. Nor
+        # is a remainder of a Hebrew printed scale amount ("3 אלפים ו־200%"
+        # is 3,200 percent).
         if _search_before(_SLASH_BEFORE_NUMBER_PATTERN, text, match.start("number"), 8):
+            continue
+        if _hebrew_digits_continue_printed_scale_amount(text, match.start("number")):
             continue
         for value in _iter_percentage_numeric_phrase_values(match.group("number")):
             values.append((match.span("number"), value / 100))

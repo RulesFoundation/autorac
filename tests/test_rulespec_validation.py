@@ -17330,8 +17330,9 @@ def test_a_multiword_rate_before_a_percent_sign_leaves_the_amount_whole():
             text,
             grounded,
         )
-    # A rate spelled on its own keeps every word.
-    assert _hebrew_recall("מיליון ועשרים וחמישה%") == {1_000_000.0, 0.25}
+    # A rate spelled on its own, with no money amount before it, keeps every
+    # word of its count -- a million and twenty-five percent.
+    assert _hebrew_recall("מיליון ועשרים וחמישה%") == {10_000.25}
 
 
 def test_a_shared_scale_range_reads_a_fractional_lower_endpoint():
@@ -17799,6 +17800,37 @@ def test_a_scaled_percentage_keeps_its_fractional_tail():
         0.2,
     }
     assert _hebrew_recall("סכום של שלושה מיליון ועשרים אחוזים מההכנסה") == {
+        3_000_000.0,
+        0.2,
+    }
+
+
+def test_a_tail_with_its_own_unit_after_a_scaled_percentage_is_that_units():
+    for text in (
+        "השיעור הוא 3 אלפים אחוזים וחצי שקל",
+        "השיעור הוא שלושת אלפים אחוזים וחצי שקל",
+        "השיעור הוא 3000 אחוזים וחצי שקל",
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == {30.0, 0.5}, (text, recall)
+        assert 30.005 not in extract_numbers_from_text(text), text
+
+
+def test_a_scaled_percentage_with_a_remainder_is_one_rate():
+    for text, expected in (
+        ("השיעור הוא 3 אלפים וחמש מאות אחוזים", 35.0),
+        ("השיעור הוא שלושת אלפים וחמש מאות אחוזים", 35.0),
+        ("השיעור הוא שלושת אלפים וחמש מאות%", 35.0),
+        ("השיעור הוא 3 אלפים ו־200 אחוזים", 32.0),
+        ("השיעור הוא 3 אלפים ו־200%", 32.0),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == {expected}, (text, recall)
+        grounded = extract_numbers_from_text(text)
+        assert not ({3_000.0, 5.0, 2.0, 0.05, 0.02} & grounded), (text, grounded)
+    # Under a money amount the remainder before the percent unit is its own rate.
+    assert _hebrew_recall("סכום של 3 מיליון ו־20 אחוזים מההכנסה") == {3_000_000.0, 0.2}
+    assert _hebrew_recall("סכום של 3 מיליון ועשרים אחוזים מההכנסה") == {
         3_000_000.0,
         0.2,
     }
