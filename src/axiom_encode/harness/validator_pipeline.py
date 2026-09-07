@@ -2872,12 +2872,12 @@ _HEBREW_RANGE_JOIN_BEFORE_PATTERN = re.compile(
 _HEBREW_RANGE_WALK_JOIN_PATTERN = re.compile(
     "(?:(?<![\u0590-\u05ff])(?:עד|ועד|או)\\s+|,\\s*)$"
 )
-# An earlier number the walk must not scale: a section, an age, a year, a
-# form number ("לילד עד גיל 5, 2 או 3 אחוזים", "לפי סעיף 5, 2 או 3 אחוזים").
+# An earlier number the walk must not scale: an age, a year, a form number,
+# a grade ("לילד עד גיל 5, 2 או 3 אחוזים"). A reference ("לפי סעיף קטן 5, 2
+# או 3 אחוזים") is stopped at by its structural span.
 _HEBREW_RANGE_WALK_STOP_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}\u05d4?"
-    "(?:סעיף|סעיפים|תקנה|תקנות|פרק|פרקים|פסקה|לוח|טור|פרט|סימן|חלק|תוספת|גיל|"
-    "בן|בת|שנת|מספר|מס'|טופס|עמוד|שורה|דרגה|קטגוריה|סוג|רמה)\\s*$"
+    "(?:גיל|בן|בת|שנת|מספר|מס'|טופס|עמוד|שורה|דרגה|קטגוריה|סוג|רמה)\\s*$"
 )
 _HEBREW_RANGE_LOWER_BOUND_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])(?:בין|\u05de(?:\u05be|-)?|החל \u05de(?:\u05be|-)?)\\s*$"
@@ -2909,8 +2909,15 @@ def _hebrew_number_run_ending_at(
 
 def _iter_hebrew_percent_range_lower_matches(
     text: str,
+    structural_spans: "Sequence[tuple[int, int]]" = (),
 ) -> list[tuple[tuple[int, int], float]]:
-    """The lower endpoint of a range of rates, as a rate, with its span."""
+    """The lower endpoint of a range of rates, as a rate, with its span.
+
+    ``structural_spans`` are the reference spans the structural pass found;
+    the walk back over earlier alternatives stops at one ("לפי סעיף קטן 5, 2
+    או 3 אחוזים" keeps subsection 5), while a supplement's amounts are no
+    reference and share the noun ("תוספת 1, 2 או 3 אחוזים").
+    """
     matches: list[tuple[tuple[int, int], float]] = []
     tokens: _HebrewWordTokens | None = None
     for noun in _HEBREW_PERCENT_NOUN_ANYWHERE_PATTERN.finditer(text):
@@ -2930,19 +2937,24 @@ def _iter_hebrew_percent_range_lower_matches(
         join = _search_before(_HEBREW_RANGE_JOIN_BEFORE_PATTERN, text, upper_start, 12)
         if join is not None:
             lower_end = join.start()
-            needs_bound = join.group("free") is None
+            # "ל־" needs "בין" or "מ־" before the lower endpoint; "ו־" joins a
+            # pair of rates on its own ("2 ו־3 אחוזים, בהתאמה").
+            needs_bound = join.group("free") is None and not join.group(
+                0
+            ).lstrip().startswith("\u05d5")
         elif (
             upper_first is not None
-            and upper_first.startswith("\u05dc")
+            and upper_first[:1] in ("\u05dc", "\u05d5")
             and _strip_hebrew_number_prefix(
                 upper_first[1:].lstrip("\u05be"), _HEBREW_RUN_START_VOCABULARY
             )
             is not None
         ):
             # The whitespace before the upper endpoint stays, so a printed
-            # lower endpoint ("בין 2 לשלושה אחוזים") ends flush before it.
+            # lower endpoint ("בין 2 לשלושה אחוזים") ends flush before it. A
+            # vav prefix ("שניים ושלושה אחוזים") joins without a bound.
             lower_end = upper_start
-            needs_bound = True
+            needs_bound = upper_first.startswith("\u05dc")
         else:
             continue
         # The lower endpoint, printed or spelled, right before the join.
@@ -3010,7 +3022,7 @@ def _iter_hebrew_percent_range_lower_matches(
                     break
                 earlier_span = (earlier[0], len(text[:earlier_end].rstrip()))
                 earlier_value = earlier[1]
-            if (
+            if _span_overlaps(earlier_span, structural_spans) or (
                 _search_before(
                     _HEBREW_RANGE_WALK_STOP_PATTERN, text, earlier_span[0], 24
                 )
@@ -3622,6 +3634,14 @@ _HEBREW_TIME_UNIT_AFTER_PATTERN = re.compile(
     + _hebrew_unit_alternation(_HEBREW_TIME_UNIT_WORDS)
     + ")(?![\u0590-\u05ff])"
 )
+# The feminine nouns a feminine ordinal modifies: the evidence that
+# "חמישית" after one of them is "fifth".
+_HEBREW_ORDINAL_CONTEXT_NOUN_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}\u05d4?"
+    "(?:לידה|דירה|דרגה|פעם|שנה|קומה|כיתה|רמה|קטגוריה|מדרגה|שכבה|סדרה|תקופה|עונה|"
+    "מנה|יחידה|ילדה|בת|אישה|עובדת|מבוטחת|תלמידה|תוספת|פסקה|תקנה|הוראה|נקודה|שורה|"
+    "מהדורה|גרסה|קבוצה|רשימה|הודעה|בקשה|תביעה|החלטה|ישיבה|שנת)\\s+$"
+)
 _HEBREW_TEMPORAL_AFTER_UNIT_PATTERN = re.compile(
     "\\s+(?:לאחר|אחרי|לפני|מיום|ממועד|מתום|מאז|קודם)(?![\u0590-\u05ff])"
 )
@@ -3644,7 +3664,14 @@ def _hebrew_fraction_unit_after(text: str, position: int, start: int) -> bool:
         return True
     if _HEBREW_TEMPORAL_AFTER_UNIT_PATTERN.match(text, unit.end()) is None:
         return True
-    return _hebrew_fraction_context_before(text, start)
+    # A time unit before a temporal phrase says ordinal only with evidence of
+    # one: no clause context, and a noun the ordinal modifies right before
+    # ("לידה חמישית שנה לאחר"); "המכשיר יופעל עשירית שנייה לאחר קבלת האות"
+    # is a tenth of a second.
+    return (
+        _hebrew_fraction_context_before(text, start)
+        or _search_before(_HEBREW_ORDINAL_CONTEXT_NOUN_PATTERN, text, start) is None
+    )
 
 
 # Every word the numeric grammar reads, for the guards below.
@@ -3709,18 +3736,25 @@ _HEBREW_STRUCTURAL_PRINTED_ENDPOINT = (
 # אלף, or אלף, אלפיים, a unit and אלפים), an optional hundreds part, a
 # remainder (a teen, tens with a vav-bound unit, a unit), and a vav-bound
 # fractional tail. The first word may carry a vav.
+_HEBREW_STRUCTURAL_BELOW_THOUSAND = (
+    "(?:(?:מאה|מאתיים|(?:" + _HEBREW_STRUCTURAL_UNITS + ")\\s+מאות)"
+    "(?:\\s+\u05d5?" + _HEBREW_STRUCTURAL_REMAINDER + ")?"
+    "|" + _HEBREW_STRUCTURAL_REMAINDER + ")"
+)
+# A spelled amount: a counted fraction ("שלושה רבעים", read before the bare
+# count could claim its first word), or a number below a million -- an
+# optional multiplier below a thousand and אלף, then an optional part below
+# a thousand -- and a vav-bound fractional tail. The first word may carry a
+# vav.
 _HEBREW_STRUCTURAL_SPELLED_ENDPOINT = (
     "(?>\u05d5?(?:"
-    "(?:(?:" + _HEBREW_STRUCTURAL_REMAINDER + "\\s+)?(?:אלף|אלפיים|אלפים)"
-    "|(?:" + _HEBREW_STRUCTURAL_UNITS + ")\\s+אלפים)"
-    "(?:\\s+\u05d5?(?:מאה|מאתיים|(?:" + _HEBREW_STRUCTURAL_UNITS + ")\\s+מאות))?"
-    "(?:\\s+\u05d5?" + _HEBREW_STRUCTURAL_REMAINDER + ")?"
-    "|(?:מאה|מאתיים|(?:" + _HEBREW_STRUCTURAL_UNITS + ")\\s+מאות)"
-    "(?:\\s+\u05d5?" + _HEBREW_STRUCTURAL_REMAINDER + ")?"
-    "|"
-    + _HEBREW_STRUCTURAL_REMAINDER
-    + "|"
     + _HEBREW_STRUCTURAL_FRACTION_TAIL
+    + "|(?:"
+    + _HEBREW_STRUCTURAL_BELOW_THOUSAND
+    + "\\s+)?(?:אלף|אלפיים|אלפים)"
+    "(?:\\s+\u05d5?" + _HEBREW_STRUCTURAL_BELOW_THOUSAND + ")?"
+    "|"
+    + _HEBREW_STRUCTURAL_BELOW_THOUSAND
     + ")(?:\\s+\u05d5"
     + _HEBREW_STRUCTURAL_FRACTION_TAIL
     + ")?)"
@@ -10807,7 +10841,9 @@ def _tokenize_numeric_occurrences_from_text(
         grounding_spans.append(span)
         inventory_spans.append(span)
 
-    for span, rate in _iter_hebrew_percent_range_lower_matches(cleaned):
+    for span, rate in _iter_hebrew_percent_range_lower_matches(
+        cleaned, _structural_numeric_component_spans(cleaned)
+    ):
         if _span_overlaps(span, grounding_spans) or _span_overlaps(
             span, inventory_spans
         ):

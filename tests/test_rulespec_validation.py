@@ -16529,6 +16529,69 @@ def test_a_long_run_of_compound_number_words_scans_in_linear_time():
         )
 
 
+def test_a_percentage_walk_back_passes_a_supplement_and_stops_at_a_subsection():
+    for text, expected in (
+        ("תוספת 1, 2 או 3 אחוזים מהשכר", {0.01, 0.02, 0.03}),
+        ("לפי סעיף קטן 5, 2 או 3 אחוזים מהשכר", {0.02, 0.03}),
+        ("לפי סעיף 5, 2 או 3 אחוזים מהשכר", {0.02, 0.03}),
+        ("לילד עד גיל 5, 2 או 3 אחוזים מהשכר", {5.0, 0.02, 0.03}),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert 0.05 not in grounded, (text, grounded)
+        assert {round(v, 12) for v in _hebrew_recall(text)} == expected, (
+            text,
+            _hebrew_recall(text),
+        )
+    assert 5.0 in extract_numbers_from_text("לפי סעיף קטן 5, 2 או 3 אחוזים מהשכר")
+
+
+def test_a_counted_fraction_or_a_hundreds_multiplier_in_a_coordinated_endpoint():
+    for text, expected in (
+        ("תוספת 1 או שלושה רבעים נקודת זיכוי", {1.0, 0.75}),
+        ("תוספת אחת או שלושה רבעים נקודת זיכוי", {1.0, 0.75}),
+        ("תוספת 2 עד מאה ועשרים אלף שקלים", {2.0, 120000.0}),
+        ("תוספת שתיים עד מאה ועשרים אלף שקלים", {2.0, 120000.0}),
+        ("תוספת 2 עד שלושת אלפים ומאתיים שקלים", {2.0, 3200.0}),
+    ):
+        assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+
+
+def test_a_vav_join_shares_the_percent_noun_without_a_bound():
+    for text, expected in (
+        ("שיעורי המס יהיו 2 ו־3 אחוזים, בהתאמה", {0.02, 0.03}),
+        ("שיעורי המס יהיו שניים ושלושה אחוזים, בהתאמה", {0.02, 0.03}),
+        ("שיעורי המס יהיו 2 ו-3 אחוזים", {0.02, 0.03}),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert all(any(abs(v - e) < 1e-12 for v in grounded) for e in expected), (
+            text,
+            grounded,
+        )
+        assert {round(v, 12) for v in _hebrew_recall(text)} == expected, (
+            text,
+            _hebrew_recall(text),
+        )
+    assert _hebrew_recall("בשיעור של עשרים ושלושה אחוזים") == {0.23}
+    assert _hebrew_recall("ישולמו 5 שקלים ו־3 אחוזים מהשכר") == {5.0, 0.03}
+
+
+def test_a_fractional_duration_needs_ordinal_evidence_to_be_an_ordinal():
+    for text in (
+        "המכשיר יופעל עשירית שנייה לאחר קבלת האות",
+        "הפיצוי ישולם חמישית שנה לאחר ההודעה",
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert not ({10.0, 5.0} & grounded), (text, grounded)
+        assert len(_hebrew_recall(text)) == 1 and max(_hebrew_recall(text)) < 1, text
+    assert _hebrew_recall(
+        "אישה שילדה לידה חמישית שנה לאחר הלידה הקודמת זכאית למענק של 100 שקלים"
+    ) == {5.0, 100.0}
+    assert _hebrew_recall("דירה חמישית חודש לאחר הרכישה תחויב במס של 100 שקלים") == {
+        5.0,
+        100.0,
+    }
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
