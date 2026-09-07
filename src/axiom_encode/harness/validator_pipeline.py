@@ -2236,7 +2236,7 @@ def _parse_hebrew_number_run(
         # from the words before its start.
         money_context = (
             _HEBREW_MONEY_CONTEXT_PATTERN.search(
-                " ".join(words[max(0, start - 6) : start])
+                " ".join(words[max(0, start - 8) : start]) + " "
             )
             is not None
         )
@@ -2410,12 +2410,16 @@ def _parse_hebrew_number_run(
         part = parse_scale_part(cursor, scale_words, bare_values)
         if part is None:
             continue
-        if kinds & _HEBREW_SCALE_KINDS and separate_quantity_at(part[0]):
-            # "שלושה מיליון ושני אלפים עובדים": the two thousand count
-            # workers, a separate quantity, not the million's lower scale;
-            # the number ends here.
-            separate_after = True
-            break
+        if kinds & _HEBREW_SCALE_KINDS and money_context:
+            # The whole lower-scale candidate -- "ושני אלפים וחמש מאות" --
+            # and the word after it: "שלושה מיליון ושני אלפים וחמש מאות
+            # עובדים" counts 2,500 workers, a separate quantity, not the
+            # million's lower scale; the number ends here.
+            candidate = _parse_hebrew_number_run(words, cursor, False)
+            candidate_end = cursor + candidate[0] if candidate is not None else part[0]
+            if separate_quantity_at(candidate_end):
+                separate_after = True
+                break
         cursor, amount, tail = part
         value += amount
         kinds.add(kind)
@@ -2524,17 +2528,38 @@ _HEBREW_FRACTION_BASE_AMOUNT_PATTERN = re.compile(
 # של שלושה אלפים ומאתיים מטרים" is 3,200 metres).
 # The two-letter stem "מס" (tax) takes only its own inflections here, or it
 # would read "מספר" (number) as money.
+# The words that may stand between the amount noun and the number it
+# governs: "קנס של", "מחזור שנתי של", "הקנס לא יעלה על", "סכום בסך", "השכר
+# יהיה". A verb or a noun of its own between them ("המענק יינתן למפעל
+# המעסיק לפחות") means the noun governs something else.
+_HEBREW_MONEY_CONTEXT_CONNECTORS = (
+    "של|בסך|בסכום|בגובה|בשיעור|בשווי|עד|לפחות|על|לא|יעלה|תעלה|עולה|העולה|"
+    "יפחת|תפחת|פחות|הפחות|שלא|שאינו|שאינה|לכל|היותר|כולל|הכולל|שנתי|שנתית|"
+    "חודשי|חודשית|בסיסי|בסיסית|מרבי|מרבית|מזערי|מזערית|מינימלי|מינימלית|"
+    "מקסימלי|מקסימלית|ממוצע|ממוצעת|הממוצע|יהיה|יהא|תהיה|תהא|הוא|היא|הם|הן|"
+    "בין|מ|ב|כ|ל"
+)
 _HEBREW_MONEY_CONTEXT_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9\u05d4]{0,2}(?:(?:"
     + _HEBREW_AMOUNT_NOUN_STEMS.replace("|מס|", "|")
     + ")[\u0590-\u05ff]{0,6}|מס(?:ים|י)?)(?![\u0590-\u05ff])"
+    # Connectors may carry the article ("המחזור השנתי הכולל"); a printed
+    # multiplier may stand between the noun and the scale word the caller
+    # asks about ("קנס של 3 מיליון", asked at "מיליון").
+    "(?:\\s+\u05d4?(?:" + _HEBREW_MONEY_CONTEXT_CONNECTORS + ")[\u05be-]?){0,5}"
+    "(?:\\s*(?<![\\d.,])[-\u2212]?(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?"
+    "(?:\\s+\\d+\\s*[/\u2044]\\s*\\d+)?)?\\s*$"
 )
 
 
-def _hebrew_money_context_before(text: str, position: int, window: int = 60) -> bool:
-    """Whether an amount noun stands within ``window`` characters before ``position``."""
+def _hebrew_money_context_before(text: str, position: int, window: int = 80) -> bool:
+    """Whether an amount noun governs the number at ``position``.
+
+    The noun stands within ``window`` characters before it, with only
+    connectors between ("קנס של", "מחזור שנתי של", "הקנס לא יעלה על").
+    """
     return (
-        _HEBREW_MONEY_CONTEXT_PATTERN.search(text, max(0, position - window), position)
+        _search_before(_HEBREW_MONEY_CONTEXT_PATTERN, text, position, window)
         is not None
     )
 
@@ -3466,6 +3491,26 @@ def _hebrew_spelled_remainder_after(
     return tokens[consumed - 1][1], value
 
 
+def _hebrew_printed_chain_end(
+    text: str, parts: "Sequence[tuple[int, int, float, float, bool]]", index: int
+) -> int:
+    """Where the descending chain that starts at ``parts[index]`` ends, plain remainder included."""
+    end, floor = parts[index][1], parts[index][3]
+    while index + 1 < len(parts):
+        next_start, next_end, _value, next_floor, next_negative = parts[index + 1]
+        if (
+            next_negative
+            or next_floor >= floor
+            or _HEBREW_PRINTED_REMAINDER_JOIN_PATTERN.fullmatch(text, end, next_start)
+            is None
+        ):
+            break
+        end, floor = next_end, next_floor
+        index += 1
+    plain = _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN.match(text, end)
+    return plain.end() if plain is not None else end
+
+
 def _iter_hebrew_printed_scale_matches(
     text: str,
 ) -> list[tuple[tuple[int, int], float]]:
@@ -3561,11 +3606,50 @@ def _iter_hebrew_printed_scale_matches(
                     )
                     is not None
                 ):
+                    # "מחזור של שלושה מיליון ו־2 אלף עובדים": the printed
+                    # chain counts workers, a separate quantity, and the
+                    # spelled amount stays its own.
+                    spelled_context = _hebrew_money_context_before(text, spelled_start)
+                    if (
+                        spelled_context
+                        and _HEBREW_SEPARATE_QUANTITY_AFTER_PATTERN.match(
+                            text, _hebrew_printed_chain_end(text, parts, index)
+                        )
+                    ):
+                        break
                     start, value = spelled_start, spelled_value + value
                     merged_spelled.add(spelled_end)
-                    money_context = _hebrew_money_context_before(text, start)
+                    money_context = spelled_context
                     break
-        while index + 1 < len(parts):
+        # The descending chain after this part, read to its end before any
+        # of it is composed: "מחזור של 3 מיליון ו־2 אלף ו־500 עובדים" counts
+        # 2,500 workers, a separate quantity, and none of it joins the fine.
+        chain_end, chain_floor, chain_index = end, floor, index
+        while chain_index + 1 < len(parts):
+            next_start, next_end, _next_value, next_floor, next_negative = parts[
+                chain_index + 1
+            ]
+            if (
+                next_negative
+                or next_floor >= chain_floor
+                or _HEBREW_PRINTED_REMAINDER_JOIN_PATTERN.fullmatch(
+                    text, chain_end, next_start
+                )
+                is None
+            ):
+                break
+            chain_end, chain_floor = next_end, next_floor
+            chain_index += 1
+        chain_plain = _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN.match(text, chain_end)
+        if chain_plain is not None:
+            chain_end = chain_plain.end()
+        chain_separate = (
+            money_context
+            and chain_index > index
+            and _HEBREW_SEPARATE_QUANTITY_AFTER_PATTERN.match(text, chain_end)
+            is not None
+        )
+        while not chain_separate and index + 1 < len(parts):
             next_start, next_end, next_value, next_floor, next_negative = parts[
                 index + 1
             ]
@@ -3576,13 +3660,6 @@ def _iter_hebrew_printed_scale_matches(
                     text, end, next_start
                 )
                 is None
-                # "מחזור של 3 מיליון ו־2 אלף עובדים": the two thousand count
-                # workers, a separate quantity.
-                or (
-                    money_context
-                    and _HEBREW_SEPARATE_QUANTITY_AFTER_PATTERN.match(text, next_end)
-                    is not None
-                )
             ):
                 break
             value += next_value

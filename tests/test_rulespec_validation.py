@@ -17520,6 +17520,51 @@ def test_a_fractional_or_scaled_separate_quantity_after_a_money_amount():
         )
 
 
+def test_an_amount_noun_governs_only_the_number_it_binds():
+    # A grant noun three words back, with a verb and a noun between, does
+    # not make the worker count money: the threshold reads whole.
+    for text, expected in (
+        ("המענק יינתן למפעל המעסיק לפחות שלושה אלפים ומאתיים עובדים", {3_200.0}),
+        ("המענק יינתן למפעל המעסיק לפחות 3 אלפים ו־200 עובדים", {3_200.0}),
+        ("הקנס ישולם על ידי מפעל המעסיק שלושה אלפים ומאתיים עובדים", {3_200.0}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+        assert not ({3_000.0, 200.0} & extract_numbers_from_text(text)), text
+    # Connectors between the noun and the number keep it money.
+    for text, expected in (
+        ("הקנס לא יעלה על 3 מיליון ו־30 ימי מאסר", {3_000_000.0, 30.0}),
+        ("קנס בסך שלושה מיליון ושלושים ימי מאסר", {3_000_000.0, 30.0}),
+        ("המחזור השנתי הכולל שלא יעלה על 3 מיליון ו־20 עובדים", {3_000_000.0, 20.0}),
+    ):
+        assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+
+
+def test_a_whole_lower_scale_quantity_stands_apart_from_a_money_amount():
+    for text, expected in (
+        ("מחזור שנתי של שלושה מיליון ו־2 אלף עובדים", {3_000_000.0, 2_000.0}),
+        (
+            "מחזור שנתי של שלושה מיליון ושני אלפים וחמש מאות עובדים",
+            {3_000_000.0, 2_500.0},
+        ),
+        ("מחזור שנתי של 3 מיליון ו־2 אלף ו־500 עובדים", {3_000_000.0, 2_500.0}),
+        ("מחזור שנתי של 3 מיליון ו־2 אלף ומאתיים עובדים", {3_000_000.0, 2_200.0}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+        grounded = extract_numbers_from_text(text)
+        assert expected <= grounded, (text, grounded)
+        assert not ({3_002_000.0, 3_002_500.0, 3_002_200.0} & grounded), (
+            text,
+            grounded,
+        )
+    # Money composes through the same chains.
+    assert _hebrew_recall("מחזור שנתי של 3 מיליון ו־2 אלף ו־500 שקלים") == {3_002_500.0}
+    assert _hebrew_recall("מחזור שנתי של שלושה מיליון ושני אלפים וחמש מאות שקלים") == {
+        3_002_500.0
+    }
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
