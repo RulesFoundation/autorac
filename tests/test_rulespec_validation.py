@@ -17593,6 +17593,23 @@ def test_a_construct_chain_qualifies_the_amount_noun():
     }
 
 
+def test_a_relative_participle_after_the_amount_noun_binds_nothing():
+    for text in (
+        "הכנסת המפעל המעסיק לפחות 3 אלפים ו־200 עובדים פטורה ממס",
+        "הכנסת המפעל המעסיק לפחות שלושה אלפים ומאתיים עובדים פטורה ממס",
+        "שכר העובד המחזיק לפחות 3 אלפים ו־200 מניות",
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == {3_200.0}, (text, recall)
+        assert not ({3_000.0, 200.0} & extract_numbers_from_text(text)), text
+    # One articled possessor still qualifies the noun.
+    assert _hebrew_recall("הכנסת המפעל של 3 מיליון ו־20 עובדים") == {3_000_000.0, 20.0}
+    assert _hebrew_recall("מחזור העסקאות השנתי של 3 מיליון ו־20 עובדים") == {
+        3_000_000.0,
+        20.0,
+    }
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

@@ -2548,6 +2548,16 @@ _HEBREW_MONEY_CONTEXT_CONNECTORS = (
     "מקסימלי|מקסימלית|ממוצע|ממוצעת|הממוצע|יהיה|יהא|תהיה|תהא|הוא|היא|הם|הן|"
     "בין|מ|ב|כ|ל"
 )
+# Present participles that open a relative clause after a noun: employing,
+# holding, operating, paying, receiving, granting, supplying, producing,
+# selling, buying, managing, carrying out, owing, entitled.
+_HEBREW_RELATIVE_PARTICIPLES = (
+    "מעסיק|מעסיקה|מעסיקים|מחזיק|מחזיקה|מחזיקים|מפעיל|מפעילה|מפעילים|"
+    "משלם|משלמת|משלמים|מקבל|מקבלת|מקבלים|מעניק|מעניקה|מעניקים|מספק|מספקת|"
+    "מספקים|מייצר|מייצרת|מייצרים|מוכר|מוכרת|מוכרים|קונה|קונים|רוכש|רוכשת|"
+    "רוכשים|מנהל|מנהלת|מנהלים|מבצע|מבצעת|מבצעים|חייב|חייבת|חייבים|זכאי|"
+    "זכאית|זכאים|עוסק|עוסקת|עוסקים|מחייב|מחייבת"
+)
 _HEBREW_MONEY_CONTEXT_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9\u05d4]{0,2}(?:(?:"
     + _HEBREW_AMOUNT_NOUN_STEMS.replace("|מס|", "|")
@@ -2555,9 +2565,12 @@ _HEBREW_MONEY_CONTEXT_PATTERN = re.compile(
     # Connectors may carry the article ("המחזור השנתי הכולל"); a printed
     # multiplier may stand between the noun and the scale word the caller
     # asks about ("קנס של 3 מיליון", asked at "מיליון").
-    # A construct chain qualifies the noun ("מחזור העסקאות", "שכר העובד",
-    # "סכום המענק"): up to two articled nouns right after it.
-    "(?:\\s+\u05d4[\u0590-\u05ff]{2,}){0,2}"
+    # One articled possessor may qualify the noun ("מחזור העסקאות", "שכר
+    # העובד", "סכום המענק", "הכנסת המפעל"); a relative participle ("המפעל
+    # המעסיק לפחות …") opens a clause of its own and binds nothing.
+    "(?:\\s+(?!\u05d4(?:"
+    + _HEBREW_RELATIVE_PARTICIPLES
+    + ")(?![\u0590-\u05ff]))\u05d4[\u0590-\u05ff]{2,}){0,1}"
     "(?:\\s+\u05d4?(?:" + _HEBREW_MONEY_CONTEXT_CONNECTORS + ")[\u05be-]?){0,5}"
     "(?:\\s*(?<![\\d.,])[-\u2212]?(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?"
     "(?:\\s+\\d+\\s*[/\u2044]\\s*\\d+)?)?\\s*$"
