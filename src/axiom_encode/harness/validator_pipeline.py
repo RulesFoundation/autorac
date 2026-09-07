@@ -2159,6 +2159,26 @@ def _parse_hebrew_number_run(
             and words[position + 1] in _HEBREW_COUNTED_FRACTION_VALUES
         )
 
+    def opens_a_separate_amount(position: int, teens: bool = True) -> bool:
+        """Whether the count at ``position`` opens counted hundreds or a teen of its own.
+
+        "שלושים וארבע מאות" is thirty and four hundred, "עשרים ושלושה עשר"
+        twenty and thirteen: coordinated amounts, not compounds. A teen
+        after hundreds composes ("מאה ואחד עשר" is 111), so ``teens``
+        is off there; a malformed teen ("שתי עשרה") is no teen at all.
+        """
+        after = word_at(position + 1)
+        if after == "מאות":
+            return True
+        word = word_at(position)
+        return (
+            teens
+            and after in _HEBREW_TEEN_TENS
+            and not has_vav(position + 1)
+            and word in units
+            and word not in construct_units
+        )
+
     def parse_small(position: int) -> tuple[int, float, str] | None:
         word = word_at(position)
         if word is None:
@@ -2171,6 +2191,7 @@ def _parse_hebrew_number_run(
                 and following not in _HEBREW_TEEN_TENS
                 and has_vav(position + 1)
                 and not fraction_noun_follows(position + 1)
+                and not opens_a_separate_amount(position + 1)
             ):
                 return position + 2, total + scale_counts[following], "compound"
             return position + 1, total, "tens"
@@ -2216,7 +2237,7 @@ def _parse_hebrew_number_run(
             if (
                 hundreds is not None
                 and word_at(cursor) in scale_counts
-                and word_at(next_cursor) == "מאות"
+                and opens_a_separate_amount(cursor, teens=False)
             ):
                 # "מאתיים ושלוש מאות": the three opens the next counted
                 # hundreds, a coordinated amount, not a remainder of the
@@ -3864,6 +3885,14 @@ def _iter_hebrew_shared_scale_range_matches(
                 # does, as the percent-range pass counts it.
                 continue
             lower_span = (printed_lower.start(), lower_end)
+            if (
+                join is not None
+                and join.group("comma") is not None
+                and not _hebrew_word_stands_before(text, lower_span[0])
+            ):
+                # A printed operand a comma joins shares the scale only in
+                # Hebrew text ("$500, 3 מיליון" shares nothing).
+                continue
         else:
             spelled_lower = _hebrew_spelled_endpoint_before(text, lower_end, tokens)
             if spelled_lower is None:
@@ -3945,6 +3974,13 @@ def _iter_hebrew_shared_scale_range_matches(
                     earlier_value is None
                     or "," in earlier_printed.group(0)
                     or abs(earlier_value) >= 1000
+                    or (
+                        earlier_join is not None
+                        and earlier_join.group(0).lstrip().startswith(",")
+                        and not _hebrew_word_stands_before(
+                            text, earlier_printed.start()
+                        )
+                    )
                 ):
                     break
                 earlier_span = (earlier_printed.start(), earlier_flush)
@@ -4588,6 +4624,24 @@ def _hebrew_spelled_span_carries_a_scale(text: str, start: int, end: int) -> boo
     )
 
 
+# A Hebrew word, then any earlier printed items of a comma list, flush before
+# a position: "הם 1, 2, " before the 3 of "הם 1, 2, 3 אחוזים".
+_HEBREW_WORD_BEFORE_LIST_PATTERN = re.compile(
+    "[\u0590-\u05ff][\u0590-\u05ff'\"\u05f3\u05f4]*\\s*"
+    "(?:[-\u2212]?\\d+(?:[.,]\\d+)*\\s*,\\s*)*$"
+)
+
+
+def _hebrew_word_stands_before(text: str, start: int) -> bool:
+    """Whether a Hebrew word anchors the comma list a printed number at ``start`` belongs to.
+
+    Earlier printed items of the list may stand between; a currency sign or
+    a Latin word before the number ("$500, 10%", "age 5, 3%") does not
+    anchor it.
+    """
+    return _search_before(_HEBREW_WORD_BEFORE_LIST_PATTERN, text, start, 64) is not None
+
+
 def _hebrew_number_run_ending_at(
     text: str,
     end: int,
@@ -4774,10 +4828,18 @@ def _iter_hebrew_percent_range_lower_matches(
                     _HEBREW_RANGE_WALK_STOP_PATTERN, text, lower_span[0], 24
                 )
                 is not None
+                or (
+                    lower_first is None
+                    and not _hebrew_word_stands_before(text, lower_span[0])
+                )
             )
         ):
             # "לפי סעיף קטן 5, 3 אחוזים", "לילד עד גיל 5, 3 אחוזים": the
             # number before the comma is a reference or a label's, no rate.
+            # "For income up to $500, 10% applies", "under age 5, 3%": a
+            # printed operand a comma joins shares the unit only in Hebrew
+            # text, a Hebrew word before it; a currency sign or a Latin
+            # label numbers it.
             continue
         if (
             needs_bound
@@ -4862,11 +4924,18 @@ def _iter_hebrew_percent_range_lower_matches(
                 if _hebrew_unary_sign_at(text, earlier_span[0] - 1):
                     earlier_value = -earlier_value
                     earlier_span = (earlier_span[0] - 1, earlier_span[1])
-            if _span_overlaps(earlier_span, structural_spans) or (
-                _search_before(
+            if (
+                _span_overlaps(earlier_span, structural_spans)
+                or _search_before(
                     _HEBREW_RANGE_WALK_STOP_PATTERN, text, earlier_span[0], 24
                 )
                 is not None
+                or (
+                    earlier_join is not None
+                    and earlier_join.group(0).lstrip().startswith(",")
+                    and earlier_digits is not None
+                    and not _hebrew_word_stands_before(text, earlier_span[0])
+                )
             ):
                 break
             if earlier_value >= 1000 and not explicit_range:

@@ -18424,6 +18424,47 @@ def test_comma_only_lists_share_the_scale_and_the_unit():
         assert 0.05 not in extract_numbers_from_text(text), text
 
 
+def test_a_comma_join_needs_hebrew_before_a_printed_operand():
+    for text, expected_in, expected_out in (
+        ("For income up to $500, 10% applies.", {500.0, 0.1}, {5.0}),
+        ("For a child under age 5, 3% of income.", {0.03}, {0.05}),
+        (
+            "Amounts of $500, $600, 3 million apply.",
+            set(),
+            {500_000_000.0, 600_000_000.0},
+        ),
+        ("השיעורים הם 1, 2, 3 אחוזים", {0.01, 0.02, 0.03}, {1.0, 2.0}),
+        (
+            "הסכומים הם 1, 2, 3 מיליון שקלים",
+            {1_000_000.0, 2_000_000.0, 3_000_000.0},
+            {1.0, 2.0},
+        ),
+    ):
+        values = _hebrew_recall(text)
+        assert expected_in <= values, (text, values)
+        assert not (expected_out & values), (text, values)
+        assert not (expected_out & extract_numbers_from_text(text)), text
+
+
+def test_tens_do_not_consume_a_separate_coordinated_amount():
+    for text, expected in (
+        ("הסכומים הם שלושים וארבע מאות שקלים, בהתאמה", {30.0, 400.0}),
+        ("הסכומים הם 30 ו־400 שקלים, בהתאמה", {30.0, 400.0}),
+        ("הסכומים הם עשרים ושלושה עשר שקלים, בהתאמה", {20.0, 13.0}),
+        ("הסכום הוא שלושים וארבעה שקלים", {34.0}),
+        ("הסכום הוא עשרים ושלושה שקלים", {23.0}),
+        ("הסכום הוא מאתיים ושלושה עשר שקלים", {213.0}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+    assert 34.0 not in extract_numbers_from_text(
+        "הסכומים הם שלושים וארבע מאות שקלים, בהתאמה"
+    )
+    assert 23.0 not in extract_numbers_from_text(
+        "הסכומים הם עשרים ושלושה עשר שקלים, בהתאמה"
+    )
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
