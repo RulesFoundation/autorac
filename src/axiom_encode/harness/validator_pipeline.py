@@ -3107,19 +3107,43 @@ _HEBREW_PRINTED_REMAINDER_JOIN_PATTERN = re.compile("\\s+\u05d5[\u05be-]?\\s*")
 # 3,000,200. Not a rate ("ו־20 אחוזים", "ו־20%"), not another multiplier.
 _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN = re.compile(
     "\\s+\u05d5[\u05be-]?\\s*(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
+    # The whole mixed number, read atomically so a tail once read is never
+    # given back: a printed fraction ("3 1/2", "3 1⁄2") or a spelled tail
+    # ("3 וחצי", "3 ושלושה רבעים").
+    "(?>(?:\\s+(?P<numerator>\\d+)\\s*[/\u2044]\\s*(?P<denominator>\\d+))?)"
+    "(?>(?:\\s+\u05d5(?:(?P<tail>"
+    + _HEBREW_PRINTED_SCALE_FRACTIONS
+    + ")|(?P<tail_count>"
+    + _HEBREW_PRINTED_SCALE_COUNTS
+    + ")\\s+(?P<tail_fraction>"
+    + _HEBREW_PRINTED_SCALE_COUNTED
+    + "))(?![\u0590-\u05ff]))?)"
+    # Then neither a rate marker nor a scale word: "ו־3 1/2 אחוזים" and
+    # "ו־3 וחצי%" count a rate, "ו־200 אלף" is a lower scale.
     "(?![\\d.,/\u2044%])(?!\\s*%)(?!\\s+(?:"
     + _HEBREW_PRINTED_SCALE_WORDS
     + "|אחוז)[\u0590-\u05ff]*)"
-    # Nor the whole part of a mixed rate: "ו־3 וחצי אחוזים", "ו־3 ושלושה
-    # רבעים%" count three and a half, three and three quarters percent.
-    "(?!\\s+\u05d5(?:(?:"
-    + _HEBREW_PRINTED_SCALE_FRACTIONS
-    + ")|(?:"
-    + _HEBREW_PRINTED_SCALE_COUNTS
-    + ")\\s+(?:"
-    + _HEBREW_PRINTED_SCALE_COUNTED
-    + "))(?![\u0590-\u05ff])(?:\\s*%|\\s+\u05d4?אחוז))"
 )
+
+
+def _hebrew_printed_plain_remainder_value(match: "re.Match[str]") -> float | None:
+    """The value a plain printed remainder states, fraction and tail included."""
+    value = float(match.group("number").replace(",", ""))
+    if match.group("numerator"):
+        denominator = float(match.group("denominator"))
+        if denominator == 0:
+            return None
+        value += float(match.group("numerator")) / denominator
+    if match.group("tail"):
+        value += _HEBREW_MIXED_FRACTION_VALUES[match.group("tail")]
+    elif match.group("tail_count"):
+        value += (
+            _HEBREW_FRACTION_COUNT_VALUES[match.group("tail_count")]
+            * _HEBREW_COUNTED_FRACTION_VALUES[match.group("tail_fraction")]
+        )
+    return value
+
+
 # A range whose endpoints share one trailing scale word: "בין 3 ל־5 מיליון"
 # runs from three million to five million, "שלושה עד חמישה מיליון" too, and
 # "עשרים ושלושה עד שלושים מיליון" from twenty-three million. "בין 3 למיליון"
@@ -3449,8 +3473,8 @@ def _iter_hebrew_printed_scale_matches(
             index += 1
         plain = _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN.match(text, end)
         if plain is not None:
-            plain_value = float(plain.group("number").replace(",", ""))
-            if 0 < plain_value < floor:
+            plain_value = _hebrew_printed_plain_remainder_value(plain)
+            if plain_value is not None and 0 < plain_value < floor:
                 value += plain_value
                 end = plain.end()
         matches.append(((start, end), -value if negative else value))
@@ -3467,8 +3491,8 @@ def _iter_hebrew_printed_scale_matches(
         plain = _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN.match(text, spelled_end)
         if plain is None:
             continue
-        plain_value = float(plain.group("number").replace(",", ""))
-        if 0 < plain_value < spelled_floor:
+        plain_value = _hebrew_printed_plain_remainder_value(plain)
+        if plain_value is not None and 0 < plain_value < spelled_floor:
             matches.append(((spelled_start, plain.end()), spelled_value + plain_value))
     matches.sort()
     return matches
