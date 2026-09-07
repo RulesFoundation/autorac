@@ -2483,7 +2483,9 @@ def _iter_hebrew_fraction_word_matches(
                     is not None
                     # "עשירית שקל" is a tenth of a shekel, "עשירית שנייה" a
                     # tenth of a second: a unit after the word says fraction.
-                    or _HEBREW_UNIT_AFTER_PATTERN.match(text, match.end("fraction"))
+                    or _HEBREW_FRACTION_UNIT_AFTER_PATTERN.match(
+                        text, match.end("fraction")
+                    )
                     is not None
                 )
                 loose = bool(match.group("loose_partitive")) and (
@@ -3425,6 +3427,7 @@ _HEBREW_STRUCTURAL_UNIT_NOUN_WORDS = (
     "נקודה",
     "לירה",
     "שנייה",
+    "שניה",
     "משפחה",
     "משק בית",
     "עובד",
@@ -3523,6 +3526,18 @@ _HEBREW_STRUCTURAL_UNIT_NOUNS = _hebrew_unit_alternation(
 _HEBREW_UNIT_AFTER_PATTERN = re.compile(
     "\\s+(?:" + _HEBREW_STRUCTURAL_UNIT_NOUNS + ")(?![\u0590-\u05ff])"
 )
+# The unit after a fraction word: the same lexicon less the relational
+# nouns, which introduce a count of their own ("דירה חמישית בת שלושה
+# חדרים" is a fifth apartment of three rooms, not a fifth of a daughter).
+_HEBREW_FRACTION_UNIT_AFTER_PATTERN = re.compile(
+    "\\s+(?:"
+    + _hebrew_unit_alternation(
+        word
+        for word in _HEBREW_STRUCTURAL_UNIT_NOUN_WORDS
+        if word not in {"בן", "בת", "אב", "אם"}
+    )
+    + ")(?![\u0590-\u05ff])"
+)
 # A quantity, not a further reference: a number followed by a unit noun.
 _HEBREW_STRUCTURAL_NOT_A_QUANTITY = "(?!\\s*(?:" + _HEBREW_STRUCTURAL_UNIT_NOUNS + "))"
 _HEBREW_STRUCTURAL_LIST_JOIN = "(?:\u05d5\u05be?|או)"
@@ -3531,14 +3546,24 @@ _HEBREW_STRUCTURAL_RANGE_JOIN = "(?:עד|[-\u2013\u2014])"
 # printed or spelled: in "1, 2, 4, 100 או 200 דולר", "1, 2, 4, 100 עד 200
 # דולר" and "תוספת שתיים עד שלוש נקודות" the number before the join is an
 # amount with the one after it.
+# The endpoint after the join may be a compound or a mixed number ("3 וחצי",
+# "עשרים וחמישה"): a printed or spelled number and up to four more number
+# words, vav-bound or not, before the unit.
+_HEBREW_STRUCTURAL_NUMBER_WORD_ANY = _hebrew_alternation(
+    _HEBREW_NUMBER_VOCABULARY
+    | set(_HEBREW_TEEN_UNIT_VALUES)
+    | set(_HEBREW_COUNTED_FRACTION_VALUES)
+    | set(_HEBREW_FRACTION_COUNT_VALUES)
+    | {"שני", "שתי", "שניים", "שתיים"}
+)
 _HEBREW_STRUCTURAL_COORDINATED_QUANTITY = (
     "\\s*(?:"
     + _HEBREW_STRUCTURAL_LIST_JOIN
     + "|"
     + _HEBREW_STRUCTURAL_RANGE_JOIN
-    + ")\\s*(?:\\d+(?:[.,]\\d+)?|[\u0590-\u05ff]+)\\s*(?:"
-    + _HEBREW_STRUCTURAL_UNIT_NOUNS
-    + ")(?![\u0590-\u05ff])"
+    + ")\\s*(?:\\d+(?:[.,]\\d+)?|[\u0590-\u05ff]+)"
+    "(?:\\s+\u05d5?(?:" + _HEBREW_STRUCTURAL_NUMBER_WORD_ANY + ")){0,4}"
+    "\\s*(?:" + _HEBREW_STRUCTURAL_UNIT_NOUNS + ")(?![\u0590-\u05ff])"
 )
 _HEBREW_STRUCTURAL_NOT_A_COORDINATED_QUANTITY = (
     "(?!" + _HEBREW_STRUCTURAL_COORDINATED_QUANTITY + ")"

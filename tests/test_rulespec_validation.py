@@ -16299,6 +16299,33 @@ def test_a_fraction_word_before_a_unit_is_a_fraction():
     assert _hebrew_recall("לידה עשירית מזכה במענק של 100 שקלים") == {10.0, 100.0}
 
 
+def test_a_coordinated_quantity_with_a_compound_endpoint_keeps_both():
+    for text, expected in (
+        ("תוספת 2 עד 3 וחצי שקלים לכל ילד", {2.0, 3.5}),
+        ("תוספת 2 עד עשרים וחמישה שקלים לכל ילד", {2.0, 25.0}),
+        ("תוספת שתיים עד שלוש וחצי נקודות זיכוי", {2.0, 3.5}),
+    ):
+        assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+    # A reference range followed by prose and a unit noun stays a reference.
+    assert _hebrew_recall("לפי סעיפים 1 עד 3 יחולו על עובדים") == set()
+    assert _hebrew_recall("לפי סעיף 2 עד 3 ישולם סכום של 100 שקלים") == {100.0}
+
+
+def test_a_relational_noun_after_an_ordinal_is_no_unit():
+    text = "דירה חמישית בת שלושה חדרים תחויב במס של 100 שקלים"
+    grounded = extract_numbers_from_text(text)
+    assert {5.0, 3.0, 100.0} <= grounded and 0.2 not in grounded, grounded
+    assert _hebrew_recall(text) == {5.0, 3.0, 100.0}
+    assert _hebrew_recall("ישולם סכום של עשירית שקל") == {0.1}
+
+
+def test_the_alternative_spelling_of_second_is_a_unit():
+    for text in ("זמן התגובה יהיה עשירית שניה", "זמן התגובה יהיה עשירית שנייה"):
+        assert _hebrew_recall(text) == {0.1}, (text, _hebrew_recall(text))
+        assert 10.0 not in extract_numbers_from_text(text), text
+    assert _hebrew_recall("לידה שניה מזכה במענק של 100 שקלים") == {2.0, 100.0}
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
