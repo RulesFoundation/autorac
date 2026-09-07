@@ -2872,6 +2872,13 @@ _HEBREW_RANGE_JOIN_BEFORE_PATTERN = re.compile(
 _HEBREW_RANGE_WALK_JOIN_PATTERN = re.compile(
     "(?:(?<![\u0590-\u05ff])(?:עד|ועד|או)\\s+|,\\s*)$"
 )
+# An earlier number the walk must not scale: a section, an age, a year, a
+# form number ("לילד עד גיל 5, 2 או 3 אחוזים", "לפי סעיף 5, 2 או 3 אחוזים").
+_HEBREW_RANGE_WALK_STOP_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}\u05d4?"
+    "(?:סעיף|סעיפים|תקנה|תקנות|פרק|פרקים|פסקה|לוח|טור|פרט|סימן|חלק|תוספת|גיל|"
+    "בן|בת|שנת|מספר|מס'|טופס|עמוד|שורה|דרגה|קטגוריה|סוג|רמה)\\s*$"
+)
 _HEBREW_RANGE_LOWER_BOUND_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])(?:בין|\u05de(?:\u05be|-)?|החל \u05de(?:\u05be|-)?)\\s*$"
 )
@@ -3003,6 +3010,13 @@ def _iter_hebrew_percent_range_lower_matches(
                     break
                 earlier_span = (earlier[0], len(text[:earlier_end].rstrip()))
                 earlier_value = earlier[1]
+            if (
+                _search_before(
+                    _HEBREW_RANGE_WALK_STOP_PATTERN, text, earlier_span[0], 24
+                )
+                is not None
+            ):
+                break
             matches.append((earlier_span, earlier_value / 100))
             cursor = earlier_span[0]
     return matches
@@ -3579,6 +3593,35 @@ _HEBREW_FRACTION_UNIT_AFTER_PATTERN = re.compile(
     + _hebrew_unit_alternation(_HEBREW_MEASURE_UNIT_WORDS)
     + ")(?![\u0590-\u05ff])"
 )
+_HEBREW_TIME_UNIT_WORDS = (
+    "ימים",
+    "ימי",
+    "יום",
+    "חודשים",
+    "חודשי",
+    "חודש",
+    "שנים",
+    "שנות",
+    "שנה",
+    "שבועות",
+    "שבוע",
+    "שעות",
+    "שעת",
+    "שעה",
+    "דקות",
+    "דקה",
+    "שניות",
+    "שנייה",
+    "שניה",
+    "רבעונים",
+    "רבעון",
+    "תקופות",
+)
+_HEBREW_TIME_UNIT_AFTER_PATTERN = re.compile(
+    "\\s+(?:"
+    + _hebrew_unit_alternation(_HEBREW_TIME_UNIT_WORDS)
+    + ")(?![\u0590-\u05ff])"
+)
 _HEBREW_TEMPORAL_AFTER_UNIT_PATTERN = re.compile(
     "\\s+(?:לאחר|אחרי|לפני|מיום|ממועד|מתום|מאז|קודם)(?![\u0590-\u05ff])"
 )
@@ -3595,6 +3638,10 @@ def _hebrew_fraction_unit_after(text: str, position: int, start: int) -> bool:
     unit = _HEBREW_FRACTION_UNIT_AFTER_PATTERN.match(text, position)
     if unit is None:
         return False
+    # Only a unit of time opens a temporal phrase; "עשירית שקל לאחר הגשת
+    # הבקשה" is a tenth of a shekel whatever follows.
+    if _HEBREW_TIME_UNIT_AFTER_PATTERN.match(text, position) is None:
+        return True
     if _HEBREW_TEMPORAL_AFTER_UNIT_PATTERN.match(text, unit.end()) is None:
         return True
     return _hebrew_fraction_context_before(text, start)
@@ -3637,61 +3684,85 @@ _HEBREW_STRUCTURAL_RANGE_JOIN = "(?:עד|[-\u2013\u2014])"
 # printed number with an optional printed fraction ("3 1⁄2") or spelled tail
 # ("3 וחצי"), or a run of up to sixteen number words ("שלושים ואחד אלף
 # מאתיים ושלושים וחמישה"), before the unit.
-# The guards below are deterministic: every token has one role. An explicit
-# join is a comma, "או", "עד", "ועד", "לבין", a dash, or a vav before a
-# printed number; a vav-bound number word is always the continuation of the
-# number before it ("עשרים ואחד"), never a join, so a run of them is parsed
-# one way. Nested ambiguous repetition here backtracked exponentially.
+# The guards below read an endpoint with the numeral grammar inside an atomic
+# group: "עשרים ואחד" is twenty-one, and once read it is never re-partitioned
+# into twenty and a conjoined one when no unit follows. A vav-bound word the
+# grammar does not admit ("שתיים ושלוש") is a conjunction, joining a new
+# endpoint. Nested ambiguous repetition here once backtracked exponentially.
+_HEBREW_STRUCTURAL_FRACTION_TAIL = (
+    "(?:"
+    + _hebrew_alternation(_HEBREW_MIXED_FRACTION_VALUES)
+    + "|(?:"
+    + _hebrew_alternation(_HEBREW_FRACTION_COUNT_VALUES)
+    + ")\\s+(?:"
+    + _hebrew_alternation(_HEBREW_COUNTED_FRACTION_VALUES)
+    + "))"
+)
 _HEBREW_STRUCTURAL_PRINTED_ENDPOINT = (
-    "(?:(?<![\u05d0-\u05ea])[-\u2212])?"
+    "(?>(?:(?<![\u05d0-\u05ea])[-\u2212])?"
     "(?:(?:\\d+\\s+)?\\d+\\s*[/\u2044]\\s*\\d+"
     "|(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:[.,]\\d+)?)"
+    "(?:\\s+\\d+\\s*[/\u2044]\\s*\\d+)?"
+    "(?:\\s+\u05d5" + _HEBREW_STRUCTURAL_FRACTION_TAIL + ")?)"
 )
-# A continuation is a printed fraction after a whole, a vav-bound number
-# word, or a bare scale word ("שלושים ואחד אלף מאתיים"); none is a join.
-_HEBREW_STRUCTURAL_ENDPOINT_CONTINUATION = (
-    "(?:\\s+\\d+\\s*[/\u2044]\\s*\\d+|\\s+\u05d5(?:"
-    + _HEBREW_STRUCTURAL_NUMBER_WORD_ANY
-    + ")|\\s+(?:אלף|אלפים|אלפיים|מאה|מאתיים|מאות))"
+# A spelled amount: an optional thousands part (a count below a thousand and
+# אלף, or אלף, אלפיים, a unit and אלפים), an optional hundreds part, a
+# remainder (a teen, tens with a vav-bound unit, a unit), and a vav-bound
+# fractional tail. The first word may carry a vav.
+_HEBREW_STRUCTURAL_SPELLED_ENDPOINT = (
+    "(?>\u05d5?(?:"
+    "(?:(?:" + _HEBREW_STRUCTURAL_REMAINDER + "\\s+)?(?:אלף|אלפיים|אלפים)"
+    "|(?:" + _HEBREW_STRUCTURAL_UNITS + ")\\s+אלפים)"
+    "(?:\\s+\u05d5?(?:מאה|מאתיים|(?:" + _HEBREW_STRUCTURAL_UNITS + ")\\s+מאות))?"
+    "(?:\\s+\u05d5?" + _HEBREW_STRUCTURAL_REMAINDER + ")?"
+    "|(?:מאה|מאתיים|(?:" + _HEBREW_STRUCTURAL_UNITS + ")\\s+מאות)"
+    "(?:\\s+\u05d5?" + _HEBREW_STRUCTURAL_REMAINDER + ")?"
+    "|"
+    + _HEBREW_STRUCTURAL_REMAINDER
+    + "|"
+    + _HEBREW_STRUCTURAL_FRACTION_TAIL
+    + ")(?:\\s+\u05d5"
+    + _HEBREW_STRUCTURAL_FRACTION_TAIL
+    + ")?)"
 )
 _HEBREW_STRUCTURAL_COORDINATED_ENDPOINT = (
     "(?:"
     + _HEBREW_STRUCTURAL_PRINTED_ENDPOINT
-    + "|\u05d5?(?:"
-    + _HEBREW_STRUCTURAL_NUMBER_WORD_ANY
-    + "))"
-    + _HEBREW_STRUCTURAL_ENDPOINT_CONTINUATION
-    + "{0,15}"
+    + "|"
+    + _HEBREW_STRUCTURAL_SPELLED_ENDPOINT
+    + ")"
 )
+# A conjunction: "או", "עד", "ועד", "לבין", a dash, a vav before a printed
+# number, or the whitespace before a vav-bound word the endpoint grammar
+# left unread.
 _HEBREW_STRUCTURAL_CONJUNCTION = (
-    "(?:\\s*(?:או|עד|ועד|לבין)\\s+|\\s*\u05d5\u05be?\\s*(?=\\d)|\\s*[-\u2013]\\s*)"
+    "(?:\\s*(?:או|עד|ועד|לבין)\\s+|\\s*\u05d5\u05be?\\s*(?=\\d)|\\s*[-\u2013]\\s*"
+    "|\\s+(?=\u05d5[\u0590-\u05ff]))"
 )
 # One or more endpoints after a conjunction, then the unit ("1 או 2 או 3
-# שקלים"). A comma is no join here: after a closed reference list the
-# sentence goes on ("סעיפים 1 ו־2, 100 דולר").
+# שקלים", "שתיים ושלוש נקודות"). A comma is no join here: after a closed
+# reference list the sentence goes on ("סעיפים 1 ו־2, 100 דולר").
 _HEBREW_STRUCTURAL_COORDINATED_QUANTITY = (
-    "(?:"
+    "(?>(?:"
     + _HEBREW_STRUCTURAL_CONJUNCTION
     + _HEBREW_STRUCTURAL_COORDINATED_ENDPOINT
-    + ")+\\s*(?:"
+    + ")+)\\s*(?:"
     + _HEBREW_STRUCTURAL_UNIT_NOUNS
     + ")(?![\u0590-\u05ff])"
 )
 _HEBREW_STRUCTURAL_NOT_A_COORDINATED_QUANTITY = (
     "(?!" + _HEBREW_STRUCTURAL_COORDINATED_QUANTITY + ")"
 )
-# After a singular noun a comma may open a list of amounts ("תוספת 1, 2 או 3
-# שקלים") as long as a conjunction closes it before the unit; "סעיף 1, 100
+# After a supplement noun a comma may open a list of amounts ("תוספת 1, 2 או
+# 3 שקלים") as long as a conjunction closes it before the unit; "סעיף 1, 100
 # שקלים" has no conjunction and keeps its reference.
 _HEBREW_STRUCTURAL_LIST_OF_AMOUNTS = (
-    "(?:(?:\\s*,\\s*|"
-    + _HEBREW_STRUCTURAL_CONJUNCTION
-    + ")"
+    "(?>(?:\\s*,\\s*"
     + _HEBREW_STRUCTURAL_COORDINATED_ENDPOINT
-    + ")*"
+    + ")*)(?>(?:"
     + _HEBREW_STRUCTURAL_CONJUNCTION
     + _HEBREW_STRUCTURAL_COORDINATED_ENDPOINT
-    + "\\s*(?:"
+    + ")+)\\s*(?:"
     + _HEBREW_STRUCTURAL_UNIT_NOUNS
     + ")(?![\u0590-\u05ff])"
 )
@@ -3715,8 +3786,15 @@ _HEBREW_STRUCTURAL_DIGIT_ITEM = (
 _HEBREW_STRUCTURAL_PLURAL_NOUNS = (
     "פרקים|תוספות|חלקים|סימנים|סעיפים קטנים|סעיפים|פסקאות|לוחות|טורים|פרטים|תקנות"
 )
+# "תוספת" is a schedule and a supplement; the other singular nouns are only
+# ever structural, so only "תוספת" takes the comma-allowed list-of-amounts
+# guard ("תוספת 1, 2 או 3 שקלים"); "סעיף 5, 2 או 3 אחוזים" keeps section 5.
+_HEBREW_STRUCTURAL_SUPPLEMENT_NOUN = "תוספת"
 _HEBREW_STRUCTURAL_SINGULAR_NOUNS = (
     "פרק|תוספת|חלק|סימן|סעיף קטן|סעיף|פסקת משנה|פסקה|לוח|טור|פרט|תקנה"
+)
+_HEBREW_STRUCTURAL_STRICT_SINGULAR_NOUNS = (
+    "פרק|חלק|סימן|סעיף קטן|סעיף|פסקת משנה|פסקה|לוח|טור|פרט|תקנה"
 )
 _HEBREW_STRUCTURAL_NOUN_PREFIX = (
     "(?:[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}\u05d4?)"
@@ -3760,7 +3838,7 @@ _HEBREW_STRUCTURAL_REFERENCE_PATTERN = re.compile(
     + ")"
     # A singular noun takes one item, or a pair joined by a conjunction --
     # never a comma, which ends the reference ("סעיף 1, 100 שקלים").
-    "|(?:" + _HEBREW_STRUCTURAL_SINGULAR_NOUNS + ")\\s+"
+    "|" + _HEBREW_STRUCTURAL_SUPPLEMENT_NOUN + "\\s+"
     "(?:"
     + _HEBREW_STRUCTURAL_DIGIT_ITEM
     + _HEBREW_STRUCTURAL_NOT_A_QUANTITY_TAILED
@@ -3778,6 +3856,25 @@ _HEBREW_STRUCTURAL_REFERENCE_PATTERN = re.compile(
     + _HEBREW_STRUCTURAL_NUMBER_WORD_BODY
     + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
     + _HEBREW_STRUCTURAL_NOT_A_LIST_OF_AMOUNTS
+    + ")"
+    "|(?:" + _HEBREW_STRUCTURAL_STRICT_SINGULAR_NOUNS + ")\\s+"
+    "(?:"
+    + _HEBREW_STRUCTURAL_DIGIT_ITEM
+    + _HEBREW_STRUCTURAL_NOT_A_QUANTITY_TAILED
+    + _HEBREW_STRUCTURAL_NOT_A_COORDINATED_QUANTITY
+    + "(?:\\s*"
+    + _HEBREW_STRUCTURAL_LIST_JOIN
+    + "\\s*"
+    + _HEBREW_STRUCTURAL_DIGIT_ITEM
+    + _HEBREW_STRUCTURAL_NOT_A_QUANTITY_TAILED
+    + ")?"
+    "|\u05d4"
+    + _HEBREW_STRUCTURAL_NUMBER_WORD_BODY
+    + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
+    + "|"
+    + _HEBREW_STRUCTURAL_NUMBER_WORD_BODY
+    + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
+    + _HEBREW_STRUCTURAL_NOT_A_COORDINATED_QUANTITY
     + ")"
     ")"
     "(?![\u0590-\u05ff\\d])"
@@ -3838,7 +3935,7 @@ def _hebrew_structural_word_reference_spans(text: str) -> list[tuple[int, int]]:
         # precedes.
         coordinated = (
             _HEBREW_LIST_OF_AMOUNTS_AFTER_PATTERN
-            if match.group("singular")
+            if match.group("singular") == _HEBREW_STRUCTURAL_SUPPLEMENT_NOUN
             else _HEBREW_COORDINATED_UNIT_AFTER_PATTERN
         )
         if _HEBREW_UNIT_AFTER_PATTERN.match(text, end) is not None or (

@@ -16472,6 +16472,63 @@ def test_a_long_run_of_conjoined_number_words_scans_in_linear_time():
     assert time.perf_counter() - started < 1.0
 
 
+def test_a_percentage_walk_back_stops_at_an_age_or_a_reference():
+    for text, expected in (
+        ("לילד עד גיל 5, 2 או 3 אחוזים מהשכר", {5.0, 0.02, 0.03}),
+        ("לפי סעיף 5, 2 או 3 אחוזים מהשכר", {0.02, 0.03}),
+        ("שיעור המס יהיה 1, 2 או 3 אחוזים", {0.01, 0.02, 0.03}),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert 0.05 not in grounded, (text, grounded)
+        assert {round(v, 12) for v in _hebrew_recall(text)} == expected, (
+            text,
+            _hebrew_recall(text),
+        )
+    assert 5.0 in extract_numbers_from_text("לפי סעיף 5, 2 או 3 אחוזים מהשכר")
+
+
+def test_a_teen_or_a_spelled_conjunction_in_a_coordinated_quantity_keeps_both():
+    for text, expected in (
+        ("תוספת 2 עד שלושה עשר שקלים לכל ילד", {2.0, 13.0}),
+        ("תוספת שתיים עד שלושה עשר שקלים לכל ילד", {2.0, 13.0}),
+        ("תוספת שתיים ושלוש נקודות זיכוי", {2.0, 3.0}),
+        ("תוספת שתיים, שלוש וארבע נקודות זיכוי", {2.0, 3.0, 4.0}),
+        ("תוספת 2 עד עשרים ואחד שקלים", {2.0, 21.0}),
+    ):
+        assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+    assert _hebrew_recall("לפי סעיפים 1 ו־2, 100 דולר ישולמו לכל ילד") == {100.0}
+
+
+def test_a_monetary_fraction_before_a_temporal_phrase_is_a_fraction_in_any_wording():
+    for text in (
+        "התשלום יעמוד על עשירית שקל לאחר הגשת הבקשה",
+        "ישולם סכום של עשירית שקל לאחר הגשת הבקשה",
+        "עשירית שקל לפני תום השנה",
+    ):
+        assert _hebrew_recall(text) == {0.1}, (text, _hebrew_recall(text))
+        assert 10.0 not in extract_numbers_from_text(text), text
+    assert _hebrew_recall(
+        "אישה שילדה לידה חמישית שנה לאחר הלידה הקודמת זכאית למענק של 100 שקלים"
+    ) == {5.0, 100.0}
+
+
+def test_a_long_run_of_compound_number_words_scans_in_linear_time():
+    import time
+
+    for text in (
+        "תוספת 1" + " ועשרים ואחד" * 40 + " ישולם למבוטח",
+        "תוספת 1" + " ועשרים ואחד" * 40 + " שקלים",
+        "תוספת אחת" + " ושתיים ושלוש" * 40,
+        "לפי סעיפים 1, 2 או 3" + " ואחד" * 60 + " ישולם",
+    ):
+        started = time.perf_counter()
+        extract_numeric_occurrences_from_text(text)
+        assert time.perf_counter() - started < 1.0, (
+            text[:40],
+            time.perf_counter() - started,
+        )
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
