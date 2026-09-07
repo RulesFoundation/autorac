@@ -16405,6 +16405,73 @@ def test_a_coordinated_list_of_amounts_keeps_every_amount():
     assert _hebrew_recall("לפי סעיף 1 או 2 ישולם סכום של 100 שקלים") == {100.0}
 
 
+def test_a_payment_fraction_before_a_temporal_phrase_keeps_the_fraction():
+    for text, expected in (
+        ("ישולם סכום של עשירית שקל לאחר הגשת הבקשה", {0.1}),
+        ("ישולם סכום של עשירית שקל לפני תום השנה", {0.1}),
+        ("הסכום יהיה חמישית שנה לאחר מכן", {0.2}),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert not ({10.0, 5.0} & grounded), (text, grounded)
+        assert {round(v, 12) for v in _hebrew_recall(text)} == expected, (
+            text,
+            _hebrew_recall(text),
+        )
+    assert _hebrew_recall(
+        "אישה שילדה לידה חמישית שנה לאחר הלידה הקודמת זכאית למענק של 100 שקלים"
+    ) == {5.0, 100.0}
+
+
+def test_a_spelled_comma_list_of_amounts_keeps_every_amount():
+    for text, expected in (
+        ("תוספת שתיים, שלוש או ארבע נקודות זיכוי", {2.0, 3.0, 4.0}),
+        ("תוספת שתיים או שלוש נקודות זיכוי", {2.0, 3.0}),
+        ("תוספת 2, 3 או 4 נקודות זיכוי", {2.0, 3.0, 4.0}),
+    ):
+        assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+    assert _hebrew_recall("לפי סעיף שלוש, שלושה ילדים מזכים בקצבה של 100 שקלים") == {
+        3.0,
+        100.0,
+    }
+    assert _hebrew_recall("לפי סעיף 1, 100 שקלים ישולמו לכל ילד") == {100.0}
+
+
+def test_a_percentage_is_shared_across_every_alternative():
+    for text, expected in (
+        ("שיעור המס יהיה 1 או 2 או 3 אחוזים", {0.01, 0.02, 0.03}),
+        ("שיעור המס יהיה 1, 2 או 3 אחוזים", {0.01, 0.02, 0.03}),
+        ("שיעור המס יהיה אחד, שניים או שלושה אחוזים", {0.01, 0.02, 0.03}),
+        ("שיעור המס יהיה 1 עד 2 או 3%", {0.01, 0.02, 0.03}),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert all(any(abs(v - e) < 1e-12 for v in grounded) for e in expected), (
+            text,
+            grounded,
+        )
+        assert {round(v, 12) for v in _hebrew_recall(text)} == expected, (
+            text,
+            _hebrew_recall(text),
+        )
+    assert _hebrew_recall("לפי סעיף 5 ישולמו 3 אחוזים") == {0.03}
+
+
+def test_a_long_run_of_conjoined_number_words_scans_in_linear_time():
+    import time
+
+    for tail in (" ישולם למבוטח", " שקלים", ""):
+        text = "תוספת 1" + " ואחד" * 26 + tail
+        started = time.perf_counter()
+        extract_numeric_occurrences_from_text(text)
+        assert time.perf_counter() - started < 1.0, (
+            tail,
+            time.perf_counter() - started,
+        )
+    text = "לפי סעיפים 1, 2 או 3" + " ואחד" * 30 + " ישולם"
+    started = time.perf_counter()
+    extract_numeric_occurrences_from_text(text)
+    assert time.perf_counter() - started < 1.0
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
