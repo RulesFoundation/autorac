@@ -1514,7 +1514,7 @@ _CONTEXTUAL_ASCII_FRACTION_PATTERN = re.compile(
 # and is no sign; only a sign that no Hebrew letter precedes negates.
 _FRACTION_SLASH_PATTERN = re.compile(
     "(?<![\\d\u2044.,])"
-    "(?:(?<![\u0590-\u05ff])(?P<sign>[-\u2212]))?"
+    "(?:(?<![\u05d0-\u05ea])(?P<sign>[-\u2212]))?"
     "(?:(?P<whole>\\d+)\\s+)?"
     "(?P<numerator>\\d+)\\s*\u2044\\s*(?P<denominator>\\d+)"
     "(?![\\d\u2044])(?![.,]\\d)"
@@ -2022,9 +2022,10 @@ _HEBREW_PERCENT_NOUN_BEFORE_PATTERN = re.compile(
 # "23%" is. The lookbehind keeps a fraction's denominator ("16 1⁄2 אחוזים")
 # for the fraction pass, which reads the percent word itself.
 # A hyphen after a Hebrew letter joins a prefix to the number ("ל-3", "ב-5")
-# and is no sign; only a sign that no Hebrew letter precedes negates.
+# and is no sign; only a sign that no Hebrew letter precedes negates, and a
+# maqaf is no letter ("ב־−2" is minus two under the prefix).
 _HEBREW_DIGIT_PERCENT_PATTERN = re.compile(
-    "(?<![\\d.,\u2044/])(?:(?<![\u0590-\u05ff])(?P<sign>[-\u2212]))?"
+    "(?<![\\d.,\u2044/])(?:(?<![\u05d0-\u05ea])(?P<sign>[-\u2212]))?"
     "(?:(?P<whole>\\d+)\\s+(?=\\d+\\s*/))?"
     "(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
     "(?:\\s*/\\s*(?P<denominator>\\d+))?"
@@ -2587,7 +2588,9 @@ def _hebrew_unary_sign_at(text: str, index: int) -> bool:
     """Whether ``text[index]`` is a minus sign, not a prefix's hyphen ("ל-3")."""
     if index < 0 or text[index] not in "-\u2212":
         return False
-    return index == 0 or not ("\u0590" <= text[index - 1] <= "\u05ff")
+    # A letter before the hyphen makes it a prefix's ("ל-3"); a maqaf does
+    # not ("ב־−2" is minus two under the prefix).
+    return index == 0 or not ("\u05d0" <= text[index - 1] <= "\u05ea")
 
 
 def _hebrew_vav_fraction_tail(words: "Sequence[str]") -> float | None:
@@ -2758,6 +2761,52 @@ def _iter_hebrew_percent_phrase_matches(
     return matches
 
 
+# A printed whole and a vav-bound spelled fractional tail are one number
+# wherever they stand: "3 וחצי נקודות זיכוי" is three and a half credit
+# points, "2 ושלושה רבעים" two and three quarters. Before a percent noun the
+# phrase pass reads the same words as a rate first.
+_HEBREW_PRINTED_MIXED_NUMBER_PATTERN = re.compile(
+    "(?<![\\d.,/\u2044])(?:(?<![\u05d0-\u05ea])(?P<sign>[-\u2212]))?"
+    "(?P<whole>(?:\\d{1,3}(?:,\\d{3})+|\\d+))(?![.,]\\d)"
+    "\\s+\u05d5(?:(?P<tail>"
+    + "|".join(
+        re.escape(w)
+        for w in sorted(_HEBREW_MIXED_FRACTION_VALUES, key=len, reverse=True)
+    )
+    + ")|(?P<tail_count>"
+    + "|".join(
+        re.escape(w)
+        for w in sorted(_HEBREW_FRACTION_COUNT_VALUES, key=len, reverse=True)
+    )
+    + ")\\s+(?P<tail_fraction>"
+    + "|".join(
+        re.escape(w)
+        for w in sorted(_HEBREW_COUNTED_FRACTION_VALUES, key=len, reverse=True)
+    )
+    + "))(?![\u0590-\u05ff])"
+)
+
+
+def _iter_hebrew_printed_mixed_number_matches(
+    text: str,
+) -> list[tuple[tuple[int, int], float]]:
+    """Printed wholes with spelled fractional tails, as one number each."""
+    matches: list[tuple[tuple[int, int], float]] = []
+    for match in _HEBREW_PRINTED_MIXED_NUMBER_PATTERN.finditer(text):
+        value = float(match.group("whole").replace(",", ""))
+        if match.group("tail"):
+            value += _HEBREW_MIXED_FRACTION_VALUES[match.group("tail")]
+        else:
+            value += (
+                _HEBREW_FRACTION_COUNT_VALUES[match.group("tail_count")]
+                * _HEBREW_COUNTED_FRACTION_VALUES[match.group("tail_fraction")]
+            )
+        if match.group("sign"):
+            value = -value
+        matches.append((match.span(), value))
+    return matches
+
+
 # A range of rates shares its percent noun: "בין 2 ל־3 אחוזים", "בין שניים
 # לשלושה אחוזים", "2 עד 3 אחוזים", "מ־2 עד 3 אחוזים". The passes above read
 # the upper endpoint with the noun; this reads the lower one as a rate too.
@@ -2769,7 +2818,7 @@ _HEBREW_PERCENT_NOUN_ANYWHERE_PATTERN = re.compile(
 # fraction with an optional whole ("-2", "1/2", "16 1⁄2"). A number after a
 # slash is a denominator, never an endpoint of its own.
 _HEBREW_DIGITS_BEFORE_PATTERN = re.compile(
-    "(?<![\\d.,/\u2044])(?:(?<![\u0590-\u05ff])(?P<sign>[-\u2212]))?"
+    "(?<![\\d.,/\u2044])(?:(?<![\u05d0-\u05ea])(?P<sign>[-\u2212]))?"
     "(?:(?:(?P<whole>\\d+)\\s+)?(?P<numerator>\\d+)\\s*[/\u2044]\\s*(?P<denominator>\\d+)"
     "|(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?))\\s+$"
 )
@@ -2799,7 +2848,7 @@ _HEBREW_RANGE_JOIN_BEFORE_PATTERN = re.compile(
     "|\\s(?P<dash>[-\u2013\u2014])\\s)$"
 )
 _HEBREW_RANGE_LOWER_BOUND_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?:בין|\u05de\u05be?|החל \u05de\u05be?)\\s*$"
+    "(?<![\u0590-\u05ff])(?:בין|\u05de(?:\u05be|-)?|החל \u05de(?:\u05be|-)?)\\s*$"
 )
 
 
@@ -6298,8 +6347,42 @@ def _iter_hebrew_number_word_matches(
         value = _HEBREW_NUMBER_WORD_VALUES.get(match.group("word"))
         if value is None:
             continue
+        if match.group("word") in _HEBREW_SECOND_WORDS and _hebrew_measured_second(
+            text, match
+        ):
+            continue
         matches.append((match.span(), value))
     return matches
+
+
+# "שנייה" is the ordinal "second" ("לידה שנייה") and the unit of time ("חצי
+# שנייה", "שנייה אחת", "בכל שנייה"); under the article it is the ordinal.
+_HEBREW_SECOND_WORDS = frozenset({"שנייה", "שניה"})
+_HEBREW_MEASURED_SECOND_BEFORE_PATTERN = re.compile(
+    "(?:\\d|(?<![\u0590-\u05ff])(?:"
+    + "|".join(
+        re.escape(w)
+        for w in sorted(
+            set(_HEBREW_FRACTION_VALUES)
+            | {"כל", "בכל", "תוך", "למשך", "מדי", "אלפית", "מאית"},
+            key=len,
+            reverse=True,
+        )
+    )
+    + "))\\s+$"
+)
+_HEBREW_MEASURED_SECOND_AFTER_PATTERN = re.compile("\\s+אח[תד](?![\u0590-\u05ff])")
+
+
+def _hebrew_measured_second(text: str, match: "re.Match[str]") -> bool:
+    """Whether this "שנייה" is the unit of time rather than the ordinal."""
+    if "\u05d4" in text[match.start() : match.start("word")]:
+        return False
+    return (
+        _search_before(_HEBREW_MEASURED_SECOND_BEFORE_PATTERN, text, match.start())
+        is not None
+        or _HEBREW_MEASURED_SECOND_AFTER_PATTERN.match(text, match.end()) is not None
+    )
 
 
 def _parse_belgian_numeric_phrase(raw: str) -> float | None:
@@ -10396,6 +10479,15 @@ def _tokenize_numeric_occurrences_from_text(
             force_rate_context=True,
             requires_rate_context=True,
         )
+        grounding_spans.append(span)
+        inventory_spans.append(span)
+
+    for span, value in _iter_hebrew_printed_mixed_number_matches(cleaned):
+        if _span_overlaps(span, grounding_spans) or _span_overlaps(
+            span, inventory_spans
+        ):
+            continue
+        add_both(cleaned_view, span, value)
         grounding_spans.append(span)
         inventory_spans.append(span)
 

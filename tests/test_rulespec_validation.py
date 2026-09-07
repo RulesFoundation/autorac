@@ -16063,6 +16063,65 @@ def test_a_fractional_tail_with_a_singular_unit_is_not_the_rate():
         assert _hebrew_recall(text) == {0.02, unit_value}, (text, _hebrew_recall(text))
 
 
+def test_a_minus_after_a_maqaf_is_a_sign():
+    for text, expected in (
+        ("המקדם יהיה כ־−1⁄4", {-0.25}),
+        ("התשלום יוגדל ב־−2 אחוזים", {-0.02}),
+        ("התשלום יוגדל ב־-2 אחוזים", {-0.02}),
+        ("המקדם יהיה כ־1⁄4", {0.25}),
+        ("המקדם יהיה כ-1⁄4", {0.25}),
+        ("התשלום יוגדל ב-2 אחוזים", {0.02}),
+    ):
+        assert {round(v, 12) for v in _hebrew_recall(text)} == expected, (
+            text,
+            _hebrew_recall(text),
+        )
+
+
+def test_a_range_lower_bound_takes_an_ascii_hyphen():
+    for text in (
+        "שיעור המס יעלה מ-2 ל-3 אחוזים",
+        "שיעור המס יעלה מ־2 ל־3 אחוזים",
+        "שיעור המס יעלה מ-2 ל־3 אחוזים",
+    ):
+        assert {round(v, 12) for v in _hebrew_recall(text)} == {0.02, 0.03}, (
+            text,
+            _hebrew_recall(text),
+        )
+
+
+def test_a_printed_whole_with_a_spelled_tail_is_one_quantity_anywhere():
+    for text, expected in (
+        ("יובאו בחשבון 3 וחצי נקודות זיכוי", 3.5),
+        ("יובאו בחשבון 2 ושלושה רבעים נקודות זיכוי", 2.75),
+        ("יובאו בחשבון -3 וחצי נקודות זיכוי", -3.5),
+        ("ישולם סכום של 1,000 וחצי שקלים", 1000.5),
+        ("יובאו בחשבון 3 1⁄2 נקודות זיכוי", 3.5),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert expected in grounded, (text, grounded)
+        assert not ({3.0, 0.5, 2.0, 0.75, 1000.0} & _hebrew_recall(text)), (
+            text,
+            _hebrew_recall(text),
+        )
+        assert _hebrew_recall(text) == {expected}, (text, _hebrew_recall(text))
+    assert _hebrew_recall("ישולם מס של 3 וחצי אחוזים") == {0.035}
+
+
+def test_a_measured_second_is_no_ordinal():
+    for text, expected in (
+        ("משך ההמתנה יהיה חצי שנייה", {0.5}),
+        ("משך ההמתנה יהיה שנייה אחת", {1.0}),
+        ("המדידה תיעשה בכל שנייה", set()),
+        ("משך ההמתנה יהיה 3 שניות", {3.0}),
+    ):
+        assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+        assert 2.0 not in extract_numbers_from_text(text), text
+    # The ordinal reading stays where the article or a noun says so.
+    assert 2.0 in extract_numbers_from_text("בפעם השנייה ישולם סכום של 100 שקלים")
+    assert _hebrew_recall("לידה שנייה מזכה במענק של 100 שקלים") == {2.0, 100.0}
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
