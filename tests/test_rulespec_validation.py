@@ -17650,6 +17650,31 @@ def test_a_participle_with_a_prepositional_complement_binds_nothing():
     }
 
 
+def test_a_modifier_before_a_participles_complement_binds_nothing():
+    for text in (
+        "הקצבה המחולקת לכל היותר בין 3 אלפים ו־200 עובדים",
+        "הקצבה המחולקת לכל היותר בין שלושה אלפים ומאתיים עובדים",
+        "המענק המחולק לפחות בין 3 אלפים ו־200 עובדים",
+        "התקציב המוקצה לכל היותר ב־3 אלפים ו־200 יישובים",
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == {3_200.0}, (text, recall)
+        assert not ({3_000.0, 200.0} & extract_numbers_from_text(text)), text
+    # Without a possessor the same modifiers and prepositions still bind.
+    assert _hebrew_recall("הקנס יהיה לכל היותר בין 3 ל־5 מיליון שקלים") == {
+        3_000_000.0,
+        5_000_000.0,
+    }
+    assert _hebrew_recall("סכום המענק לא יפחת מ־3 מיליון ו־30 ימי מאסר") == {
+        3_000_000.0,
+        30.0,
+    }
+    assert _hebrew_recall("סכום המענק לא יעלה על 3 מיליון ו־30 ימי מאסר") == {
+        3_000_000.0,
+        30.0,
+    }
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

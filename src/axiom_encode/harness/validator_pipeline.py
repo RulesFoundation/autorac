@@ -2571,8 +2571,18 @@ _HEBREW_RELATIVE_PARTICIPLES = (
     "רוכשים|מנהל|מנהלת|מנהלים|מבצע|מבצעת|מבצעים|חייב|חייבת|חייבים|זכאי|"
     "זכאית|זכאים|עוסק|עוסקת|עוסקים|מחייב|מחייבת"
 )
-_HEBREW_MONEY_POSSESSOR_FOLLOWERS = (
-    "של|בסך|בסכום|בגובה|בשיעור|בשווי|עד|לפחות|לא|שלא|שאינו|שאינה|לכל|"
+# After a possessor, the way on to the number carries no bare preposition:
+# "של", a threshold phrase read as a unit ("לא יעלה על", "יפחת מ־", "לכל
+# היותר"), a copula, an articled adjective. A bare "בין", "ב", "כ", "מ" or
+# "על" after the possessor -- however many modifiers intervene ("המחולקת
+# לכל היותר בין") -- complements a participle, and the amount noun governs
+# nothing past it.
+_HEBREW_MONEY_POSSESSOR_CONNECTORS = (
+    "של|בסך|בסכום|בגובה|בשיעור|בשווי|עד|לפחות|לא|שלא|שאינו|שאינה|לכל|היותר|"
+    "הפחות|"
+    "יעלה\\s+על|תעלה\\s+על|עולה\\s+על|העולה\\s+על|"
+    "יפחת\\s+\u05de[\u05be-]?|תפחת\\s+\u05de[\u05be-]?|פחות\\s+\u05de[\u05be-]?|"
+    "יותר\\s+\u05de[\u05be-]?|למעלה\\s+\u05de[\u05be-]?|"
     "יהיה|יהא|תהיה|תהא|הוא|היא|הם|הן|"
     "\u05d4(?:כולל|כוללת|שנתי|שנתית|חודשי|חודשית|בסיסי|בסיסית|מרבי|מרבית|"
     "מזערי|מזערית|מינימלי|מינימלית|מקסימלי|מקסימלית|ממוצע|ממוצעת)"
@@ -2581,21 +2591,19 @@ _HEBREW_MONEY_CONTEXT_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9\u05d4]{0,2}(?:(?:"
     + _HEBREW_AMOUNT_NOUN_STEMS.replace("|מס|", "|")
     + ")[\u0590-\u05ff]{0,6}|מס(?:ים|י)?)(?![\u0590-\u05ff])"
-    # Connectors may carry the article ("המחזור השנתי הכולל"); a printed
-    # multiplier may stand between the noun and the scale word the caller
-    # asks about ("קנס של 3 מיליון", asked at "מיליון").
-    # One articled possessor may qualify the noun ("מחזור העסקאות", "שכר
-    # העובד", "סכום המענק", "הכנסת המפעל"); a relative participle ("המפעל
-    # המעסיק לפחות …") opens a clause of its own and binds nothing.
-    # A possessor is followed by "של", an articled adjective, a copula or a
-    # threshold phrase; a bare preposition after it ("המחולקת בין", "המיועד
-    # ל־") complements a participle and binds nothing.
+    # Two ways on to the number. With one articled possessor ("מחזור
+    # העסקאות", "שכר העובד", "סכום המענק", "הכנסת המפעל"; never a relative
+    # participle): the preposition-free connectors alone. Without one: the
+    # connectors, with the article or not ("המחזור השנתי הכולל", "הקנס יהיה
+    # לכל היותר בין").
     "(?:\\s+(?!\u05d4(?:"
     + _HEBREW_RELATIVE_PARTICIPLES
-    + ")(?![\u0590-\u05ff]))\u05d4[\u0590-\u05ff]{2,}(?=\\s+(?:"
-    + _HEBREW_MONEY_POSSESSOR_FOLLOWERS
-    + ")(?![\u0590-\u05ff]))){0,1}"
-    "(?:\\s+\u05d4?(?:" + _HEBREW_MONEY_CONTEXT_CONNECTORS + ")[\u05be-]?){0,5}"
+    + ")(?![\u0590-\u05ff]))\u05d4[\u0590-\u05ff]{2,}(?:\\s+(?:"
+    + _HEBREW_MONEY_POSSESSOR_CONNECTORS
+    + ")(?![\u0590-\u05ff])){0,6}"
+    "|(?:\\s+\u05d4?(?:" + _HEBREW_MONEY_CONTEXT_CONNECTORS + ")[\u05be-]?){0,6})"
+    # A printed multiplier may stand between the noun and the scale word the
+    # caller asks about ("קנס של 3 מיליון", asked at "מיליון").
     "(?:\\s*(?<![\\d.,])[-\u2212]?(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?"
     "(?:\\s+\\d+\\s*[/\u2044]\\s*\\d+)?)?\\s*$"
 )
