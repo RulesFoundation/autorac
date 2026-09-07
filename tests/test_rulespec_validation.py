@@ -18118,6 +18118,59 @@ def test_a_shared_scale_unit_is_read_after_the_whole_upper_endpoint():
         ), text
 
 
+def test_the_walk_back_crosses_multiword_spelled_components():
+    for text, expected in (
+        ("הסכום הוא בין 3 אלפים וחמש מאות ו־20 ל־4 אלפים שקלים", {3_520.0, 4_000.0}),
+        ("הסכום הוא בין 3 אלפים ושלוש מאות ועשרים ל־4 אלפים שקלים", {3_320.0, 4_000.0}),
+        ("השיעור הוא בין 3 אלפים וחמש מאות ו־20 ל־4 אלפים אחוזים", {35.2, 40.0}),
+    ):
+        recall = {round(v, 6) for v in _hebrew_recall(text)}
+        assert recall == expected, (text, recall)
+        assert not ({20_000.0, 500.0, 3.0, 20.0} & extract_numbers_from_text(text)), (
+            text
+        )
+
+
+def test_a_percentage_continuation_after_a_spelled_lead_is_one_rate():
+    for text, expected in (
+        ("סכום של שלושת אלפים ומאה ו־20 אחוזים", {3_000.0, 1.2}),
+        ("סכום של שלושת אלפים ו־100 ועשרים אחוזים", {3_000.0, 1.2}),
+        ("סכום של שלושת אלפים ומאה ועשרים אחוזים", {3_000.0, 1.2}),
+        ("סכום של שלושת אלפים ו־100 ועשרים% מההכנסה", {3_000.0, 1.2}),
+    ):
+        recall = {round(v, 6) for v in _hebrew_recall(text)}
+        assert recall == expected, (text, recall)
+        assert not ({3_100.0, 0.2, 1.0, 100.0} & extract_numbers_from_text(text)), text
+
+
+def test_a_printed_lower_scale_before_a_percent_unit_is_the_rate():
+    for text, expected in (
+        ("סכום של 3 מיליון ו־2 אלף אחוזים", {3_000_000.0, 20.0}),
+        ("סכום של 3 מיליון ו־2 אלף%", {3_000_000.0, 20.0}),
+        ("סכום של 3 מיליון ו־2 אלף ו־500 אחוזים", {3_000_000.0, 25.0}),
+        ("סכום של 3 מיליון ו־2 אלף ימי מאסר", {3_000_000.0, 2_000.0}),
+        ("השיעור הוא 3 מיליון ו־2 אלף אחוזים", {30_020.0}),
+    ):
+        recall = {round(v, 6) for v in _hebrew_recall(text)}
+        assert recall == expected, (text, recall)
+    assert not (
+        {30_020.0, 3_002_000.0}
+        & extract_numbers_from_text("סכום של 3 מיליון ו־2 אלף אחוזים")
+    )
+
+
+def test_a_shared_scale_unit_is_read_after_printed_lower_scales():
+    for text, expected in (
+        ("השיעור הוא בין 2 ל־3 מיליון ו־200 אלף אחוזים", {20_000.0, 32_000.0}),
+        ("השיעור הוא בין 2 ל־3 מיליון ומאתיים אלף אחוזים", {20_000.0, 32_000.0}),
+        ("השיעור הוא בין 2 ל־3 מיליון ו־200 אלף ו־500 אחוזים", {20_000.0, 32_005.0}),
+        ("הסכום הוא בין 2 ל־3 מיליון ו־200 אלף שקלים", {2_000_000.0, 3_200_000.0}),
+    ):
+        recall = {round(v, 6) for v in _hebrew_recall(text)}
+        assert recall == expected, (text, recall)
+        assert not ({3_000_000.0, 200_000.0} & extract_numbers_from_text(text)), text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
