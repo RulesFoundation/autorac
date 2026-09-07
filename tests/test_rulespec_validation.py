@@ -16611,8 +16611,10 @@ def test_any_feminine_noun_before_a_fraction_word_is_ordinal_evidence():
 def test_a_cited_supplement_is_a_schedule_reference():
     for text, expected in (
         ("לפי תוספת 5, 2 או 3 אחוזים מהשכר", {0.02, 0.03}),
-        ("בתוספת 5, 2 או 3 אחוזים מהשכר", {0.02, 0.03}),
         ("על פי תוספת 5, 2 או 3 אחוזים מהשכר", {0.02, 0.03}),
+        ("לפי  תוספת 5, 2 או 3 אחוזים מהשכר", {0.02, 0.03}),
+        ("לפי\nתוספת 5, 2 או 3 אחוזים מהשכר", {0.02, 0.03}),
+        ("בהתאם לתוספת 5, 2 או 3 אחוזים מהשכר", {0.02, 0.03}),
         ("תוספת 1, 2 או 3 אחוזים מהשכר", {0.01, 0.02, 0.03}),
     ):
         grounded = extract_numbers_from_text(text)
@@ -16649,6 +16651,48 @@ def test_a_prefixed_coordinated_endpoint_keeps_the_amount_before_it():
         ("תוספת 2 עד כ־3 שקלים", {2.0, 3.0}),
     ):
         assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+
+
+def test_a_verb_shaped_word_before_a_fraction_word_is_no_ordinal_evidence():
+    for text in (
+        "המערכת ממתינה עשירית שנייה לאחר קבלת האות",
+        "המנוע ישהה עשירית שנייה לאחר קבלת האות",
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert 10.0 not in grounded, (text, grounded)
+        assert {round(v, 12) for v in _hebrew_recall(text)} == {0.1}, (
+            text,
+            _hebrew_recall(text),
+        )
+    assert _hebrew_recall("נערכה בדיקה חמישית שנה לאחר הבדיקה הקודמת") == {5.0}
+    assert _hebrew_recall(
+        "ילדה חמישית שנה לאחר הלידה הקודמת זכאית למענק של 100 שקלים"
+    ) == {
+        5.0,
+        100.0,
+    }
+
+
+def test_a_prefixed_supplement_is_a_supplement():
+    for text, expected in (
+        ("הקצבה תוגדל בתוספת 1, 2 או 3 אחוזים, בהתאמה", {0.01, 0.02, 0.03}),
+        ("ישולם השכר בתוספת 1, 2 או 3 שקלים, בהתאמה", {1.0, 2.0, 3.0}),
+        ("בתוספת 5, 2 או 3 אחוזים מהשכר", {0.05, 0.02, 0.03}),
+    ):
+        assert {round(v, 12) for v in _hebrew_recall(text)} == expected, (
+            text,
+            _hebrew_recall(text),
+        )
+    # A cited, definite, or "to the law" schedule stays a schedule.
+    assert _hebrew_recall("לפי תוספת 5, 2 או 3 אחוזים מהשכר") == {0.02, 0.03}
+    assert _hebrew_recall("לפי התוספת השנייה ישולם סכום של 100 שקלים") == {100.0}
+    assert _hebrew_recall("בתוספת 5 לחוק ישולם סכום של 100 שקלים") == {100.0}
+
+
+def test_a_percentage_walk_back_crosses_hyphen_vav_joins():
+    text = "שיעורי המס יהיו 1 ו-2 ו-3 אחוזים, בהתאמה"
+    assert {round(v, 12) for v in _hebrew_recall(text)} == {0.01, 0.02, 0.03}
+    assert {0.01, 0.02, 0.03} <= extract_numbers_from_text(text)
 
 
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():

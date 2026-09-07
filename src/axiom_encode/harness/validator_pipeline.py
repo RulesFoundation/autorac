@@ -2870,7 +2870,7 @@ _HEBREW_RANGE_JOIN_BEFORE_PATTERN = re.compile(
     "|(?<![\u0590-\u05ff])(?P<bound>[\u05dc\u05d5])(?:\u05be|[-\u2013]|\\s)\\s*)$"
 )
 _HEBREW_RANGE_WALK_JOIN_PATTERN = re.compile(
-    "(?:(?<![\u0590-\u05ff])(?:עד|ועד|או)\\s+|,\\s*|(?<![\u0590-\u05ff])\u05d5\u05be?\\s*)$"
+    "(?:(?<![\u0590-\u05ff])(?:עד|ועד|או)\\s+|,\\s*|(?<![\u0590-\u05ff])\u05d5(?:\u05be|-)?\\s*)$"
 )
 # An earlier number the walk must not scale: an age, a year, a form number,
 # a grade ("לילד עד גיל 5, 2 או 3 אחוזים"). A reference ("לפי סעיף קטן 5, 2
@@ -3644,13 +3644,17 @@ _HEBREW_ORDINAL_CONTEXT_NOUN_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}\u05d4?"
     "(?:לידה|דירה|דרגה|פעם|שנה|קומה|כיתה|רמה|קטגוריה|מדרגה|שכבה|סדרה|תקופה|עונה|"
     "מנה|יחידה|ילדה|בת|אישה|עובדת|מבוטחת|תלמידה|תוספת|פסקה|תקנה|הוראה|נקודה|שורה|"
-    "מהדורה|גרסה|קבוצה|רשימה|הודעה|בקשה|תביעה|החלטה|ישיבה|שנת)\\s+$"
+    "מהדורה|גרסה|קבוצה|רשימה|הודעה|בקשה|תביעה|החלטה|ישיבה|שנת|מיטה|מכונה|מדינה|"
+    "משמרת|משפחה|מחלה|מלגה|מקדמה|מדידה|מכירה|מסירה|ירושה|יצירה)\\s+$"
 )
 # Any feminine noun the ordinal may modify: one of the nouns above, or a
 # word ending in ה or ת ("בדיקה", "משמרת"); a verb ("יופעל", "ישולם") ends
 # in neither, and the copulas that do ("יהיה", "תהיה") are clause context.
+# A present participle ("ממתינה") begins with מ and a future verb ("ישהה")
+# with י; neither is a noun candidate here. The nouns that begin with those
+# letters ("ילדה", "יחידה", "מדרגה", "מיטה") are listed above.
 _HEBREW_FEMININE_WORD_BEFORE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])[\u0590-\u05ff]{2,}[\u05d4\u05ea]\\s+$"
+    "(?<![\u0590-\u05ff])(?![\u05de\u05d9])[\u0590-\u05ff]{2,}[\u05d4\u05ea]\\s+$"
 )
 
 
@@ -3843,7 +3847,7 @@ _HEBREW_STRUCTURAL_PLURAL_NOUNS = (
 # guard ("תוספת 1, 2 או 3 שקלים"); "סעיף 5, 2 או 3 אחוזים" keeps section 5.
 _HEBREW_STRUCTURAL_SUPPLEMENT_NOUN = "תוספת"
 _HEBREW_CITATION_BEFORE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?:לפי|על פי|מכוח)\\s+$"
+    "(?<![\u0590-\u05ff])(?:(?:לפי|על פי|מכוח)\\s+|בהתאם\\s+ל|(?:כאמור|האמור|כמפורט|המפורט|הקבוע|הקבועה|המנויה)\\s+ב)$"
 )
 _HEBREW_STRUCTURAL_SINGULAR_NOUNS = (
     "פרק|תוספת|חלק|סימן|סעיף קטן|סעיף|פסקת משנה|פסקה|לוח|טור|פרט|תקנה"
@@ -3893,7 +3897,9 @@ _HEBREW_STRUCTURAL_REFERENCE_PATTERN = re.compile(
     + ")"
     # A singular noun takes one item, or a pair joined by a conjunction --
     # never a comma, which ends the reference ("סעיף 1, 100 שקלים").
-    "|(?<!לפי )(?<!על פי )(?<!מכוח )(?<![\u0590-\u05ff])"
+    # A supplement: "תוספת" that no citation word precedes, with or without a
+    # prefix ("הקצבה תוגדל בתוספת 1, 2 או 3 אחוזים").
+    "|(?<!לפי\\s)(?<!לפי\\s\\s)(?<!לפי\\s\\s\\s)(?<!על פי\\s)(?<!על פי\\s\\s)(?<!על פי\\s\\s\\s)(?<!מכוח\\s)(?<!מכוח\\s\\s)(?<!מכוח\\s\\s\\s)(?<!בהתאם ל)(?<!כאמור ב)(?<!האמור ב)(?<!כמפורט ב)(?<!המפורט ב)(?<!הקבוע ב)(?<!הקבועה ב)(?<!המנויה ב)"
     + _HEBREW_STRUCTURAL_SUPPLEMENT_NOUN
     + "\\s+"
     "(?:"
@@ -3916,10 +3922,13 @@ _HEBREW_STRUCTURAL_REFERENCE_PATTERN = re.compile(
     + ")"
     "|(?:"
     + _HEBREW_STRUCTURAL_STRICT_SINGULAR_NOUNS
-    # A cited or prefixed "תוספת" ("לפי תוספת 5", "בתוספת 5") is a schedule.
-    + "|(?:(?<=לפי )|(?<=על פי )|(?<=מכוח )|(?<=[\u05d1\u05db\u05dc\u05de\u05d5\u05e9\u05d4])"
-    "|(?<=[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]\u05d4))"
+    # A cited or definite "תוספת" ("לפי תוספת 5", "התוספת השנייה"), or one
+    # followed by a number and "לחוק"/"לפקודה", is a schedule.
+    + "|(?:(?<=לפי\\s)|(?<=לפי\\s\\s)|(?<=לפי\\s\\s\\s)|(?<=על פי\\s)|(?<=על פי\\s\\s)|(?<=על פי\\s\\s\\s)|(?<=מכוח\\s)|(?<=מכוח\\s\\s)|(?<=מכוח\\s\\s\\s)|(?<=בהתאם ל)|(?<=כאמור ב)|(?<=האמור ב)|(?<=כמפורט ב)|(?<=המפורט ב)|(?<=הקבוע ב)|(?<=הקבועה ב)|(?<=המנויה ב)|(?<=\\u05d4))"
     + _HEBREW_STRUCTURAL_SUPPLEMENT_NOUN
+    + "|"
+    + _HEBREW_STRUCTURAL_SUPPLEMENT_NOUN
+    + "(?=\\s+\\d+[\\u05d0-\\u05ea]?\\s+ל(?:חוק|פקודה|תקנות|צו)(?![\\u0590-\\u05ff]))"
     + ")\\s+"
     "(?:"
     + _HEBREW_STRUCTURAL_DIGIT_ITEM
@@ -3999,7 +4008,6 @@ def _hebrew_structural_word_reference_spans(text: str) -> list[tuple[int, int]]:
         coordinated = (
             _HEBREW_LIST_OF_AMOUNTS_AFTER_PATTERN
             if match.group("singular") == _HEBREW_STRUCTURAL_SUPPLEMENT_NOUN
-            and match.start("singular") == match.start()
             and _search_before(_HEBREW_CITATION_BEFORE_PATTERN, text, match.start())
             is None
             else _HEBREW_COORDINATED_UNIT_AFTER_PATTERN
