@@ -16159,6 +16159,54 @@ def test_a_following_one_keeps_an_ordinal_after_a_noun():
         assert 2.0 not in extract_numbers_from_text(text), text
 
 
+def test_a_percent_marker_after_a_fraction_word_is_a_fraction_of_a_percent():
+    for text, expected in (
+        ("ישולם מס של חמישית% מההכנסה", 0.002),
+        ("ישולם מס של עשירית% מההכנסה", 0.001),
+        ("ישולם מס של רבע% מההכנסה", 0.0025),
+        ("ישולם מס של חמישית אחוז מההכנסה", 0.002),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert any(abs(v - expected) < 1e-12 for v in grounded), (text, grounded)
+        assert not ({0.05, 0.1, 5.0, 10.0, 0.25} & _hebrew_recall(text)), (
+            text,
+            _hebrew_recall(text),
+        )
+        assert {round(v, 12) for v in _hebrew_recall(text)} == {expected}, text
+
+
+def test_a_range_of_rates_shares_its_percent_marker():
+    for text, expected in (
+        ("שיעור המס יהיה בין 2 וחצי ל־3 וחצי%", {0.025, 0.035}),
+        ("שיעור המס יהיה בין שניים וחצי לשלושה וחצי%", {0.025, 0.035}),
+        ("שיעור המס יהיה בין 2 ל־3%", {0.02, 0.03}),
+        ("שיעור המס יהיה 2 עד 3%", {0.02, 0.03}),
+        ("שיעור המס יהיה בין 2% ל־3%", {0.02, 0.03}),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert all(any(abs(v - e) < 1e-12 for v in grounded) for e in expected), (
+            text,
+            grounded,
+        )
+        assert {round(v, 12) for v in _hebrew_recall(text)} == expected, (
+            text,
+            _hebrew_recall(text),
+        )
+
+
+def test_a_measured_second_after_a_prefixed_fraction_or_a_temporal_preposition():
+    for text, expected in (
+        ("זמן התגובה יוגבל לחצי שנייה", {0.5}),
+        ("זמן התגובה יוגבל למחצית השנייה", {0.5}),
+        ("התגובה תתקבל לאחר שנייה אחת", {1.0}),
+        ("התגובה תתקבל כעבור שנייה", set()),
+    ):
+        assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+        assert 2.0 not in extract_numbers_from_text(text), text
+    text = "בעד דירה שנייה אחת ישולם מס של 100 שקלים"
+    assert {2.0, 100.0} <= _hebrew_recall(text)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

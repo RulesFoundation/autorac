@@ -2406,7 +2406,10 @@ _HEBREW_FRACTION_WORD_PATTERN = re.compile(
     + ")"
     "(?![֐-׿])"
     "(?P<partitive>\\s+(?:" + _HEBREW_NOT_A_PARTITIVE_LOOKAHEAD + "מה[֐-׿]|מן(?![֐-׿])"
-    "|ה?אחוז(?:ים|י)?(?![֐-׿])))?"
+    "|ה?אחוז(?:ים|י)?(?![֐-׿]))"
+    # The percent marker serves the fraction as the percent word does:
+    # "חמישית%" is a fifth of a percent.
+    "|\\s*%)?"
     "(?P<loose_partitive>\\s+(?:של(?![֐-׿])|"
     + _HEBREW_NOT_A_PARTITIVE_LOOKAHEAD
     + "(?:מ|ה)[֐-׿]{2,}))?"
@@ -2821,6 +2824,9 @@ def _iter_hebrew_printed_mixed_number_matches(
 _HEBREW_PERCENT_NOUN_ANYWHERE_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}\u05d4?אחוז(?:ים)?"
     "(?![\u0590-\u05ff])"
+    # The marker shares its rate across a range as the noun does ("בין 2
+    # ל־3%").
+    "|%"
 )
 # A printed endpoint flush before a position: a signed number, or a signed
 # fraction with an optional whole ("-2", "1/2", "16 1⁄2"). A number after a
@@ -2828,7 +2834,7 @@ _HEBREW_PERCENT_NOUN_ANYWHERE_PATTERN = re.compile(
 _HEBREW_DIGITS_BEFORE_PATTERN = re.compile(
     "(?<![\\d.,/\u2044])(?:(?<![\u05d0-\u05ea])(?P<sign>[-\u2212]))?"
     "(?:(?:(?P<whole>\\d+)\\s+)?(?P<numerator>\\d+)\\s*[/\u2044]\\s*(?P<denominator>\\d+)"
-    "|(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?))\\s+$"
+    "|(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?))\\s*$"
 )
 
 
@@ -6368,7 +6374,7 @@ def _iter_hebrew_number_word_matches(
 # construct "שניית" ("שניית המתנה") is only ever the unit.
 _HEBREW_SECOND_WORDS = frozenset({"שנייה", "שניה", "שניית"})
 _HEBREW_FRACTION_BEFORE_SECOND_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?:"
+    "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}(?:"
     + "|".join(
         re.escape(w)
         for w in sorted(
@@ -6378,7 +6384,8 @@ _HEBREW_FRACTION_BEFORE_SECOND_PATTERN = re.compile(
     + ")\\s+$"
 )
 _HEBREW_MEASURED_SECOND_BEFORE_PATTERN = re.compile(
-    "(?:\\d|(?<![\u0590-\u05ff])(?:כל|בכל|תוך|למשך|מדי))\\s+$"
+    "(?:\\d|(?<![\u0590-\u05ff])(?:כל|בכל|תוך|בתוך|למשך|במשך|מדי|לאחר|אחרי|כעבור|"
+    "בחלוף|מקץ|לפני|עד))\\s+$"
 )
 _HEBREW_MEASURED_SECOND_AFTER_PATTERN = re.compile("\\s+אח[תד](?![\u0590-\u05ff])")
 
