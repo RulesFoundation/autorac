@@ -2216,6 +2216,20 @@ def _parse_hebrew_number_run(
     cursor = start
     scaled_tail = False
 
+    def fraction_names_own_operand(position: int) -> bool:
+        """Whether the word at ``position`` gives the fraction before it its own operand.
+
+        A lower scale word ("וחצי אלף" is five hundred) or a partitive
+        ("וחמישית מההכנסה", "של"): the fraction is then no tail of the
+        scale before it.
+        """
+        if position >= len(words):
+            return False
+        raw = words[position]
+        if word_at(position) in _HEBREW_SCALE_VALUES:
+            return True
+        return raw.startswith("\u05de") or raw in {"של", "מן"}
+
     def parse_scale_part(
         position: int,
         scale_words: dict[str, float],
@@ -2234,6 +2248,20 @@ def _parse_hebrew_number_run(
                 bare_values[word],
                 scale_words.get(word, bare_values[word]),
                 position + 1,
+            )
+        elif (
+            word in _HEBREW_FRACTION_COUNT_VALUES
+            and position + 1 < len(words)
+            and words[position + 1] in _HEBREW_COUNTED_FRACTION_VALUES
+            and word_at(position + 2) in scale_words
+        ):
+            # A counted fractional multiplier: "שלושת רבעי מיליון" is 750,000.
+            scale = scale_words[word_at(position + 2)]
+            amount, following = (
+                _HEBREW_FRACTION_COUNT_VALUES[word]
+                * _HEBREW_COUNTED_FRACTION_VALUES[words[position + 1]]
+                * scale,
+                position + 3,
             )
         else:
             count = parse_below_thousand(position)
@@ -2272,6 +2300,7 @@ def _parse_hebrew_number_run(
             following < len(words)
             and has_vav(following)
             and words[following][1:] in _HEBREW_MIXED_FRACTION_VALUES
+            and not fraction_names_own_operand(following + 1)
         ):
             amount += _HEBREW_MIXED_FRACTION_VALUES[words[following][1:]] * scale
             following += 1
@@ -2297,7 +2326,15 @@ def _parse_hebrew_number_run(
         kinds |= rest_kinds
     # A vav-bound fractional tail: "וחצי", or a counted fraction "ושני
     # שלישים", "ושלושה רבעים".
-    if not scaled_tail and start < cursor < len(words) and has_vav(cursor):
+    if (
+        not scaled_tail
+        and start < cursor < len(words)
+        and has_vav(cursor)
+        and not (
+            kinds & {"thousand", "million", "billion"}
+            and fraction_names_own_operand(cursor + 1)
+        )
+    ):
         tail = words[cursor][1:]
         if tail in _HEBREW_MIXED_FRACTION_VALUES:
             value += _HEBREW_MIXED_FRACTION_VALUES[tail]
@@ -2884,26 +2921,25 @@ def _iter_hebrew_percent_phrase_matches(
 # 3,500,000, "2 אלף" 2,000, "3 וחצי מיליון" 3,500,000. Read before the
 # digit passes, which would otherwise take the multiplier as a value of
 # its own and the scale word as another.
+_HEBREW_PRINTED_SCALE_FRACTIONS = "|".join(
+    re.escape(w) for w in sorted(_HEBREW_MIXED_FRACTION_VALUES, key=len, reverse=True)
+)
+_HEBREW_PRINTED_SCALE_WORDS = _hebrew_alternation(
+    set(_HEBREW_BILLION_WORDS) | set(_HEBREW_MILLION_WORDS) | {"אלף", "אלפים", "אלפי"}
+)
 _HEBREW_PRINTED_SCALE_PATTERN = re.compile(
-    "(?<![\\d.,/\u2044])(?:(?<![\u05d0-\u05ea])(?P<sign>[-\u2212]))?"
-    "(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
-    "(?:\\s+\u05d5(?P<tail>"
-    + "|".join(
-        re.escape(w)
-        for w in sorted(_HEBREW_MIXED_FRACTION_VALUES, key=len, reverse=True)
-    )
-    + "))?\\s+(?P<scale>"
-    + _hebrew_alternation(
-        set(_HEBREW_BILLION_WORDS)
-        | set(_HEBREW_MILLION_WORDS)
-        | {"אלף", "אלפים", "אלפי"}
-    )
-    + ")(?![\u0590-\u05ff])(?:\\s+\u05d5(?P<after_tail>"
-    + "|".join(
-        re.escape(w)
-        for w in sorted(_HEBREW_MIXED_FRACTION_VALUES, key=len, reverse=True)
-    )
-    + "))?"
+    "(?<![\\d.,/⁄])(?:(?<![א-ת])(?P<sign>[-−]))?"
+    # A printed fraction, mixed ("2 1⁄2") or bare ("1⁄2", "1⁄ 2"), or a
+    # decimal; each is a complete multiplier.
+    "(?:(?:(?P<whole>\\d+)\\s+)?(?P<numerator>\\d+)\\s*[/⁄]\\s*(?P<denominator>\\d+)"
+    "|(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?))"
+    "(?:\\s+ו(?P<tail>" + _HEBREW_PRINTED_SCALE_FRACTIONS + ")(?![֐-׿]))?"
+    "\\s+(?P<scale>" + _HEBREW_PRINTED_SCALE_WORDS + ")(?![֐-׿])"
+    # A scaled tail after the scale word -- a whole fraction word, and not
+    # one that names its own operand: a lower scale word ("וחצי אלף") or a
+    # partitive ("וחמישית מההכנסה", "של").
+    "(?:\\s+ו(?P<after_tail>" + _HEBREW_PRINTED_SCALE_FRACTIONS + ")(?![֐-׿])"
+    "(?!\\s+(?:(?:" + _HEBREW_PRINTED_SCALE_WORDS + "|של|מן)(?![֐-׿])|מ[֐-׿])))?"
 )
 # The whitespace before a vav-bound spelled remainder ("3 מיליון ומאתיים אלף").
 _HEBREW_SPELLED_REMAINDER_GAP_PATTERN = re.compile("\\s+(?=\u05d5[\u0590-\u05ff])")
@@ -2961,7 +2997,12 @@ def _iter_hebrew_printed_scale_matches(
     matches: list[tuple[tuple[int, int], float]] = []
     for match in _HEBREW_PRINTED_SCALE_PATTERN.finditer(text):
         scale = _HEBREW_PRINTED_SCALE_VALUES[match.group("scale")]
-        value = float(match.group("number").replace(",", ""))
+        if match.group("numerator"):
+            value = float(match.group("whole") or 0) + float(
+                match.group("numerator")
+            ) / float(match.group("denominator"))
+        else:
+            value = float(match.group("number").replace(",", ""))
         if match.group("tail"):
             value += _HEBREW_MIXED_FRACTION_VALUES[match.group("tail")]
         value *= scale

@@ -16997,6 +16997,78 @@ def test_a_construct_thousand_counts_its_multiplier():
         assert _hebrew_recall(text) == {expected}, (text, _hebrew_recall(text))
 
 
+def test_a_scaled_tail_is_a_whole_fraction_word():
+    # "וחציון" (and the median) begins with the letters of "חצי"; only a
+    # complete fraction word is a tail.
+    text = "התקציב הוא 3 מיליון וחציון השכר הוא 10,000 שקלים"
+    grounded = extract_numbers_from_text(text)
+    assert {3_000_000.0, 10_000.0} <= grounded and 3_500_000.0 not in grounded, grounded
+    assert _hebrew_recall(text) == {3_000_000.0, 10_000.0}
+
+
+def test_a_printed_fraction_multiplies_its_scale_word():
+    for text, expected in (
+        ("סכום של 1⁄2 מיליון שקלים", 500_000.0),
+        ("סכום של 1⁄ 2 מיליון שקלים", 500_000.0),
+        ("סכום של 1/2 מיליון שקלים", 500_000.0),
+        ("סכום של 2 1⁄2 מיליון שקלים", 2_500_000.0),
+        ("סכום של 3⁄4 מיליארד שקלים", 750_000_000.0),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert expected in grounded, (text, grounded)
+        # The bare scale word and the denominator-times-scale product are
+        # never values here; the printed numerator and denominator stay
+        # available to grounding, as for every printed fraction.
+        assert not ({2_000_000.0, 1_000_000.0, 1_000_000_000.0} & grounded), (
+            text,
+            grounded,
+        )
+        assert _hebrew_recall(text) == {expected}, (text, _hebrew_recall(text))
+
+
+def test_a_counted_fraction_multiplies_its_scale_word():
+    for text, expected in (
+        ("סכום של שלושת רבעי מיליון שקלים", 750_000.0),
+        ("סכום של שני שלישי מיליארד שקלים", 2_000_000_000.0 / 3.0),
+        ("סכום של שלושה רבעים מיליון שקלים", 750_000.0),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert any(abs(v - expected) < 1e-6 for v in grounded), (text, grounded)
+        assert not ({0.75, 1_000_000.0, 1_000_000_000.0} & grounded), (text, grounded)
+        recall = _hebrew_recall(text)
+        assert len(recall) == 1 and abs(next(iter(recall)) - expected) < 1e-6, (
+            text,
+            recall,
+        )
+    # Without a scale word the counted fraction stays a fraction.
+    assert _hebrew_recall("שלושת רבעי הסכום") == {0.75}
+
+
+def test_a_fraction_that_names_its_own_operand_is_no_scaled_tail():
+    # A partitive after the fraction word: three million, and a fifth of
+    # the income. A lower scale word after it: three million and half a
+    # thousand.
+    for text, expected in (
+        ("סכום של 3 מיליון וחמישית מההכנסה", {3_000_000.0, 0.2}),
+        ("סכום של מיליון וחמישית מההכנסה", {1_000_000.0, 0.2}),
+        ("סכום של 3 מיליון וחצי אלף שקלים", {3_000_500.0}),
+        ("סכום של מיליון וחצי אלף שקלים", {1_000_500.0}),
+        ("סכום של 3 מיליון וחצי של הסכום", {3_000_000.0, 0.5}),
+    ):
+        assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+        assert expected <= extract_numbers_from_text(text), (
+            text,
+            extract_numbers_from_text(text),
+        )
+        assert not (
+            {3_200_000.0, 1_200_000.0, 3_500_000.0, 1_500_000.0}
+            & extract_numbers_from_text(text)
+        ), text
+    # A plain scaled tail still scales.
+    assert _hebrew_recall("סכום של 3 מיליון וחצי שקלים") == {3_500_000.0}
+    assert _hebrew_recall("סכום של מיליון וחצי שקלים") == {1_500_000.0}
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
