@@ -2481,6 +2481,10 @@ def _iter_hebrew_fraction_word_matches(
                         text, match.end("fraction")
                     )
                     is not None
+                    # "עשירית שקל" is a tenth of a shekel, "עשירית שנייה" a
+                    # tenth of a second: a unit after the word says fraction.
+                    or _HEBREW_UNIT_AFTER_PATTERN.match(text, match.end("fraction"))
+                    is not None
                 )
                 loose = bool(match.group("loose_partitive")) and (
                     _hebrew_fraction_context_before(text, match.start())
@@ -2498,7 +2502,7 @@ def _iter_hebrew_fraction_word_matches(
                     or names_an_amount
                     or _hebrew_fraction_context_before(text, match.start())
                 )
-                if not count and not strict and not loose:
+                if not count and not strict and not loose and not names_an_amount:
                     continue
             value = _HEBREW_FRACTION_VALUES[word]
         if count:
@@ -3241,14 +3245,16 @@ _HEBREW_STRUCTURAL_NUMBER_WORD = "\u05d4?" + _HEBREW_STRUCTURAL_NUMBER_WORD_BODY
 # השנייה, השלישית והרביעית"); every item after the first carries the
 # article, which a count never does, so "ושלושה ילדים" after a list stays
 # substantive.
-_HEBREW_STRUCTURAL_NUMBER_WORD_LIST = (
-    _HEBREW_STRUCTURAL_NUMBER_WORD
-    + "(?:\\s*,\\s*\u05d4"
+_HEBREW_STRUCTURAL_NUMBER_WORD_LIST_TAIL = (
+    "(?:\\s*,\\s*\u05d4"
     + _HEBREW_STRUCTURAL_NUMBER_WORD_BODY
     + ")*"
     + "(?:\\s+(?:\u05d5|או\\s+)\u05d4"
     + _HEBREW_STRUCTURAL_NUMBER_WORD_BODY
     + ")?"
+)
+_HEBREW_STRUCTURAL_NUMBER_WORD_LIST = (
+    _HEBREW_STRUCTURAL_NUMBER_WORD + _HEBREW_STRUCTURAL_NUMBER_WORD_LIST_TAIL
 )
 # A reference label: digits, an optional letter, and any parenthesized
 # labels ("1", "1א", "1(א)", "2(ב)(3)"). The digits are a whole number: the
@@ -3521,17 +3527,24 @@ _HEBREW_UNIT_AFTER_PATTERN = re.compile(
 _HEBREW_STRUCTURAL_NOT_A_QUANTITY = "(?!\\s*(?:" + _HEBREW_STRUCTURAL_UNIT_NOUNS + "))"
 _HEBREW_STRUCTURAL_LIST_JOIN = "(?:\u05d5\u05be?|או)"
 _HEBREW_STRUCTURAL_RANGE_JOIN = "(?:עד|[-\u2013\u2014])"
-# Nor the first half of a coordinated quantity or a range of amounts: in
-# "1, 2, 4, 100 או 200 דולר" and "1, 2, 4, 100 עד 200 דולר" the list ends at
-# 4, and 100 is an amount with 200.
-_HEBREW_STRUCTURAL_NOT_A_COORDINATED_QUANTITY = (
-    "(?!\\s*(?:"
+# Nor the first half of a coordinated quantity or a range of amounts,
+# printed or spelled: in "1, 2, 4, 100 או 200 דולר", "1, 2, 4, 100 עד 200
+# דולר" and "תוספת שתיים עד שלוש נקודות" the number before the join is an
+# amount with the one after it.
+_HEBREW_STRUCTURAL_COORDINATED_QUANTITY = (
+    "\\s*(?:"
     + _HEBREW_STRUCTURAL_LIST_JOIN
     + "|"
     + _HEBREW_STRUCTURAL_RANGE_JOIN
-    + ")\\s*\\d+(?:[.,]\\d+)?\\s*(?:"
+    + ")\\s*(?:\\d+(?:[.,]\\d+)?|[\u0590-\u05ff]+)\\s*(?:"
     + _HEBREW_STRUCTURAL_UNIT_NOUNS
-    + "))"
+    + ")(?![\u0590-\u05ff])"
+)
+_HEBREW_STRUCTURAL_NOT_A_COORDINATED_QUANTITY = (
+    "(?!" + _HEBREW_STRUCTURAL_COORDINATED_QUANTITY + ")"
+)
+_HEBREW_COORDINATED_UNIT_AFTER_PATTERN = re.compile(
+    _HEBREW_STRUCTURAL_COORDINATED_QUANTITY
 )
 # One item of a list: a reference, or a range of two ("1 עד 3", "1–3").
 _HEBREW_STRUCTURAL_DIGIT_ITEM = (
@@ -3563,6 +3576,7 @@ _HEBREW_STRUCTURAL_REFERENCE_PATTERN = re.compile(
     "(?:"
     + _HEBREW_STRUCTURAL_DIGIT_ITEM
     + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
+    + _HEBREW_STRUCTURAL_NOT_A_COORDINATED_QUANTITY
     + "(?:\\s*,\\s*"
     + _HEBREW_STRUCTURAL_DIGIT_ITEM
     + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
@@ -3574,20 +3588,41 @@ _HEBREW_STRUCTURAL_REFERENCE_PATTERN = re.compile(
     + _HEBREW_STRUCTURAL_DIGIT_ITEM
     + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
     + ")?"
-    "|" + _HEBREW_STRUCTURAL_NUMBER_WORD_LIST + _HEBREW_STRUCTURAL_NOT_A_QUANTITY + ")"
+    # A spelled reference under the article is a reference whatever follows
+    # ("התוספות השנייה ושלושה ילדים" keeps its three children substantive); a
+    # bare one may be the first half of a quantity ("תוספות שתיים עד שלוש
+    # נקודות").
+    "|\u05d4"
+    + _HEBREW_STRUCTURAL_NUMBER_WORD_BODY
+    + _HEBREW_STRUCTURAL_NUMBER_WORD_LIST_TAIL
+    + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
+    + "|"
+    + _HEBREW_STRUCTURAL_NUMBER_WORD_BODY
+    + _HEBREW_STRUCTURAL_NUMBER_WORD_LIST_TAIL
+    + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
+    + _HEBREW_STRUCTURAL_NOT_A_COORDINATED_QUANTITY
+    + ")"
     # A singular noun takes one item, or a pair joined by a conjunction --
     # never a comma, which ends the reference ("סעיף 1, 100 שקלים").
     "|(?:" + _HEBREW_STRUCTURAL_SINGULAR_NOUNS + ")\\s+"
     "(?:"
     + _HEBREW_STRUCTURAL_DIGIT_ITEM
     + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
+    + _HEBREW_STRUCTURAL_NOT_A_COORDINATED_QUANTITY
     + "(?:\\s*"
     + _HEBREW_STRUCTURAL_LIST_JOIN
     + "\\s*"
     + _HEBREW_STRUCTURAL_DIGIT_ITEM
     + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
     + ")?"
-    "|" + _HEBREW_STRUCTURAL_NUMBER_WORD + _HEBREW_STRUCTURAL_NOT_A_QUANTITY + ")"
+    "|\u05d4"
+    + _HEBREW_STRUCTURAL_NUMBER_WORD_BODY
+    + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
+    + "|"
+    + _HEBREW_STRUCTURAL_NUMBER_WORD_BODY
+    + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
+    + _HEBREW_STRUCTURAL_NOT_A_COORDINATED_QUANTITY
+    + ")"
     ")"
     "(?![\u0590-\u05ff\\d])"
 )
@@ -3641,9 +3676,14 @@ def _hebrew_structural_word_reference_spans(text: str) -> list[tuple[int, int]]:
         end = tokens[parsed[0] - 1].end()
         if end < len(text) and text[end].isdigit():
             continue
-        # "תוספת שתי נקודות זיכוי" is a supplement of two credit points: a
-        # number with a unit after it is a quantity, whatever noun precedes.
-        if _HEBREW_UNIT_AFTER_PATTERN.match(text, end) is not None:
+        # "תוספת שתי נקודות זיכוי" is a supplement of two credit points and
+        # "תוספת שתיים עד שלוש נקודות" two to three: a number with a unit
+        # after it, or coordinated with one, is a quantity whatever noun
+        # precedes.
+        if _HEBREW_UNIT_AFTER_PATTERN.match(text, end) is not None or (
+            not tokens[0].group(0).startswith("\u05d4")
+            and _HEBREW_COORDINATED_UNIT_AFTER_PATTERN.match(text, end) is not None
+        ):
             continue
         spans.append((match.start(), end))
     return spans

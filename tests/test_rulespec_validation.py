@@ -16270,6 +16270,35 @@ def test_a_range_endpoint_takes_every_fraction_word():
         }, (text, _hebrew_recall(text))
 
 
+def test_a_coordinated_quantity_after_a_reference_noun_keeps_both_endpoints():
+    for text, expected in (
+        ("תוספת 2 עד 3 שקלים לכל ילד", {2.0, 3.0}),
+        ("תוספת 2 או 3 שקלים לכל ילד", {2.0, 3.0}),
+        ("תוספת שתיים עד שלוש נקודות זיכוי", {2.0, 3.0}),
+        ("סעיפים 2 ו־3 שקלים", {2.0, 3.0}),
+    ):
+        assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+    # A genuine reference range stays structural.
+    assert _hebrew_recall("לפי סעיף 2 עד 3 ישולם סכום של 100 שקלים") == {100.0}
+    assert _hebrew_recall("לפי סעיפים 2 או 3 ישולם סכום של 100 שקלים") == {100.0}
+
+
+def test_a_fraction_word_before_a_unit_is_a_fraction():
+    for text, expected in (
+        ("ישולם סכום של עשירית שקל", {0.1}),
+        ("זמן התגובה יהיה עשירית שנייה", {0.1}),
+        ("יובאו בחשבון חמישית נקודת זיכוי", {0.2}),
+        ("ישולם סכום של שמינית אגורה", {0.125}),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert not ({10.0, 5.0, 8.0, 2.0} & grounded), (text, grounded)
+        assert {round(v, 12) for v in _hebrew_recall(text)} == expected, (
+            text,
+            _hebrew_recall(text),
+        )
+    assert _hebrew_recall("לידה עשירית מזכה במענק של 100 שקלים") == {10.0, 100.0}
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
