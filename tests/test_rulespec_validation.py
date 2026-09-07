@@ -17114,6 +17114,70 @@ def test_a_counted_fractional_tail_in_a_mixed_multiplier_scales():
         assert not ({3.75, 1_000_000.0, 1_000_000_000.0} & grounded), (text, grounded)
 
 
+def test_a_budget_noun_is_a_fraction_operand():
+    for text, expected in (
+        ("סכום של 3 מיליון וחצי מהתקציב", {3_000_000.0, 0.5}),
+        ("סכום של מיליון וחצי מהתקציב", {1_000_000.0, 0.5}),
+        ("סכום של 3 מיליון וחצי מההוצאות", {3_000_000.0, 0.5}),
+        ("סכום של 3 מיליון וחצי מהמחזור", {3_000_000.0, 0.5}),
+        ("סכום של 3 מיליון וחצי מהחוב", {3_000_000.0, 0.5}),
+    ):
+        assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+        assert expected <= extract_numbers_from_text(text), (
+            text,
+            extract_numbers_from_text(text),
+        )
+
+
+def test_a_counted_fractional_tail_keeps_its_own_operand():
+    two_thirds = 2.0 / 3.0
+    for text in (
+        "סכום של שלושה מיליון ושני שלישים מההכנסה",
+        "סכום של 3 מיליון ושני שלישים מההכנסה",
+    ):
+        recall = _hebrew_recall(text)
+        assert 3_000_000.0 in recall and len(recall) == 2, (text, recall)
+        assert any(abs(v - two_thirds) < 1e-9 for v in recall), (text, recall)
+        grounded = extract_numbers_from_text(text)
+        assert not any(abs(v - (3_000_000.0 + two_thirds)) < 1e-3 for v in grounded), (
+            text,
+            grounded,
+        )
+    # Without an operand of its own the counted fraction scales with the
+    # scale word before it.
+    for text in ("סכום של שלושה מיליון ושני שלישים", "סכום של 3 מיליון ושני שלישים"):
+        recall = _hebrew_recall(text)
+        assert len(recall) == 1, (text, recall)
+        assert (
+            abs(next(iter(recall)) - (3_000_000.0 + two_thirds * 1_000_000.0)) < 1e-3
+        ), (
+            text,
+            recall,
+        )
+
+
+def test_a_printed_lower_scale_remainder_composes():
+    for text, expected in (
+        ("סכום של 3 מיליון ו־200 אלף שקלים", 3_200_000.0),
+        ("סכום של 3 מיליון ו-200 אלף שקלים", 3_200_000.0),
+        ("סכום של 3 מיליון ו 200 אלף שקלים", 3_200_000.0),
+        ("סכום של 3 מיליארד ו־200 מיליון ו־50 אלף שקלים", 3_200_050_000.0),
+        ("סכום של 3 מיליארד ומאתיים מיליון ו־50 אלף שקלים", 3_200_050_000.0),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert grounded == {expected}, (text, grounded)
+        assert _hebrew_recall(text) == {expected}, (text, _hebrew_recall(text))
+    # Not descending: two amounts, each its own.
+    assert _hebrew_recall("סכום של 3 מיליון ו־5 מיליון שקלים") == {
+        3_000_000.0,
+        5_000_000.0,
+    }
+    assert _hebrew_recall("סכום של 200 אלף ו־3 מיליון שקלים") == {
+        200_000.0,
+        3_000_000.0,
+    }
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
