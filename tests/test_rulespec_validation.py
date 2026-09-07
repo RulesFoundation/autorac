@@ -17254,7 +17254,7 @@ def test_a_shared_scale_range_reads_compound_spelled_endpoints():
     for text, expected in (
         ("עשרים ושלושה עד שלושים מיליון שקלים", {23_000_000.0, 30_000_000.0}),
         ("בין מאה ועשרים ל־200 אלף שקלים", {120_000.0, 200_000.0}),
-        ("בין 120 למאתיים וחמישים אלף שקלים", {120.0, 250_000.0}),
+        ("בין 120 למאתיים וחמישים אלף שקלים", {120_000.0, 250_000.0}),
         (
             "שלושים וחמישה עד ארבעים ושניים מיליון שקלים",
             {35_000_000.0, 42_000_000.0},
@@ -17347,6 +17347,42 @@ def test_a_shared_scale_range_reads_a_fractional_lower_endpoint():
             text,
             grounded,
         )
+
+
+def test_a_mixed_rate_after_a_scaled_amount_keeps_the_scale():
+    for text, expected in (
+        ("סכום של שלושה מיליון ושלושה וחצי אחוזים מההכנסה", {3_000_000.0, 0.035}),
+        ("סכום של 3 מיליון ושלושה וחצי אחוזים מההכנסה", {3_000_000.0, 0.035}),
+        (
+            "סכום של שלושה מיליון ושלושה ושלושה רבעים אחוזים מההכנסה",
+            {3_000_000.0, 0.0375},
+        ),
+        ("סכום של 3 מיליון ושלושה ושלושה רבעים אחוזים מההכנסה", {3_000_000.0, 0.0375}),
+        ("סכום של שלושה מיליון ושלושה וחצי% מההכנסה", {3_000_000.0, 0.035}),
+        ("סכום של שלושה מיליון ושלושה ושלושה רבעים% מההכנסה", {3_000_000.0, 0.0375}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+        grounded = extract_numbers_from_text(text)
+        assert expected <= grounded and 3.0 not in grounded, (text, grounded)
+
+
+def test_a_shared_scale_range_reads_an_attached_lamed_on_a_spelled_endpoint():
+    for text, expected in (
+        ("בין שלושה לחמישה מיליון שקלים", {3_000_000.0, 5_000_000.0}),
+        ("בין 3 לחמישה מיליון שקלים", {3_000_000.0, 5_000_000.0}),
+        ("בין חצי לשלושה מיליון שקלים", {500_000.0, 3_000_000.0}),
+        ("מ־3 לחמישה מיליון שקלים", {3_000_000.0, 5_000_000.0}),
+        ("בין עשרים ושלושה לשלושים מיליון שקלים", {23_000_000.0, 30_000_000.0}),
+    ):
+        assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+        grounded = extract_numbers_from_text(text)
+        assert expected <= grounded and not ({3.0, 0.5, 23.0} & grounded), (
+            text,
+            grounded,
+        )
+    # Without "בין" or "מ־" before the lower endpoint the ל joins nothing.
+    assert _hebrew_recall("שלושה לחמישה מיליון שקלים") == {3.0, 5_000_000.0}
 
 
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():

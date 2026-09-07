@@ -2244,6 +2244,33 @@ def _parse_hebrew_number_run(
         probe = " " + " ".join(words[position : position + 2])
         return _HEBREW_FRACTION_OPERAND_AFTER_PATTERN.match(probe) is not None
 
+    def rate_count_follows(position: int) -> bool:
+        """Whether the words from ``position`` count a rate.
+
+        A percent noun right there ("ועשרים אחוזים"), or a fractional tail
+        and then the noun ("ושלושה וחצי אחוזים", "ושלושה ושלושה רבעים
+        אחוזים"): the count belongs to the rate, not to the amount before.
+        """
+        if position >= len(words):
+            return False
+        if _hebrew_is_percent_noun(words[position]):
+            return True
+        if not has_vav(position):
+            return False
+        tail = words[position][1:]
+        if (
+            tail in _HEBREW_MIXED_FRACTION_VALUES
+            and position + 1 < len(words)
+            and _hebrew_is_percent_noun(words[position + 1])
+        ):
+            return True
+        return (
+            tail in _HEBREW_FRACTION_COUNT_VALUES
+            and position + 2 < len(words)
+            and words[position + 1] in _HEBREW_COUNTED_FRACTION_VALUES
+            and _hebrew_is_percent_noun(words[position + 2])
+        )
+
     def parse_scale_part(
         position: int,
         scale_words: dict[str, float],
@@ -2367,14 +2394,9 @@ def _parse_hebrew_number_run(
             kinds.add("fraction")
             scaled_tail = True
     rest = None if scaled_tail else parse_below_thousand(cursor)
-    if (
-        rest is not None
-        and kinds & _HEBREW_SCALE_KINDS
-        and rest[0] < len(words)
-        and _hebrew_is_percent_noun(words[rest[0]])
-    ):
-        # "שלושה מיליון ועשרים אחוזים": the twenty counts a rate, not the
-        # million's remainder.
+    if rest is not None and kinds & _HEBREW_SCALE_KINDS and rate_count_follows(rest[0]):
+        # "שלושה מיליון ועשרים אחוזים", "שלושה מיליון ושלושה וחצי אחוזים":
+        # the count belongs to the rate, not to the million's remainder.
         rest = None
     if rest is not None:
         cursor, amount, rest_kinds = rest
@@ -3191,11 +3213,30 @@ def _iter_hebrew_shared_scale_range_matches(
         join = _search_before(
             _HEBREW_SHARED_SCALE_JOIN_BEFORE_PATTERN, text, upper_start, 12
         )
-        if join is None:
-            continue
-        lower_end = len(text[: join.start()].rstrip())
-        if lower_end == join.start():
-            continue
+        needs_bound = False
+        if join is not None:
+            lower_end = len(text[: join.start()].rstrip())
+            if lower_end == join.start():
+                continue
+        else:
+            # A ל prefix on a spelled upper endpoint joins under "בין" or
+            # "מ־" before the lower endpoint: "בין שלושה לחמישה מיליון".
+            upper_word = _HEBREW_WORD_TOKEN_PATTERN.match(text, upper_start)
+            if (
+                printed_upper is not None
+                or upper_word is None
+                or not upper_word.group(0).startswith("\u05dc")
+                or _strip_hebrew_number_prefix(
+                    upper_word.group(0)[1:].lstrip("\u05be"),
+                    _HEBREW_RUN_START_VOCABULARY,
+                )
+                is None
+            ):
+                continue
+            lower_end = len(text[:upper_start].rstrip())
+            if lower_end == upper_start:
+                continue
+            needs_bound = True
         printed_lower = _search_before(
             _HEBREW_DIGITS_BEFORE_PATTERN, text, lower_end, 32
         )
@@ -3210,6 +3251,11 @@ def _iter_hebrew_shared_scale_range_matches(
                 continue
             lower_span = (spelled_lower[0], lower_end)
             lower_value = spelled_lower[1]
+        if needs_bound and (
+            _search_before(_HEBREW_RANGE_LOWER_BOUND_PATTERN, text, lower_span[0], 16)
+            is None
+        ):
+            continue
         if (
             _span_overlaps(lower_span, structural_spans)
             or _search_before(
