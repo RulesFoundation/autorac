@@ -429,8 +429,10 @@ install, download, corpus fetch, or pointer update is performed. Omit `--json` f
 operator-readable explanations. Omit all three release flags together to inspect
 only the installation. `--expected-supervisor-sha256` optionally compares the
 installed native supervisor against an operator-selected approved build hash.
-Neither an expected hash supplied by the caller nor embedded Go build metadata
-is itself authenticated provenance.
+An expected hash supplied by the caller is not itself authenticated provenance.
+The doctor never parses embedded ELF/Mach-O/Go metadata: even small binaries can
+encode sections that expand beyond an inspection budget. Native magic and a hash
+do not establish executable format validity, production build kind, or provenance.
 
 The default installation layout is the existing provisioner's
 `/opt/axiom-verification`: supervisor and launcher at the root, public
@@ -445,7 +447,9 @@ configured deployment layouts require their owner's actual supervisor preflight;
 the doctor does not search or guess alternative import roots.
 
 The JSON schema is `axiom-encode/runtime-readiness/v1`. Each check carries
-`id`, `status`, `detail`, `owner`, and `action`. Status `observed` means only that
+`id`, `status`, `detail`, `owner`, and `action`. The report retains the requested
+encoder/supervisor identities and, when selected, the corpus root/name/digest/object
+path so a saved JSON report identifies exactly what was inspected. Status `observed` means only that
 the named local observation passed; it never means trusted, admitted, or ready
 to sign. `missing`, `malformed`, `untrusted`, `stale`, and `unreadable` identify
 known blockers. `incomplete` identifies an exhausted work budget or unavailable
@@ -471,7 +475,7 @@ work budget. Individual reads have additional size caps. A stalled local
 filesystem syscall is not interruptible, so the elapsed budget is not a hard
 wall-clock timeout; use only locally mounted installation/corpus paths.
 
-The command checks native supervisor metadata, launcher/interpreter protection,
+The command checks supervisor file protection/header/hash, launcher/interpreter protection,
 runtime tree protection/startup carriers, encoder package bytes against the
 protected attestation, public roots through the production v2/v3 parser, the
 provisioned Git wrapper, and pinned Codex bytes against both config and runtime
@@ -479,7 +483,8 @@ attestation. It does **not** execute dynamic-loader/bootstrap checks, inspect
 the delegated Git binary or all command-specific tools/dependencies, establish
 supervisor build provenance without an approved artifact comparison, assess
 subscription credentials/capacity, verify public roots against custodian policy,
-contact a broker/signer, or verify/admit a corpus release. It is not a policy
+contact a broker/signer, or verify/admit a corpus release. It reports nonempty
+ambient `CODEX_HOME` as a subscription launch blocker without emitting its value. It is not a policy
 evaluator or a replacement for production preflight.
 
 ### Operator handoff

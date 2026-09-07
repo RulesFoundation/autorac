@@ -4,11 +4,14 @@ package main
 
 import (
 	"bytes"
+	"compress/zlib"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -403,4 +406,139 @@ func TestDoctorDirectoryBudgetAndSpecialEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 	doctorStatus(t, newDoctorBudget().tree(root, nil, "", 0), "untrusted")
+}
+
+func TestDoctorRejectsCaseVariantPublicJSONFields(t *testing.T) {
+	for _, raw := range []string{
+		`{"SCHEMA":"x"}`,
+		`{"schema":"x","SCHEMA":"y"}`,
+		`{"axiom_encode":{"COMMIT":"a"}}`,
+		`{"axiom_encode":{"commit":"a","COMMIT":"b"}}`,
+		`{"codex_cli":{"SHA256":"CREDENTIAL_MARKER"}}`,
+	} {
+		var a doctorAttestation
+		err := doctorJSON([]byte(raw), &a)
+		doctorStatus(t, err, "malformed")
+		if strings.Contains(err.Error(), "CREDENTIAL_MARKER") {
+			t.Fatal("input leaked")
+		}
+	}
+	if !trustPolicyAllowsWritablePath() {
+		return
+	}
+	root, _ := doctorRuntimeFixture(t)
+	path := filepath.Join(root, "python/runtime-attestation.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, altered := range [][]byte{
+		bytes.Replace(raw, []byte(`"commit"`), []byte(`"COMMIT"`), 1),
+		bytes.Replace(raw, []byte(`"commit":`), []byte(`"COMMIT":"`+strings.Repeat("b", 40)+`","commit":`), 1),
+	} {
+		if err := os.WriteFile(path, altered, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		r := inspectDoctor(doctorOptions{installation: root}, newDoctorBudget())
+		if c := doctorCheckByID(t, r, "runtime_attestation"); c.Status != "malformed" {
+			t.Fatalf("case alias accepted: %+v", c)
+		}
+		if c := doctorCheckByID(t, r, "encoder_package"); c.Status != "incomplete" {
+			t.Fatalf("invalid identity used: %+v", c)
+		}
+	}
+}
+
+type doctorFailingWriter struct{}
+
+func (doctorFailingWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+func TestDoctorOutputErrors(t *testing.T) {
+	for _, args := range [][]string{{"--help"}, {"--installation", "/axiom-doctor-known-missing-installation"}, {"--installation", "/axiom-doctor-known-missing-installation", "--json"}} {
+		if rc := runDoctor(args, doctorFailingWriter{}, io.Discard); rc != 64 {
+			t.Fatalf("output failure returned %d", rc)
+		}
+	}
+}
+
+func TestDoctorCompressedELFMetadataIsNeverParsed(t *testing.T) {
+	if !trustPolicyAllowsWritablePath() {
+		t.Skip("fixture build only")
+	}
+	// Tiny ELF64 with a section-name table declaring a 1 GiB uncompressed size.
+	// A generic debug/elf reader can allocate/decompress outside our file budget.
+	// The doctor must only inspect the native magic and hash these bounded bytes.
+	var compressed bytes.Buffer
+	zw := zlib.NewWriter(&compressed)
+	if _, err := zw.Write([]byte("\x00.shstrtab\x00")); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	raw := make([]byte, 64+2*64+24+compressed.Len())
+	copy(raw, []byte{0x7f, 'E', 'L', 'F', 2, 1, 1})
+	put16 := func(offset int, value uint16) { binary.LittleEndian.PutUint16(raw[offset:], value) }
+	put32 := func(offset int, value uint32) { binary.LittleEndian.PutUint32(raw[offset:], value) }
+	put64 := func(offset int, value uint64) { binary.LittleEndian.PutUint64(raw[offset:], value) }
+	put16(16, 2)
+	put16(18, 62)
+	put32(20, 1)
+	put64(40, 64)
+	put16(52, 64)
+	put16(58, 64)
+	put16(60, 2)
+	put16(62, 1)
+	sh := 128
+	put32(sh+4, 3)
+	put64(sh+8, 0x800)
+	put64(sh+24, 192)
+	put64(sh+32, uint64(24+compressed.Len()))
+	put64(sh+48, 1)
+	put32(192, 1)
+	put64(200, 1<<30)
+	put64(208, 1)
+	copy(raw[216:], compressed.Bytes())
+	root := doctorTestRoot(t)
+	path := doctorWrite(t, root, "axiom-encode-signing-supervisor", raw)
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := inspectDoctor(doctorOptions{installation: root}, newDoctorBudget())
+	c := doctorCheckByID(t, r, "supervisor")
+	if c.Status != "observed" || !strings.Contains(c.Detail, "not executed or parsed") {
+		t.Fatalf("metadata parsed/overclaimed: %+v", c)
+	}
+	if c := doctorCheckByID(t, r, "supervisor_provenance"); c.Status != "not_checked" {
+		t.Fatalf("header conferred provenance: %+v", c)
+	}
+	digest := sha256.Sum256(raw)
+	r = inspectDoctor(doctorOptions{installation: root, expectedSupervisor: hex.EncodeToString(digest[:])}, newDoctorBudget())
+	if c := doctorCheckByID(t, r, "supervisor"); c.Status != "observed" {
+		t.Fatalf("bounded hash: %+v", c)
+	}
+	r = inspectDoctor(doctorOptions{installation: root, expectedSupervisor: strings.Repeat("b", 64)}, newDoctorBudget())
+	if c := doctorCheckByID(t, r, "supervisor"); c.Status != "stale" {
+		t.Fatalf("hash mismatch: %+v", c)
+	}
+}
+
+func TestDoctorRecordsSelectionAndSubscriptionEnvironment(t *testing.T) {
+	t.Setenv("CODEX_HOME", "CREDENTIAL_MARKER")
+	o := doctorOptions{installation: "/axiom-doctor-known-missing-installation", expectedCommit: strings.Repeat("c", 40), corpusRoot: "/corpus", releaseName: "fixture-release", releaseDigest: strings.Repeat("d", 64)}
+	r := inspectDoctor(o, newDoctorBudget())
+	if r.ExpectedEncoderCommit != o.expectedCommit || r.CorpusSelection == nil || r.CorpusSelection.Name != o.releaseName || r.CorpusSelection.ContentSHA256 != o.releaseDigest || r.CorpusSelection.ObjectPath != "/corpus/releases/fixture-release/"+o.releaseDigest+".json" {
+		t.Fatal("report lost selection")
+	}
+	if c := doctorCheckByID(t, r, "subscription_environment"); c.Status != "malformed" {
+		t.Fatalf("missed launch blocker: %+v", c)
+	}
+	raw, _ := json.Marshal(r)
+	if bytes.Contains(raw, []byte("CREDENTIAL_MARKER")) {
+		t.Fatal("environment value leaked")
+	}
+	t.Setenv("CODEX_HOME", "")
+	r = inspectDoctor(o, newDoctorBudget())
+	if c := doctorCheckByID(t, r, "subscription_environment"); c.Status != "observed" {
+		t.Fatalf("empty env falsely blocked: %+v", c)
+	}
 }

@@ -9,7 +9,6 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
-	"debug/buildinfo"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -20,6 +19,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -46,13 +46,23 @@ type doctorCheck struct {
 }
 
 type doctorReport struct {
-	Schema       string           `json:"schema"`
-	Status       string           `json:"status"`
-	Admission    string           `json:"admission"`
-	BuildKind    string           `json:"diagnostic_build_kind"`
-	Installation string           `json:"installation"`
-	Checks       []doctorCheck    `json:"checks"`
-	Limits       map[string]int64 `json:"limits"`
+	Schema                   string                 `json:"schema"`
+	Status                   string                 `json:"status"`
+	Admission                string                 `json:"admission"`
+	BuildKind                string                 `json:"diagnostic_build_kind"`
+	Installation             string                 `json:"installation"`
+	ExpectedEncoderCommit    string                 `json:"expected_encoder_commit,omitempty"`
+	ExpectedSupervisorSHA256 string                 `json:"expected_supervisor_sha256,omitempty"`
+	CorpusSelection          *doctorCorpusSelection `json:"corpus_selection,omitempty"`
+	Checks                   []doctorCheck          `json:"checks"`
+	Limits                   map[string]int64       `json:"limits"`
+}
+
+type doctorCorpusSelection struct {
+	Root          string `json:"root"`
+	Name          string `json:"name"`
+	ContentSHA256 string `json:"content_sha256"`
+	ObjectPath    string `json:"object_path"`
 }
 
 type doctorOptions struct {
@@ -225,6 +235,12 @@ func doctorJSON(raw []byte, target any) error {
 	if err := rejectDuplicateJSONKeys(raw); err != nil {
 		return doctorFail("malformed", "JSON contains duplicate keys or is malformed.")
 	}
+	// encoding/json matches struct fields case-insensitively, unlike the
+	// production Python attestation reader. Check the exact JSON names first,
+	// including nested typed objects, without accepting case-variant aliases.
+	if err := doctorExactFields(raw, reflect.TypeOf(target)); err != nil {
+		return err
+	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
@@ -232,6 +248,36 @@ func doctorJSON(raw []byte, target any) error {
 	}
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		return doctorFail("malformed", "Expected exactly one JSON value.")
+	}
+	return nil
+}
+
+func doctorExactFields(raw json.RawMessage, schema reflect.Type) error {
+	for schema.Kind() == reflect.Pointer {
+		schema = schema.Elem()
+	}
+	if schema.Kind() != reflect.Struct {
+		return nil
+	}
+	// Decode only schema-defined object levels. In particular, do not expand
+	// the corpus content tree into interface{} maps just to check its envelope.
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
+		return doctorFail("malformed", "Expected a public configuration object.")
+	}
+	fields := make(map[string]reflect.StructField, schema.NumField())
+	for index := 0; index < schema.NumField(); index++ {
+		field := schema.Field(index)
+		fields[strings.Split(field.Tag.Get("json"), ",")[0]] = field
+	}
+	for name, child := range object {
+		field, exists := fields[name]
+		if !exists {
+			return doctorFail("malformed", "Public JSON field names must match the schema exactly.")
+		}
+		if err := doctorExactFields(child, field.Type); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -363,6 +409,10 @@ type doctorAttestation struct {
 func inspectDoctor(o doctorOptions, b *doctorBudget) doctorReport {
 	r := doctorReport{Schema: doctorSchema, Status: "indeterminate", Admission: "not_checked", BuildKind: supervisorBuildKind, Installation: o.installation,
 		Checks: []doctorCheck{}, Limits: map[string]int64{"entries_and_read_chunks": 50000, "total_bytes": 512 * 1024 * 1024, "elapsed_work_seconds": 10, "directory_depth": 64}}
+	r.ExpectedEncoderCommit, r.ExpectedSupervisorSHA256 = o.expectedCommit, o.expectedSupervisor
+	if o.corpusRoot != "" {
+		r.CorpusSelection = &doctorCorpusSelection{o.corpusRoot, o.releaseName, o.releaseDigest, filepath.Join(o.corpusRoot, "releases", o.releaseName, o.releaseDigest+".json")}
+	}
 	installAction := "Have the runtime operator inspect/re-provision the approved installation using the documented provisioner; do not automate sudo."
 	r.add("process_identity", doctorInstallOwner, "Run the diagnostic as the unprivileged runtime operator.", func() (string, error) {
 		if supervisorBuildKind != "production" {
@@ -386,6 +436,12 @@ func inspectDoctor(o doctorOptions, b *doctorBudget) doctorReport {
 		}
 		return "No forbidden signing environment names are set. Ambient CODEX_HOME is not a supervised subscription configuration.", nil
 	})
+	r.add("subscription_environment", "subscription lane operator", "Unset ambient CODEX_HOME for the actual supervised launch and pass --codex-subscription-auth / --codex-auth-outbox explicitly. The doctor does not change the environment or inspect credentials.", func() (string, error) {
+		if value, present := os.LookupEnv("CODEX_HOME"); present && value != "" {
+			return "", doctorFail("malformed", "Ambient CODEX_HOME is set and would be refused by a subscription supervisor invocation (value suppressed).")
+		}
+		return "Ambient CODEX_HOME does not conflict with the explicit supervised subscription custody path.", nil
+	})
 	r.add("supervisor", doctorInstallOwner, installAction, func() (string, error) {
 		raw, err := b.file(filepath.Join(o.installation, "axiom-encode-signing-supervisor"), 64*1024*1024, true, true)
 		if err != nil {
@@ -394,23 +450,17 @@ func inspectDoctor(o doctorOptions, b *doctorBudget) doctorReport {
 		if !isNativeExecutableHeader(raw) {
 			return "", doctorFail("malformed", "Supervisor is not a supported native executable.")
 		}
-		info, err := buildinfo.Read(bytes.NewReader(raw))
-		if err != nil || info.Path != "github.com/TheAxiomFoundation/axiom-encode/cmd/axiom-encode-signing-supervisor" {
-			return "", doctorFail("untrusted", "Supervisor lacks the expected Go build package identity.")
-		}
-		for _, setting := range info.Settings {
-			if setting.Key == "-tags" && strings.Contains(setting.Value, "signing_supervisor_test_fixture") {
-				return "", doctorFail("untrusted", "Installed supervisor declares a nonpublishable fixture build tag.")
-			}
-		}
+		// Never parse ELF/Mach-O/Go metadata here. Even a small input can make
+		// general binary readers allocate/decompress far beyond our byte budget.
+		// Header and hash observations do not establish format validity or kind.
 		digest := sha256.Sum256(raw)
 		if o.expectedSupervisor != "" && hex.EncodeToString(digest[:]) != o.expectedSupervisor {
 			return "", doctorFail("stale", "Supervisor bytes differ from the operator-selected expected SHA-256.")
 		}
-		return fmt.Sprintf("Protected native supervisor observed; sha256=%x. Build metadata is not authenticated provenance; binary was not executed.", digest), nil
+		return fmt.Sprintf("Protected file has a native executable header; sha256=%x. Format validity, build kind and provenance are not established; binary was not executed or parsed.", digest), nil
 	})
 	if o.expectedSupervisor == "" {
-		r.pending("supervisor_provenance", doctorInstallOwner, "No operator-selected expected supervisor hash supplied; build identity alone does not establish provenance.", "Compare with the approved build artifact and pass --expected-supervisor-sha256.")
+		r.pending("supervisor_provenance", doctorInstallOwner, "No operator-selected expected supervisor hash supplied; executable header and file protection do not establish production build kind or provenance.", "Compare with the approved production build artifact and pass --expected-supervisor-sha256. The caller's expected hash is not itself authenticated provenance.")
 	}
 	runtimeRoot := filepath.Join(o.installation, "python")
 	packageRoot := ""
@@ -600,7 +650,9 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 	flags.BoolVar(&o.json, "json", false, "structured report on stdout")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			fmt.Fprintln(stdout, "Offline, nonmutating runtime observations; never admission. Does not execute binaries, read auth, connect, sign or provision.\nUsage: axiom-encode-signing-supervisor --doctor [--installation /opt/axiom-verification] [--expected-encoder-commit COMMIT] [--expected-supervisor-sha256 SHA256] [--corpus-root PATH --release-name NAME --release-content-sha256 SHA256] [--json]\nExit: 1 known blockers; 2 indeterminate (admission still unchecked); 64 invalid arguments; 0 help.")
+			if _, err := fmt.Fprintln(stdout, "Offline, nonmutating runtime observations; never admission. Does not execute binaries, read auth, connect, sign or provision.\nUsage: axiom-encode-signing-supervisor --doctor [--installation /opt/axiom-verification] [--expected-encoder-commit COMMIT] [--expected-supervisor-sha256 SHA256] [--corpus-root PATH --release-name NAME --release-content-sha256 SHA256] [--json]\nExit: 1 known blockers; 2 indeterminate (admission still unchecked); 64 invalid arguments/output errors; 0 help."); err != nil {
+				return 64
+			}
 			return 0
 		}
 		fmt.Fprintln(stderr, "doctor: invalid arguments; use --doctor --help (values suppressed)")
@@ -621,12 +673,16 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 			return 64
 		}
 	} else {
-		fmt.Fprintf(stdout, "Runtime readiness: %s; admission NOT CHECKED\n", report.Status)
+		var rendered bytes.Buffer
+		fmt.Fprintf(&rendered, "Runtime readiness: %s; admission NOT CHECKED\n", report.Status)
 		for _, check := range report.Checks {
-			fmt.Fprintf(stdout, "[%s] %s: %s\n", check.Status, check.ID, check.Detail)
+			fmt.Fprintf(&rendered, "[%s] %s: %s\n", check.Status, check.ID, check.Detail)
 			if check.Status != "observed" {
-				fmt.Fprintf(stdout, "  Owner: %s\n  Next: %s\n", check.Owner, check.Action)
+				fmt.Fprintf(&rendered, "  Owner: %s\n  Next: %s\n", check.Owner, check.Action)
 			}
+		}
+		if _, err := io.Copy(stdout, &rendered); err != nil {
+			return 64
 		}
 	}
 	if report.Status == "blocked" {
