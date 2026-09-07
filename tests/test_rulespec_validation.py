@@ -17843,6 +17843,8 @@ _SCALED_PERCENTAGE_REMAINDERS = {
     "printed": (" ו־200", 200.0),
     "mixed": (" ו־200 וחצי", 200.5),
     "spelled-mixed": (" ומאתיים וחצי", 200.5),
+    "printed-fraction": (" ו־200 1/2", 200.5),
+    "printed-fraction-slash": (" ו־200 1⁄2", 200.5),
 }
 _SCALED_PERCENTAGE_UNITS = {"noun": " אחוזים", "sign": "%"}
 _SCALED_PERCENTAGE_TAILS = {
@@ -17879,6 +17881,23 @@ def test_a_scaled_percentage_reads_whole_in_every_form(lead, remainder, unit, ta
         expected = {round((amount + tail_value) / 100, 6)}
     recall = {round(v, 6) for v in _hebrew_recall(text)}
     assert recall == expected, (text, recall)
+
+
+def test_the_scaled_percentage_continuation_scans_in_linear_time():
+    import time
+
+    from axiom_encode.harness.validator_pipeline import (
+        _iter_hebrew_percent_phrase_matches,
+    )
+
+    # The continuation check once built the document's token index for
+    # every remainder: 1,000, 2,000 and 4,000 phrases took 0.9, 3.3 and
+    # 14 seconds. One index per pass now.
+    text = "השיעור הוא שלושת אלפים ו 200 אחוזים; " * 4000
+    started = time.perf_counter()
+    _iter_hebrew_percent_phrase_matches(text)
+    elapsed = time.perf_counter() - started
+    assert elapsed < 2.0, elapsed
 
 
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():

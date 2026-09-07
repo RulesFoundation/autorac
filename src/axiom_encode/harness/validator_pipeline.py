@@ -3212,6 +3212,12 @@ def _iter_hebrew_percent_phrase_matches(
                 match.group("whole") or 0
             )
             count_start = match.start("whole" if match.group("whole") else "numerator")
+            # "שלושת אלפים ו־200 1/2 אחוזים": the fraction continues the
+            # scaled amount; the printed pass reads the whole rate.
+            if tokens is None:
+                tokens = _HebrewWordTokens(text)
+            if _hebrew_digits_continue_printed_scale_amount(text, count_start, tokens):
+                continue
             if _hebrew_unary_sign_at(text, count_start - 1):
                 negative = True
                 count_start -= 1
@@ -3225,8 +3231,10 @@ def _iter_hebrew_percent_phrase_matches(
             # A remainder of a printed scale amount before it ("3 אלפים
             # ו־200 אחוזים" is 3,200 percent) is the printed pass's, unless
             # a money amount makes the digits a rate of their own.
+            if tokens is None:
+                tokens = _HebrewWordTokens(text)
             if _hebrew_digits_continue_printed_scale_amount(
-                text, match.start("digits")
+                text, match.start("digits"), tokens
             ):
                 continue
             count_value = float(match.group("digits").replace(",", ""))
@@ -3298,7 +3306,7 @@ def _iter_hebrew_percent_phrase_matches(
             # the whole rate, tail included; a count of one is not it.
             continue
         if mixed is not None and _hebrew_digits_continue_printed_scale_amount(
-            text, count_start
+            text, count_start, tokens
         ):
             # "3 אלפים ו־200 וחצי אחוזים": the mixed count continues the
             # scaled amount; the printed pass reads the whole rate.
@@ -3397,7 +3405,9 @@ _HEBREW_PRINTED_REMAINDER_JOIN_PATTERN = re.compile("\\s+\u05d5[\u05be-]?\\s*")
 _HEBREW_PRINTED_REMAINDER_JOIN_BEFORE_PATTERN = re.compile("\\s+\u05d5[\u05be-]?\\s*$")
 
 
-def _hebrew_digits_continue_printed_scale_amount(text: str, position: int) -> bool:
+def _hebrew_digits_continue_printed_scale_amount(
+    text: str, position: int, tokens: "_HebrewWordTokens | None" = None
+) -> bool:
     """Whether the digits at ``position`` are a remainder of a printed scale amount.
 
     "3 אלפים ו־200": the 200 continues the 3,000, and whatever unit follows
@@ -3422,7 +3432,11 @@ def _hebrew_digits_continue_printed_scale_amount(text: str, position: int) -> bo
         return not _hebrew_money_context_before(text, scale_word.start())
     # A spelled scaled amount: "שלושת אלפים ו־200". The longest spelled number
     # ending at the scale word carries a scale kind.
-    run = _hebrew_word_run_before(text, scale_end, tokens=_HebrewWordTokens(text))
+    run = _hebrew_word_run_before(
+        text,
+        scale_end,
+        tokens=tokens if tokens is not None else _HebrewWordTokens(text),
+    )
     for width in range(len(run), 0, -1):
         words = [token.group(0) for token in run[-width:]]
         parsed = _parse_hebrew_number_run(words)
@@ -8369,6 +8383,7 @@ def _iter_direct_percentage_rate_matches(
     text: str,
 ) -> list[tuple[tuple[int, int], float]]:
     values: list[tuple[tuple[int, int], float]] = []
+    tokens: _HebrewWordTokens | None = None
     for match in _DIRECT_PERCENTAGE_PATTERN.finditer(text):
         # The denominator of a fraction before the sign ("1/2%", "1 ⁄ 2%")
         # is no rate of its own; the fraction is read whole elsewhere. Nor
@@ -8376,8 +8391,15 @@ def _iter_direct_percentage_rate_matches(
         # is 3,200 percent).
         if _search_before(_SLASH_BEFORE_NUMBER_PATTERN, text, match.start("number"), 8):
             continue
-        if _hebrew_digits_continue_printed_scale_amount(text, match.start("number")):
-            continue
+        if _HEBREW_PRINTED_REMAINDER_JOIN_BEFORE_PATTERN.search(
+            text, max(0, match.start("number") - 6), match.start("number")
+        ):
+            if tokens is None:
+                tokens = _HebrewWordTokens(text)
+            if _hebrew_digits_continue_printed_scale_amount(
+                text, match.start("number"), tokens
+            ):
+                continue
         for value in _iter_percentage_numeric_phrase_values(match.group("number")):
             values.append((match.span("number"), value / 100))
     return values
