@@ -16355,6 +16355,28 @@ def test_a_predicate_after_an_ordinal_is_no_unit():
         assert {round(v, 12) for v in _hebrew_recall(text)} == expected, text
 
 
+def test_a_standalone_fraction_endpoint_keeps_the_amount_before_it():
+    for text, expected in (
+        ("תוספת 1 או 1⁄2 נקודת זיכוי", {1.0, 0.5}),
+        ("תוספת 2 עד 7⁄2 שקלים לכל ילד", {2.0, 3.5}),
+        ("תוספת 1 או 1 1⁄2 נקודות זיכוי", {1.0, 1.5}),
+    ):
+        assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+    assert _hebrew_recall("לפי סעיף 1 או 2 ישולם סכום של 100 שקלים") == {100.0}
+
+
+def test_a_temporal_phrase_after_an_ordinal_is_no_fraction():
+    for text in (
+        "אישה שילדה לידה חמישית שנה לאחר הלידה הקודמת זכאית למענק של 100 שקלים",
+        "דירה חמישית חודש לאחר הרכישה תחויב במס של 100 שקלים",
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert 5.0 in grounded and 0.2 not in grounded, (text, grounded)
+        assert _hebrew_recall(text) == {5.0, 100.0}, (text, _hebrew_recall(text))
+    assert _hebrew_recall("תקופה של חמישית שנה") == {0.2}
+    assert _hebrew_recall("ישולם סכום של עשירית שקל") == {0.1}
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

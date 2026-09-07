@@ -3261,9 +3261,9 @@ _HEBREW_STRUCTURAL_NUMBER_WORD_LIST = (
 # A reference label: digits, an optional letter, and any parenthesized
 # labels ("1", "1א", "1(א)", "2(ב)(3)"). The digits are a whole number: the
 # "1" of "1,500" and the "2" of "2,500" are no labels, so "1, 2, 4, 1,500 עד
-# 2,500 דולר" ends its list at 4.
+# 2,500 דולר" ends its list at 4; nor is the numerator of "1⁄2".
 _HEBREW_STRUCTURAL_DIGIT = (
-    "\\d+(?![,.]\\d)[\u05d0-\u05ea]?"
+    "\\d+(?![,.]\\d)(?!\\s*[/\u2044]\\s*\\d)[\u05d0-\u05ea]?"
     "(?:\\((?:\\d+[\u05d0-\u05ea]?|[\u05d0-\u05ea]{1,2})\\))*"
 )
 # The unit nouns a quantity carries: money, time, rates, measures, weights,
@@ -3539,10 +3539,15 @@ _HEBREW_UNIT_AFTER_PATTERN = re.compile(
 # The unit that says fraction after an ordinal-shaped word: a unit of
 # measure only. A count noun there may be a predicate ("דרגה חמישית זכאית",
 # "דירה חמישית בת שלושה חדרים"), and the word keeps its ordinal reading.
+# ... and not one that opens a temporal phrase: "לידה חמישית שנה לאחר
+# הלידה הקודמת" is a fifth birth a year after the previous one, not a fifth
+# of a year.
 _HEBREW_FRACTION_UNIT_AFTER_PATTERN = re.compile(
     "\\s+(?:"
     + _hebrew_unit_alternation(_HEBREW_MEASURE_UNIT_WORDS)
     + ")(?![\u0590-\u05ff])"
+    "(?!\\s+(?:לאחר|אחרי|לפני|מיום|ממועד|מתום|מאז|קודם|לפחות|לכל היותר|ויותר|"
+    "לפחות)(?![\u0590-\u05ff]))"
 )
 # Every word the numeric grammar reads, for the guards below.
 _HEBREW_STRUCTURAL_NUMBER_WORD_ANY = _hebrew_alternation(
@@ -3587,8 +3592,9 @@ _HEBREW_STRUCTURAL_COORDINATED_QUANTITY = (
     + "|"
     + _HEBREW_STRUCTURAL_RANGE_JOIN
     + ")\\s*(?:"
-    "(?:(?<![\u05d0-\u05ea])[-\u2212])?(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:[.,]\\d+)?"
-    "(?:\\s+\\d+\\s*[/\u2044]\\s*\\d+)?"
+    "(?:(?<![\u05d0-\u05ea])[-\u2212])?"
+    "(?:(?:\\d+\\s+)?\\d+\\s*[/\u2044]\\s*\\d+"
+    "|(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:[.,]\\d+)?)"
     "(?:\\s+\u05d5?(?:" + _HEBREW_STRUCTURAL_NUMBER_WORD_ANY + ")){0,4}"
     "|\u05d5?(?:" + _HEBREW_STRUCTURAL_NUMBER_WORD_ANY + ")"
     "(?:\\s+\u05d5?(?:" + _HEBREW_STRUCTURAL_NUMBER_WORD_ANY + ")){0,15}"
