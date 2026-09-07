@@ -3885,20 +3885,6 @@ def _iter_hebrew_shared_scale_range_matches(
                 # does, as the percent-range pass counts it.
                 continue
             lower_span = (printed_lower.start(), lower_end)
-            if (
-                join is not None
-                and join.group("comma") is not None
-                and (
-                    not _hebrew_word_stands_before(text, lower_span[0])
-                    or not _hebrew_comma_list_has_evidence(
-                        text, lower_span[0], scale_match.end(), tokens
-                    )
-                )
-            ):
-                # A printed operand a comma joins shares the scale only in
-                # Hebrew text ("$500, 3 מיליון" shares nothing) and only in
-                # a list ("על הכנסה עד 500, 3 מיליון" keeps its threshold).
-                continue
         else:
             spelled_lower = _hebrew_spelled_endpoint_before(text, lower_end, tokens)
             if spelled_lower is None:
@@ -3911,6 +3897,23 @@ def _iter_hebrew_shared_scale_range_matches(
                 lower_value = -lower_value
                 lower_span = (lower_span[0] - 1, lower_end)
         if _hebrew_endpoint_continues_an_amount(text, lower_span[0]):
+            continue
+        if (
+            join is not None
+            and join.group("comma") is not None
+            and (
+                not _hebrew_comma_list_has_evidence(text, scale_match.end())
+                or (
+                    printed_lower is not None
+                    and not _hebrew_word_stands_before(text, lower_span[0])
+                )
+            )
+        ):
+            # An operand a comma joins, printed or spelled, shares the scale
+            # only in a list ("1, 2, 3 מיליון שקלים, בהתאמה"): "על הכנסה עד
+            # 500, 3 מיליון" and "עד חמש מאות, 3 מיליון" keep their
+            # thresholds, and a printed operand needs Hebrew before it
+            # ("$500, 3 מיליון" shares nothing).
             continue
         if needs_bound and (
             _search_before(_HEBREW_RANGE_LOWER_BOUND_PATTERN, text, lower_span[0], 16)
@@ -4602,7 +4605,9 @@ _HEBREW_RANGE_WALK_JOIN_PATTERN = re.compile(
 # או 3 אחוזים") is stopped at by its structural span.
 _HEBREW_RANGE_WALK_STOP_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}\u05d4?"
-    "(?:גיל|בן|בת|שנת|מספר|מס'|טופס|עמוד|שורה|דרגה|קטגוריה|סוג|רמה)\\s*$"
+    "(?:גיל|בן|בת|שנת|מספר|מס'|טופס|עמוד|שורה|דרגה|קטגוריה|סוג|רמה)"
+    # A possessive suffix on the label ("שגילו 5", "גילה 5") is the same label.
+    "(?:[\u05d5\u05d4\u05dd\u05df\u05d9\u05da]|כם|כן|נו)?\\s*$"
 )
 _HEBREW_RANGE_LOWER_BOUND_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])(?:בין|\u05de(?:\u05be|-)?|החל \u05de(?:\u05be|-)?)\\s*$"
@@ -4638,38 +4643,19 @@ _HEBREW_WORD_BEFORE_LIST_PATTERN = re.compile(
 )
 
 
-def _hebrew_comma_list_has_evidence(
-    text: str, lower_start: int, unit_end: int, tokens: "_HebrewWordTokens"
-) -> bool:
+def _hebrew_comma_list_has_evidence(text: str, unit_end: int) -> bool:
     """Positive evidence that a comma before the upper endpoint joins a list of quantities.
 
-    An earlier item before the lower endpoint -- another comma or a
-    conjunction with a number before it, or a vav on the endpoint itself --
-    or "בהתאמה" within reach after the unit. A lone comma separates
-    clauses: "על הכנסה עד 500, 10% מס" keeps its threshold, "לילד שגילו 5,
-    3%" its age.
+    Only "בהתאמה" within reach after the unit: "1, 2, 3 אחוזים, בהתאמה". A
+    comma separates clauses as often as it lists, and an earlier range or
+    alternative before it is no evidence ("על הכנסה של 100 עד 500, 10% מס"
+    keeps its thresholds, "לילד שגילו 4 או 5, 3%" its ages), so a comma
+    list without "בהתאמה" is read as clauses.
     """
     tail = text[unit_end : unit_end + 32]
-    if "בהתאמה" in tail and not any(
-        stop in tail[: tail.index("בהתאמה")] for stop in ".;\n"
-    ):
-        return True
-    earlier_join = _search_before(
-        _HEBREW_RANGE_WALK_JOIN_PATTERN, text, lower_start, 12
-    )
-    if earlier_join is None:
-        return (
-            lower_start > 0
-            and text[lower_start] == "\u05d5"
-            and text[lower_start - 1].isspace()
-        )
-    earlier_flush = len(text[: earlier_join.start()].rstrip())
-    if (
-        _search_before(_HEBREW_DIGITS_BEFORE_PATTERN, text, earlier_flush, 32)
-        is not None
-    ):
-        return True
-    return _hebrew_number_run_ending_at(text, earlier_flush, tokens, True) is not None
+    if "בהתאמה" not in tail:
+        return False
+    return not any(stop in tail[: tail.index("בהתאמה")] for stop in ".;\n")
 
 
 def _hebrew_word_stands_before(text: str, start: int) -> bool:
@@ -4872,9 +4858,7 @@ def _iter_hebrew_percent_range_lower_matches(
                     lower_first is None
                     and not _hebrew_word_stands_before(text, lower_span[0])
                 )
-                or not _hebrew_comma_list_has_evidence(
-                    text, lower_span[0], noun.end(), tokens
-                )
+                or not _hebrew_comma_list_has_evidence(text, noun.end())
             )
         ):
             # "לפי סעיף קטן 5, 3 אחוזים", "לילד עד גיל 5, 3 אחוזים": the
