@@ -2212,7 +2212,17 @@ def _parse_hebrew_number_run(
             kinds.add("hundred")
         small = parse_small(cursor)
         if small is not None:
-            cursor, amount, kind = small
+            next_cursor, amount, kind = small
+            if (
+                hundreds is not None
+                and word_at(cursor) in scale_counts
+                and word_at(next_cursor) == "מאות"
+            ):
+                # "מאתיים ושלוש מאות": the three opens the next counted
+                # hundreds, a coordinated amount, not a remainder of the
+                # two hundred.
+                return cursor, value, kinds
+            cursor = next_cursor
             value += amount
             kinds.add(kind)
         if cursor == position:
@@ -3627,8 +3637,11 @@ _HEBREW_SHARED_SCALE_WORD_PATTERN = re.compile(
 # "ו־" closes a list that shares the scale word ("1, 2 ו־3 מיליון"); a
 # continuation's vav never stands before a bare small number the lower
 # endpoint rules admit, so the two do not meet.
+# A comma joins a list too ("1, 2, 3 מיליון"); the reference, label and
+# complete-amount guards on the lower endpoint keep "סעיף 5, 3 מיליון" apart.
 _HEBREW_SHARED_SCALE_JOIN_BEFORE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?P<join>לבין|ועד|עד|או|ל|\u05d5)(?:[\u05be-]\\s*|\\s+)$"
+    "(?:(?<![\u0590-\u05ff])(?P<join>לבין|ועד|עד|או|ל|\u05d5)(?:[\u05be-]\\s*|\\s+)"
+    "|(?P<comma>,\\s*))$"
 )
 # A noun that numbers the lower endpoint rather than counting it: "תוספת 2
 # עד מאה ועשרים אלף" is supplement 2, up to 120,000, and shares nothing.
@@ -3811,7 +3824,9 @@ def _iter_hebrew_shared_scale_range_matches(
         needs_bound = False
         if join is not None:
             lower_end = len(text[: join.start()].rstrip())
-            if lower_end == join.start():
+            if lower_end == join.start() and join.group("comma") is None:
+                # A word join stands after a gap; a comma sits flush
+                # against the number before it.
                 continue
         else:
             # A ל prefix on a spelled upper endpoint joins under "בין" or
@@ -4532,7 +4547,10 @@ def _hebrew_printed_endpoint_value(match: "re.Match[str]") -> float | None:
 # The cleaner detaches a maqaf into a space, so "ל־3" arrives here as "ל 3".
 _HEBREW_RANGE_JOIN_BEFORE_PATTERN = re.compile(
     "(?:(?<![\u0590-\u05ff])(?P<free>עד|ועד|לבין|או)\\s+"
-    "|(?<![\u0590-\u05ff])(?P<bound>[\u05dc\u05d5])(?:\u05be|[-\u2013]|\\s)\\s*)$"
+    "|(?<![\u0590-\u05ff])(?P<bound>[\u05dc\u05d5])(?:\u05be|[-\u2013]|\\s)\\s*"
+    # A comma joins a list of rates ("1, 2, 3 אחוזים"), no bound required;
+    # a reference or a label before the lower endpoint keeps it apart.
+    "|(?P<comma>,\\s*))$"
 )
 _HEBREW_RANGE_WALK_JOIN_PATTERN = re.compile(
     "(?:(?<![\u0590-\u05ff])(?:עד|ועד|או)\\s+|,\\s*|(?<![\u0590-\u05ff])\u05d5(?:\u05be|-)?\\s*)$"
@@ -4662,9 +4680,11 @@ def _iter_hebrew_percent_range_lower_matches(
             lower_end = join.start()
             # "ל־" needs "בין" or "מ־" before the lower endpoint; "ו־" joins a
             # pair of rates on its own ("2 ו־3 אחוזים, בהתאמה").
-            needs_bound = join.group("free") is None and not join.group(
-                0
-            ).lstrip().startswith("\u05d5")
+            needs_bound = (
+                join.group("free") is None
+                and join.group("comma") is None
+                and not join.group(0).lstrip().startswith("\u05d5")
+            )
         elif (
             upper_first is not None
             and upper_first[:1] in ("\u05dc", "\u05d5")
@@ -4745,6 +4765,20 @@ def _iter_hebrew_percent_range_lower_matches(
                 # read before it.
                 lower_value = -lower_value
                 lower_span = (lower_span[0] - 1, lower_flush)
+        if (
+            join is not None
+            and join.group("comma") is not None
+            and (
+                _span_overlaps(lower_span, structural_spans)
+                or _search_before(
+                    _HEBREW_RANGE_WALK_STOP_PATTERN, text, lower_span[0], 24
+                )
+                is not None
+            )
+        ):
+            # "לפי סעיף קטן 5, 3 אחוזים", "לילד עד גיל 5, 3 אחוזים": the
+            # number before the comma is a reference or a label's, no rate.
+            continue
         if (
             needs_bound
             and not (

@@ -18389,6 +18389,41 @@ def test_a_shared_scale_list_with_attached_vav_joins():
         assert not ({1.0, 2.0, 100.0} & extract_numbers_from_text(text)), text
 
 
+def test_coordinated_counted_hundreds_stay_two_amounts():
+    for text, expected in (
+        ("הסכומים הם מאתיים ושלוש מאות שקלים, בהתאמה", {200.0, 300.0}),
+        ("הסכומים הם 200 ו־300 שקלים, בהתאמה", {200.0, 300.0}),
+        ("הסכום הוא מאתיים ושלוש שקלים", {203.0}),
+        ("הסכום הוא שלוש מאות ועשרים ושלוש שקלים", {323.0}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+    assert 203.0 not in extract_numbers_from_text(
+        "הסכומים הם מאתיים ושלוש מאות שקלים, בהתאמה"
+    )
+
+
+def test_comma_only_lists_share_the_scale_and_the_unit():
+    for text, expected in (
+        (
+            "הסכומים הם 1, 2, 3 מיליון שקלים, בהתאמה",
+            {1_000_000.0, 2_000_000.0, 3_000_000.0},
+        ),
+        ("השיעורים הם 1, 2, 3 אחוזים, בהתאמה", {0.01, 0.02, 0.03}),
+        ("השיעורים הם אחד, שניים, שלושה אחוזים", {0.01, 0.02, 0.03}),
+        (
+            "הסכומים הם אחד, שניים, שלושה מיליון שקלים",
+            {1_000_000.0, 2_000_000.0, 3_000_000.0},
+        ),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+        assert not ({1.0, 2.0} & extract_numbers_from_text(text)), text
+    for text in ("לפי סעיף קטן 5, 3 אחוזים מההכנסה", "לילד עד גיל 5, 3 אחוזים מההכנסה"):
+        assert 0.03 in _hebrew_recall(text), text
+        assert 0.05 not in extract_numbers_from_text(text), text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
