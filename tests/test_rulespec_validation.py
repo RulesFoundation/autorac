@@ -15828,6 +15828,48 @@ def test_a_preposition_before_a_he_noun_after_an_ordinal_is_no_partitive():
         assert _hebrew_recall(text) == {0.2}, (text, _hebrew_recall(text))
 
 
+def test_a_range_of_rates_keeps_a_negative_lower_endpoint():
+    for text in (
+        "שיעור המס יהיה -2 עד 3 אחוזים",
+        "שיעור המס יהיה בין -2 ל־3 אחוזים",
+        "שיעור המס יהיה בין −2 ל־3 אחוזים",
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert {-0.02, 0.03} <= grounded, (text, grounded)
+        assert not ({0.02, -2.0, 2.0} & _hebrew_recall(text)), (
+            text,
+            _hebrew_recall(text),
+        )
+        assert _hebrew_recall(text) == {-0.02, 0.03}, (text, _hebrew_recall(text))
+
+
+def test_a_range_of_rates_reads_a_fractional_lower_endpoint_whole():
+    for text in (
+        "שיעור המס יהיה 1/2 עד 3 אחוזים",
+        "שיעור המס יהיה 1⁄2 עד 3 אחוזים",
+        "שיעור המס יהיה בין 1/2 ל־3 אחוזים",
+        "שיעור המס יהיה 2 1/2 עד 3 אחוזים",
+    ):
+        expected = 0.025 if text.startswith("שיעור המס יהיה 2 1/2") else 0.005
+        grounded = extract_numbers_from_text(text)
+        assert {expected, 0.03} <= grounded, (text, grounded)
+        assert _hebrew_recall(text) == {expected, 0.03}, (text, _hebrew_recall(text))
+        assert not ({1.0, 2.0, 0.02} & _hebrew_recall(text)), text
+
+
+def test_a_quantity_in_any_unit_never_becomes_a_reference_label():
+    assert _hebrew_recall("לפי סעיפים 1, 2, 4, 100 עד 200 מטרים יימדדו") == {
+        100.0,
+        200.0,
+    }
+    assert _hebrew_recall("לפי סעיפים 1, 2, 4, 100 מטרים יימדדו") == {100.0}
+    assert _hebrew_recall('לפי סעיפים 1, 2 או 3, 50 ק"ג יישקלו') == {50.0}
+    assert _hebrew_recall("לפי סעיפים 1, 2 או 3, 10 דונם יימדדו") == {10.0}
+    assert _hebrew_recall("לפי סעיפים 1 ו־2, 3 נפשות זכאיות") == {3.0}
+    assert _hebrew_recall("לפי סעיפים 1, 2, 4, 30 יחידות דיור") == {30.0}
+    assert _hebrew_recall("לפי סעיפים 1, 2 או 3 ישולם סכום של 100 שקלים") == {100.0}
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

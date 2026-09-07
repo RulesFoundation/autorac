@@ -2699,9 +2699,30 @@ _HEBREW_PERCENT_NOUN_ANYWHERE_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}\u05d4?אחוז(?:ים)?"
     "(?![\u0590-\u05ff])"
 )
+# A printed endpoint flush before a position: a signed number, or a signed
+# fraction with an optional whole ("-2", "1/2", "16 1⁄2"). A number after a
+# slash is a denominator, never an endpoint of its own.
 _HEBREW_DIGITS_BEFORE_PATTERN = re.compile(
-    "(?<![\\d.,])(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)\\s+$"
+    "(?<![\\d.,/\u2044])(?P<sign>[-\u2212])?"
+    "(?:(?:(?P<whole>\\d+)\\s+)?(?P<numerator>\\d+)\\s*[/\u2044]\\s*(?P<denominator>\\d+)"
+    "|(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?))\\s+$"
 )
+
+
+def _hebrew_printed_endpoint_value(match: "re.Match[str]") -> float | None:
+    """The value a printed endpoint match states, sign and fraction included."""
+    if match.group("numerator"):
+        denominator = float(match.group("denominator"))
+        if denominator == 0:
+            return None
+        value = float(match.group("numerator")) / denominator + float(
+            match.group("whole") or 0
+        )
+    else:
+        value = float(match.group("number").replace(",", ""))
+    return -value if match.group("sign") else value
+
+
 # The join between the endpoints. "עד", "ועד", "לבין" and "או" make a range
 # or a pair of rates on their own; "ל־", a ל prefix on a spelled endpoint,
 # "ו־" and a dash do so only under "בין" or "מ־" before the lower endpoint.
@@ -2742,7 +2763,7 @@ def _iter_hebrew_percent_range_lower_matches(
         upper_first: str | None = None
         digits = _search_before(_HEBREW_DIGITS_BEFORE_PATTERN, text, noun.start(), 32)
         if digits is not None:
-            upper_start = digits.start("number")
+            upper_start = digits.start()
         else:
             spelled = _hebrew_number_run_ending_at(text, noun.start(), tokens)
             if spelled is None:
@@ -2770,8 +2791,10 @@ def _iter_hebrew_percent_range_lower_matches(
             _HEBREW_DIGITS_BEFORE_PATTERN, text, lower_end, 32
         )
         if lower_digits is not None:
-            lower_span = lower_digits.span("number")
-            lower_value = float(lower_digits.group("number").replace(",", ""))
+            lower_value = _hebrew_printed_endpoint_value(lower_digits)
+            if lower_value is None:
+                continue
+            lower_span = (lower_digits.start(), len(text[:lower_end].rstrip()))
         else:
             spelled = _hebrew_number_run_ending_at(text, lower_end, tokens)
             if spelled is None:
@@ -3068,9 +3091,18 @@ _HEBREW_STRUCTURAL_DIGIT = (
     "\\d+(?![,.]\\d)[\u05d0-\u05ea]?"
     "(?:\\((?:\\d+[\u05d0-\u05ea]?|[\u05d0-\u05ea]{1,2})\\))*"
 )
+# The unit nouns a quantity carries: money, time, rates, measures, weights,
+# volumes, energy, and counts of people and things. A number before one of
+# these is a quantity, never a reference label.
 _HEBREW_STRUCTURAL_UNIT_NOUNS = (
-    'שקלים|שקל|ש"ח|ש״ח|₪|%|דולר|דולרים|יורו|אירו|ליש"ט|לירות|אגורות|ימים|יום|'
-    "חודשים|חודש|שנים|שנה|שבועות|שבוע|שעות|נקודות|נקודת|אחוז|אחוזים|ילדים"
+    'שקלים חדשים|שקלים|שקל|ש"ח|ש״ח|₪|%|דולר|דולרים|יורו|אירו|ליש"ט|לירות|אגורות|'
+    "ימים|ימי|יום|חודשים|חודשי|חודש|שנים|שנות|שנה|שבועות|שבוע|שעות|שעת|שעה|דקות|דקה|"
+    "שניות|רבעונים|רבעון|תקופות|נקודות|נקודת|אחוז|אחוזים|"
+    'מטרים רבועים|מטרים|מטר|ס"מ|סנטימטרים|סנטימטר|מ"מ|מילימטרים|מילימטר|ק"מ|קילומטרים|'
+    'קילומטר|מ"ר|מ"ק|דונמים|דונם|ק"ג|קילוגרמים|קילוגרם|גרמים|גרם|טונות|טון|ליטרים|ליטר|'
+    'מ"ל|מיליליטר|קוט"ש|קילוואט|וואט|כ"ס|מעלות|'
+    "יחידות|יחידה|פעמים|נפשות|נפש|בני אדם|אנשים|עובדים|מועסקים|תלמידים|תושבים|"
+    "מקומות|חדרים|קומות|דירות|רכבים|כלי רכב|ילדים|ילד|הורים|מבוטחים|זכאים"
 )
 # A quantity, not a further reference: a number followed by a unit noun.
 _HEBREW_STRUCTURAL_NOT_A_QUANTITY = "(?!\\s*(?:" + _HEBREW_STRUCTURAL_UNIT_NOUNS + "))"
