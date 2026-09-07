@@ -16592,6 +16592,65 @@ def test_a_fractional_duration_needs_ordinal_evidence_to_be_an_ordinal():
     }
 
 
+def test_any_feminine_noun_before_a_fraction_word_is_ordinal_evidence():
+    text = "נערכה בדיקה חמישית שנה לאחר הבדיקה הקודמת"
+    grounded = extract_numbers_from_text(text)
+    assert 5.0 in grounded and 0.2 not in grounded, grounded
+    assert _hebrew_recall(text) == {5.0}
+    for text, expected in (
+        ("המכשיר יופעל עשירית שנייה לאחר קבלת האות", {0.1}),
+        ("הפיצוי ישולם חמישית שנה לאחר ההודעה", {0.2}),
+        ("הסכום יהיה חמישית שנה לאחר מכן", {0.2}),
+    ):
+        assert {round(v, 12) for v in _hebrew_recall(text)} == expected, (
+            text,
+            _hebrew_recall(text),
+        )
+
+
+def test_a_cited_supplement_is_a_schedule_reference():
+    for text, expected in (
+        ("לפי תוספת 5, 2 או 3 אחוזים מהשכר", {0.02, 0.03}),
+        ("בתוספת 5, 2 או 3 אחוזים מהשכר", {0.02, 0.03}),
+        ("על פי תוספת 5, 2 או 3 אחוזים מהשכר", {0.02, 0.03}),
+        ("תוספת 1, 2 או 3 אחוזים מהשכר", {0.01, 0.02, 0.03}),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert 0.05 not in grounded, (text, grounded)
+        assert {round(v, 12) for v in _hebrew_recall(text)} == expected, (
+            text,
+            _hebrew_recall(text),
+        )
+    assert 5.0 in extract_numbers_from_text("לפי תוספת 5, 2 או 3 אחוזים מהשכר")
+    assert _hebrew_recall("לפי תוספת 2 ישולם סכום של 100 שקלים") == {100.0}
+    assert _hebrew_recall("תוספת 2 שקלים לכל ילד") == {2.0}
+
+
+def test_a_percentage_is_shared_across_every_vav_join():
+    for text in (
+        "שיעורי המס יהיו 1 ו־2 ו־3 אחוזים, בהתאמה",
+        "שיעורי המס יהיו אחד ושניים ושלושה אחוזים, בהתאמה",
+        "שיעורי המס יהיו 1, 2 ו־3 אחוזים",
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert {0.01, 0.02, 0.03} <= grounded, (text, grounded)
+        assert {round(v, 12) for v in _hebrew_recall(text)} == {0.01, 0.02, 0.03}, (
+            text,
+            _hebrew_recall(text),
+        )
+    assert _hebrew_recall("בשיעור של עשרים ושלושה אחוזים") == {0.23}
+
+
+def test_a_prefixed_coordinated_endpoint_keeps_the_amount_before_it():
+    for text, expected in (
+        ("תוספת 2 עד כשלושה שקלים", {2.0, 3.0}),
+        ("תוספת שתיים עד כשלוש נקודות זיכוי", {2.0, 3.0}),
+        ("תוספת 2 עד כ-3 שקלים", {2.0, 3.0}),
+        ("תוספת 2 עד כ־3 שקלים", {2.0, 3.0}),
+    ):
+        assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

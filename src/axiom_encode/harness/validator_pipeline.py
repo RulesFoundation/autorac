@@ -2870,7 +2870,7 @@ _HEBREW_RANGE_JOIN_BEFORE_PATTERN = re.compile(
     "|(?<![\u0590-\u05ff])(?P<bound>[\u05dc\u05d5])(?:\u05be|[-\u2013]|\\s)\\s*)$"
 )
 _HEBREW_RANGE_WALK_JOIN_PATTERN = re.compile(
-    "(?:(?<![\u0590-\u05ff])(?:עד|ועד|או)\\s+|,\\s*)$"
+    "(?:(?<![\u0590-\u05ff])(?:עד|ועד|או)\\s+|,\\s*|(?<![\u0590-\u05ff])\u05d5\u05be?\\s*)$"
 )
 # An earlier number the walk must not scale: an age, a year, a form number,
 # a grade ("לילד עד גיל 5, 2 או 3 אחוזים"). A reference ("לפי סעיף קטן 5, 2
@@ -3002,9 +3002,13 @@ def _iter_hebrew_percent_range_lower_matches(
             earlier_join = _search_before(
                 _HEBREW_RANGE_WALK_JOIN_PATTERN, text, cursor, 12
             )
-            if earlier_join is None:
+            if earlier_join is not None:
+                earlier_end = earlier_join.start()
+            elif cursor > 0 and text[cursor] == "\u05d5" and text[cursor - 1].isspace():
+                # A vav on the endpoint itself ("אחד ושניים ושלושה אחוזים").
+                earlier_end = cursor
+            else:
                 break
-            earlier_end = earlier_join.start()
             earlier_digits = _search_before(
                 _HEBREW_DIGITS_BEFORE_PATTERN, text, earlier_end, 32
             )
@@ -3642,6 +3646,21 @@ _HEBREW_ORDINAL_CONTEXT_NOUN_PATTERN = re.compile(
     "מנה|יחידה|ילדה|בת|אישה|עובדת|מבוטחת|תלמידה|תוספת|פסקה|תקנה|הוראה|נקודה|שורה|"
     "מהדורה|גרסה|קבוצה|רשימה|הודעה|בקשה|תביעה|החלטה|ישיבה|שנת)\\s+$"
 )
+# Any feminine noun the ordinal may modify: one of the nouns above, or a
+# word ending in ה or ת ("בדיקה", "משמרת"); a verb ("יופעל", "ישולם") ends
+# in neither, and the copulas that do ("יהיה", "תהיה") are clause context.
+_HEBREW_FEMININE_WORD_BEFORE_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])[\u0590-\u05ff]{2,}[\u05d4\u05ea]\\s+$"
+)
+
+
+def _hebrew_feminine_noun_before(text: str, start: int) -> bool:
+    return (
+        _search_before(_HEBREW_ORDINAL_CONTEXT_NOUN_PATTERN, text, start) is not None
+        or _search_before(_HEBREW_FEMININE_WORD_BEFORE_PATTERN, text, start) is not None
+    )
+
+
 _HEBREW_TEMPORAL_AFTER_UNIT_PATTERN = re.compile(
     "\\s+(?:לאחר|אחרי|לפני|מיום|ממועד|מתום|מאז|קודם)(?![\u0590-\u05ff])"
 )
@@ -3668,10 +3687,9 @@ def _hebrew_fraction_unit_after(text: str, position: int, start: int) -> bool:
     # one: no clause context, and a noun the ordinal modifies right before
     # ("לידה חמישית שנה לאחר"); "המכשיר יופעל עשירית שנייה לאחר קבלת האות"
     # is a tenth of a second.
-    return (
-        _hebrew_fraction_context_before(text, start)
-        or _search_before(_HEBREW_ORDINAL_CONTEXT_NOUN_PATTERN, text, start) is None
-    )
+    return _hebrew_fraction_context_before(
+        text, start
+    ) or not _hebrew_feminine_noun_before(text, start)
 
 
 # Every word the numeric grammar reads, for the guards below.
@@ -3726,7 +3744,7 @@ _HEBREW_STRUCTURAL_FRACTION_TAIL = (
     + "))"
 )
 _HEBREW_STRUCTURAL_PRINTED_ENDPOINT = (
-    "(?>(?:(?<![\u05d0-\u05ea])[-\u2212])?"
+    "(?>(?:[\u05db\u05de\u05d1\u05dc](?:\u05be|-)?)?(?:(?<![\u05d0-\u05ea])[-\u2212])?"
     "(?:(?:\\d+\\s+)?\\d+\\s*[/\u2044]\\s*\\d+"
     "|(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:[.,]\\d+)?)"
     "(?:\\s+\\d+\\s*[/\u2044]\\s*\\d+)?"
@@ -3747,7 +3765,7 @@ _HEBREW_STRUCTURAL_BELOW_THOUSAND = (
 # a thousand -- and a vav-bound fractional tail. The first word may carry a
 # vav.
 _HEBREW_STRUCTURAL_SPELLED_ENDPOINT = (
-    "(?>\u05d5?(?:"
+    "(?>(?:[\u05d5\u05db\u05de\u05d1\u05dc\u05e9]\u05be?){0,2}(?:"
     + _HEBREW_STRUCTURAL_FRACTION_TAIL
     + "|(?:"
     + _HEBREW_STRUCTURAL_BELOW_THOUSAND
@@ -3824,6 +3842,9 @@ _HEBREW_STRUCTURAL_PLURAL_NOUNS = (
 # ever structural, so only "תוספת" takes the comma-allowed list-of-amounts
 # guard ("תוספת 1, 2 או 3 שקלים"); "סעיף 5, 2 או 3 אחוזים" keeps section 5.
 _HEBREW_STRUCTURAL_SUPPLEMENT_NOUN = "תוספת"
+_HEBREW_CITATION_BEFORE_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])(?:לפי|על פי|מכוח)\\s+$"
+)
 _HEBREW_STRUCTURAL_SINGULAR_NOUNS = (
     "פרק|תוספת|חלק|סימן|סעיף קטן|סעיף|פסקת משנה|פסקה|לוח|טור|פרט|תקנה"
 )
@@ -3872,7 +3893,9 @@ _HEBREW_STRUCTURAL_REFERENCE_PATTERN = re.compile(
     + ")"
     # A singular noun takes one item, or a pair joined by a conjunction --
     # never a comma, which ends the reference ("סעיף 1, 100 שקלים").
-    "|" + _HEBREW_STRUCTURAL_SUPPLEMENT_NOUN + "\\s+"
+    "|(?<!לפי )(?<!על פי )(?<!מכוח )(?<![\u0590-\u05ff])"
+    + _HEBREW_STRUCTURAL_SUPPLEMENT_NOUN
+    + "\\s+"
     "(?:"
     + _HEBREW_STRUCTURAL_DIGIT_ITEM
     + _HEBREW_STRUCTURAL_NOT_A_QUANTITY_TAILED
@@ -3891,7 +3914,13 @@ _HEBREW_STRUCTURAL_REFERENCE_PATTERN = re.compile(
     + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
     + _HEBREW_STRUCTURAL_NOT_A_LIST_OF_AMOUNTS
     + ")"
-    "|(?:" + _HEBREW_STRUCTURAL_STRICT_SINGULAR_NOUNS + ")\\s+"
+    "|(?:"
+    + _HEBREW_STRUCTURAL_STRICT_SINGULAR_NOUNS
+    # A cited or prefixed "תוספת" ("לפי תוספת 5", "בתוספת 5") is a schedule.
+    + "|(?:(?<=לפי )|(?<=על פי )|(?<=מכוח )|(?<=[\u05d1\u05db\u05dc\u05de\u05d5\u05e9\u05d4])"
+    "|(?<=[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]\u05d4))"
+    + _HEBREW_STRUCTURAL_SUPPLEMENT_NOUN
+    + ")\\s+"
     "(?:"
     + _HEBREW_STRUCTURAL_DIGIT_ITEM
     + _HEBREW_STRUCTURAL_NOT_A_QUANTITY_TAILED
@@ -3970,6 +3999,9 @@ def _hebrew_structural_word_reference_spans(text: str) -> list[tuple[int, int]]:
         coordinated = (
             _HEBREW_LIST_OF_AMOUNTS_AFTER_PATTERN
             if match.group("singular") == _HEBREW_STRUCTURAL_SUPPLEMENT_NOUN
+            and match.start("singular") == match.start()
+            and _search_before(_HEBREW_CITATION_BEFORE_PATTERN, text, match.start())
+            is None
             else _HEBREW_COORDINATED_UNIT_AFTER_PATTERN
         )
         if _HEBREW_UNIT_AFTER_PATTERN.match(text, end) is not None or (
