@@ -17610,6 +17610,23 @@ def test_a_relative_participle_after_the_amount_noun_binds_nothing():
     }
 
 
+def test_a_dative_lamed_marks_a_beneficiary_count_not_an_amount():
+    for text in (
+        "תקציב המיועד ל־3 אלפים ו־200 עובדים",
+        "תקציב המיועד לשלושה אלפים ומאתיים עובדים",
+        "הקצבה המיועדת ל־3 אלפים ו־200 עובדים",
+        "הקצבה המיועדת לשלושה אלפים ומאתיים עובדים",
+        "תקציב ל־3 אלפים ו־200 עובדים",
+        "מענק לשלושה אלפים ומאתיים תושבים",
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == {3_200.0}, (text, recall)
+        assert not ({3_000.0, 200.0} & extract_numbers_from_text(text)), text
+    # Other connectors still bind the amount.
+    assert _hebrew_recall("תקציב ב־3 מיליון ו־20 עובדים") == {3_000_000.0, 20.0}
+    assert _hebrew_recall("קנס של עד 3 מיליון ו־30 ימי מאסר") == {3_000_000.0, 30.0}
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

@@ -2241,6 +2241,17 @@ def _parse_hebrew_number_run(
             )
             is not None
         )
+    if (
+        money_context
+        and start < len(words)
+        and words[start].startswith("\u05dc")
+        and _strip_hebrew_number_prefix(words[start], _HEBREW_RUN_START_VOCABULARY)
+        != words[start]
+    ):
+        # A dative ל on the number ("תקציב המיועד לשלושה אלפים ומאתיים
+        # עובדים") names whom the amount is for; the amount noun does not
+        # govern it.
+        money_context = False
 
     def separate_quantity_at(position: int) -> bool:
         """Whether a quantity apart from a money amount begins at ``position``.
@@ -2546,7 +2557,9 @@ _HEBREW_MONEY_CONTEXT_CONNECTORS = (
     "יפחת|תפחת|פחות|הפחות|שלא|שאינו|שאינה|לכל|היותר|כולל|הכולל|שנתי|שנתית|"
     "חודשי|חודשית|בסיסי|בסיסית|מרבי|מרבית|מזערי|מזערית|מינימלי|מינימלית|"
     "מקסימלי|מקסימלית|ממוצע|ממוצעת|הממוצע|יהיה|יהא|תהיה|תהא|הוא|היא|הם|הן|"
-    "בין|מ|ב|כ|ל"
+    # A dative ל is not among them: "תקציב ל־3 אלפים עובדים" and "תקציב
+    # המיועד ל־3 אלפים עובדים" name whom the budget is for, not its amount.
+    "בין|מ|ב|כ"
 )
 # Present participles that open a relative clause after a noun: employing,
 # holding, operating, paying, receiving, granting, supplying, producing,
