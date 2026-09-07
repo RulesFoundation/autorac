@@ -1972,12 +1972,29 @@ _HEBREW_UNIT_VALUES = {
 }
 _HEBREW_HUNDRED_WORDS = {"מאה": 100.0, "מאתיים": 200.0}
 _HEBREW_THOUSAND_WORDS = {"אלף": 1000.0, "אלפיים": 2000.0}
+# Absolute, plural and construct forms ("שלושה מיליוני שקלים").
 _HEBREW_MILLION_WORDS = {
     "מיליון": 1_000_000.0,
     "מיליונים": 1_000_000.0,
+    "מיליוני": 1_000_000.0,
+}
+_HEBREW_BILLION_WORDS = {
     "מיליארד": 1_000_000_000.0,
     "מיליארדים": 1_000_000_000.0,
+    "מיליארדי": 1_000_000_000.0,
 }
+# The scale tiers of the spoken grammar, largest first: the scale words a
+# count precedes, the values a bare scale word stands for on its own, and
+# the kind recorded. "אלפיים" is a bare two thousand and counts nothing.
+_HEBREW_SCALE_TIERS: tuple[tuple[dict[str, float], dict[str, float], str], ...] = (
+    (_HEBREW_BILLION_WORDS, {"מיליארד": 1_000_000_000.0}, "billion"),
+    (_HEBREW_MILLION_WORDS, {"מיליון": 1_000_000.0}, "million"),
+    (
+        {"אלף": 1000.0, "אלפים": 1000.0, "אלפי": 1000.0},
+        {"אלף": 1000.0, "אלפיים": 2000.0},
+        "thousand",
+    ),
+)
 
 
 def _hebrew_alternation(words: Iterable[str]) -> str:
@@ -1989,6 +2006,7 @@ _HEBREW_SCALE_VALUES = {
     "אלפים": 1000.0,
     "אלף": 1000.0,
     **_HEBREW_MILLION_WORDS,
+    **_HEBREW_BILLION_WORDS,
 }
 _HEBREW_TEEN_TENS = frozenset(_HEBREW_TEEN_TENS_WORDS)
 _HEBREW_MIXED_FRACTION_VALUES = {
@@ -2195,87 +2213,71 @@ def _parse_hebrew_number_run(
     value = 0.0
     kinds: set[str] = set()
     cursor = start
-    first = word_at(start)
-    # A millions part: "מיליון", "שלושה מיליון", "מאה ועשרים מיליון"; a
-    # vav-bound fractional tail right after the scale word scales with it
-    # ("מיליון וחצי" is 1,500,000).
-    if first in _HEBREW_MILLION_WORDS:
-        millions: tuple[int, float] | None = (start + 1, 1.0)
-    else:
-        below = parse_below_thousand(start)
-        if (
-            below is None
-            and first in scale_counts
-            and word_at(start + 1) in _HEBREW_MILLION_WORDS
-        ):
-            below = (start + 1, scale_counts[first], {"unit"})
-        millions = (
-            (below[0] + 1, below[1])
-            if below is not None and word_at(below[0]) in _HEBREW_MILLION_WORDS
-            else None
-        )
-    if millions is not None:
-        cursor, count = millions
-        scale = _HEBREW_MILLION_WORDS[
-            words[cursor - 1]
-            if words[cursor - 1] in _HEBREW_MILLION_WORDS
-            else words[cursor - 1][1:]
-        ]
-        if (
-            cursor < len(words)
-            and has_vav(cursor)
-            and words[cursor][1:] in _HEBREW_MIXED_FRACTION_VALUES
-        ):
-            count += _HEBREW_MIXED_FRACTION_VALUES[words[cursor][1:]]
-            kinds.add("fraction")
-            cursor += 1
-        value += count * scale
-        kinds.add("million")
-        first = word_at(cursor)
-        if first is not None and first.startswith("\u05d5"):
-            first = first[1:]
-    if first in _HEBREW_THOUSAND_WORDS:
-        value += _HEBREW_THOUSAND_WORDS[first]
-        kinds.add("thousand")
-        cursor += 1
-        # "אלף וחצי" is 1,500: a tail right after the bare scale word
-        # scales with it.
-        if (
-            cursor < len(words)
-            and has_vav(cursor)
-            and words[cursor][1:] in _HEBREW_MIXED_FRACTION_VALUES
-        ):
-            value += _HEBREW_MIXED_FRACTION_VALUES[words[cursor][1:]] * 1000.0
-            kinds.add("fraction")
-            cursor += 1
-    else:
-        count = parse_below_thousand(cursor)
-        if (
-            count is None
-            and first in scale_counts
-            and word_at(cursor + 1) in ("אלף", "אלפים")
-        ):
-            count = (cursor + 1, scale_counts[first], {"unit"})
-        if count is not None and word_at(count[0]) in ("אלף", "אלפים"):
-            value += count[1] * 1000.0
-            kinds.add("thousand")
-            cursor = count[0] + 1
+    scaled_tail = False
+
+    def parse_scale_part(
+        position: int,
+        scale_words: dict[str, float],
+        bare_values: dict[str, float],
+    ) -> tuple[int, float, bool] | None:
+        """A count and a scale word, or a bare scale word, at ``position``.
+
+        Returns (next position, amount, whether a fractional tail was
+        read). The tail right after the scale word scales with it: "מיליון
+        וחצי" is 1,500,000, "אלף וחצי" 1,500. Words are read through
+        ``word_at``, so a prefix ("בכמיליון") never reaches the tables.
+        """
+        word = word_at(position)
+        if word in bare_values:
+            amount, scale, following = (
+                bare_values[word],
+                scale_words.get(word, bare_values[word]),
+                position + 1,
+            )
+        else:
+            count = parse_below_thousand(position)
             if (
-                cursor < len(words)
-                and has_vav(cursor)
-                and words[cursor][1:] in _HEBREW_MIXED_FRACTION_VALUES
+                count is None
+                and word in scale_counts
+                and word_at(position + 1) in scale_words
             ):
-                value += _HEBREW_MIXED_FRACTION_VALUES[words[cursor][1:]] * 1000.0
-                kinds.add("fraction")
-                cursor += 1
-    rest = parse_below_thousand(cursor)
+                count = (position + 1, scale_counts[word], {"unit"})
+            scale_word = word_at(count[0]) if count is not None else None
+            if count is None or scale_word not in scale_words:
+                return None
+            scale = scale_words[scale_word]
+            amount, following = count[1] * scale, count[0] + 1
+        tail = False
+        if (
+            following < len(words)
+            and has_vav(following)
+            and words[following][1:] in _HEBREW_MIXED_FRACTION_VALUES
+        ):
+            amount += _HEBREW_MIXED_FRACTION_VALUES[words[following][1:]] * scale
+            following += 1
+            tail = True
+        return following, amount, tail
+
+    for scale_words, bare_values, kind in _HEBREW_SCALE_TIERS:
+        if scaled_tail:
+            break
+        part = parse_scale_part(cursor, scale_words, bare_values)
+        if part is None:
+            continue
+        cursor, amount, tail = part
+        value += amount
+        kinds.add(kind)
+        if tail:
+            kinds.add("fraction")
+            scaled_tail = True
+    rest = None if scaled_tail else parse_below_thousand(cursor)
     if rest is not None:
         cursor, amount, rest_kinds = rest
         value += amount
         kinds |= rest_kinds
     # A vav-bound fractional tail: "וחצי", or a counted fraction "ושני
     # שלישים", "ושלושה רבעים".
-    if start < cursor < len(words) and has_vav(cursor):
+    if not scaled_tail and start < cursor < len(words) and has_vav(cursor):
         tail = words[cursor][1:]
         if tail in _HEBREW_MIXED_FRACTION_VALUES:
             value += _HEBREW_MIXED_FRACTION_VALUES[tail]
@@ -2374,6 +2376,7 @@ def _iter_hebrew_compound_number_matches(
                     "hundred",
                     "thousand",
                     "million",
+                    "billion",
                     "compound",
                 }:
                     matches.append(
@@ -2854,6 +2857,51 @@ def _iter_hebrew_percent_phrase_matches(
         if negative:
             value = -value
         matches.append(((count_start, end), value / 100))
+    return matches
+
+
+# A printed number and a Hebrew scale word are one amount: "3.5 מיליון" is
+# 3,500,000, "2 אלף" 2,000, "3 וחצי מיליון" 3,500,000. Read before the
+# digit passes, which would otherwise take the multiplier as a value of
+# its own and the scale word as another.
+_HEBREW_PRINTED_SCALE_PATTERN = re.compile(
+    "(?<![\\d.,/\u2044])(?:(?<![\u05d0-\u05ea])(?P<sign>[-\u2212]))?"
+    "(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
+    "(?:\\s+\u05d5(?P<tail>"
+    + "|".join(
+        re.escape(w)
+        for w in sorted(_HEBREW_MIXED_FRACTION_VALUES, key=len, reverse=True)
+    )
+    + "))?\\s+[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}(?P<scale>"
+    + _hebrew_alternation(
+        set(_HEBREW_BILLION_WORDS)
+        | set(_HEBREW_MILLION_WORDS)
+        | {"אלף", "אלפים", "אלפי"}
+    )
+    + ")(?![\u0590-\u05ff])"
+)
+_HEBREW_PRINTED_SCALE_VALUES = {
+    **_HEBREW_BILLION_WORDS,
+    **_HEBREW_MILLION_WORDS,
+    "אלף": 1000.0,
+    "אלפים": 1000.0,
+    "אלפי": 1000.0,
+}
+
+
+def _iter_hebrew_printed_scale_matches(
+    text: str,
+) -> list[tuple[tuple[int, int], float]]:
+    """Printed multipliers with a Hebrew scale word, as one amount each."""
+    matches: list[tuple[tuple[int, int], float]] = []
+    for match in _HEBREW_PRINTED_SCALE_PATTERN.finditer(text):
+        value = float(match.group("number").replace(",", ""))
+        if match.group("tail"):
+            value += _HEBREW_MIXED_FRACTION_VALUES[match.group("tail")]
+        value *= _HEBREW_PRINTED_SCALE_VALUES[match.group("scale")]
+        if match.group("sign"):
+            value = -value
+        matches.append((match.span(), value))
     return matches
 
 
@@ -3742,6 +3790,9 @@ _HEBREW_ORDINAL_CONTEXT_NOUN_PATTERN = re.compile(
 # A small unit of time after an ordinal-shaped fraction word makes a
 # fractional duration ("עשירית שנייה", "חמישית דקה"); a large one after a
 # noun makes an ordinal with a time adverbial ("מרפאה חמישית שנה לאחר").
+_HEBREW_FEMININE_WORD_BEFORE_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])[\u0590-\u05ff]{2,}[\u05d4\u05ea]\\s+$"
+)
 _HEBREW_SMALL_TIME_UNIT_AFTER_PATTERN = re.compile(
     "\\s+(?:שנייה|שניה|שניות|דקה|דקות|שעה|שעות|שעת)(?![\u0590-\u05ff])"
 )
@@ -3779,6 +3830,12 @@ def _hebrew_ordinal_context(text: str, start: int, unit_position: int) -> str:
     if _search_before(_HEBREW_ORDINAL_CONTEXT_NOUN_PATTERN, text, start) is not None:
         return "ordinal"
     if _search_before(_HEBREW_DURATION_VERB_BEFORE_PATTERN, text, start) is not None:
+        return "duration"
+    # Agreement: a feminine singular ordinal modifies a feminine singular
+    # noun, which ends in ה or ת. A word before it of any other shape --
+    # a plural ("העובדים נעדרו"), a masculine singular ("העובד נעדר") --
+    # cannot be that noun, and the fraction word reads as a duration.
+    if _search_before(_HEBREW_FEMININE_WORD_BEFORE_PATTERN, text, start) is None:
         return "duration"
     return "ambiguous"
 
@@ -3861,6 +3918,7 @@ def _iter_hebrew_ambiguous_ordinal_fraction_matches(
 _HEBREW_STRUCTURAL_NUMBER_WORD_ANY = _hebrew_alternation(
     _HEBREW_NUMBER_VOCABULARY
     | set(_HEBREW_MILLION_WORDS)
+    | set(_HEBREW_BILLION_WORDS)
     | set(_HEBREW_TEEN_UNIT_VALUES)
     | set(_HEBREW_COUNTED_FRACTION_VALUES)
     | set(_HEBREW_FRACTION_COUNT_VALUES)
@@ -11075,6 +11133,15 @@ def _tokenize_numeric_occurrences_from_text(
             force_rate_context=True,
             requires_rate_context=True,
         )
+        grounding_spans.append(span)
+        inventory_spans.append(span)
+
+    for span, value in _iter_hebrew_printed_scale_matches(cleaned):
+        if _span_overlaps(span, grounding_spans) or _span_overlaps(
+            span, inventory_spans
+        ):
+            continue
+        add_both(cleaned_view, span, value)
         grounding_spans.append(span)
         inventory_spans.append(span)
 

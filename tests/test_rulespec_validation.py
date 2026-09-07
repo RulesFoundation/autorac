@@ -16809,7 +16809,7 @@ def test_an_ambiguous_ordinal_or_duration_is_recorded_with_both_readings():
     # is met by either.
     for text, primary, alternative in (
         ("נערכה בדיקה חמישית שעה לאחר הבדיקה הקודמת", 0.2, 5.0),
-        ("העובד נעדר חמישית שנה לאחר התאונה", 5.0, 0.2),
+        ("העובדת נעדרה חמישית שנה לאחר התאונה", 5.0, 0.2),
         ("נפתחה מרפאה חמישית שנה לאחר פתיחת המרפאה הקודמת", 5.0, 0.2),
     ):
         grounded = extract_numbers_from_text(text)
@@ -16847,6 +16847,75 @@ def test_a_hebrew_number_composes_millions_and_scaled_tails():
         assert _hebrew_recall(text) == {expected}, (text, _hebrew_recall(text))
     assert _hebrew_recall("אחד עשר אלף ומאתיים שקלים") == {11_200.0}
     assert _hebrew_recall("מקדם של אחד וחצי") == {1.5}
+
+
+def test_agreement_settles_a_fraction_word_before_a_time_unit_as_a_duration():
+    # A feminine singular ordinal can only modify a feminine singular noun,
+    # which ends in ה or ת. A plural, a masculine singular or a verb of
+    # another shape before the fraction word rules the ordinal out, and
+    # the phrase reads as a duration with no alternative.
+    for text in (
+        "העובדים נעדרו חמישית שנה לאחר התאונה",
+        "העובד נעדר חמישית שנה לאחר התאונה",
+        "הסכום שולם חמישית שנה לאחר האירוע",
+        "המפעלים פעלו חמישית שעה לאחר ההודעה",
+    ):
+        assert _hebrew_recall_with_alternatives(text) == {(0.2, ())}, (
+            text,
+            _hebrew_recall_with_alternatives(text),
+        )
+        assert 5.0 not in extract_numbers_from_text(text), text
+
+
+def test_a_prefixed_scale_word_reads_through_its_prefixes():
+    # Stacked prefixes on a scale word ("בכמיליון": in about a million) used
+    # to reach the scale table unstripped and raise KeyError.
+    for text, expected in (
+        ("הסכום יגדל בכמיליון שקלים", 1_000_000.0),
+        ("ובכמיליון שקלים נוספים", 1_000_000.0),
+        ("עלות של כאלף שקלים", 1_000.0),
+        ("סכום של ממיליארד שקלים", 1_000_000_000.0),
+        ("הסכום הועלה לאלפיים שקלים", 2_000.0),
+    ):
+        assert _hebrew_recall(text) == {expected}, (text, _hebrew_recall(text))
+
+
+def test_a_printed_multiplier_and_a_scale_word_are_one_amount():
+    for text, expected in (
+        ("סכום של 3.5 מיליון שקלים", 3_500_000.0),
+        ("סכום של 2 אלף שקלים", 2_000.0),
+        ("סכום של 1.2 מיליארד שקלים", 1_200_000_000.0),
+        ("סכום של 3 וחצי מיליון שקלים", 3_500_000.0),
+        ("סכום של 1,200 אלף שקלים", 1_200_000.0),
+        ("סכום של כ־3 מיליון שקלים", 3_000_000.0),
+        ("סכום של 3 מיליוני שקלים", 3_000_000.0),
+        ("סכום של 2.5 אלפים שקלים", 2_500.0),
+        ("שלושה מיליוני שקלים", 3_000_000.0),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert grounded == {expected}, (text, grounded)
+        assert _hebrew_recall(text) == {expected}, (text, _hebrew_recall(text))
+    assert _hebrew_recall("סכום של 3.5 מיליון שקלים ו־2 אלף שקלים") == {
+        3_500_000.0,
+        2_000.0,
+    }
+    assert _hebrew_recall("הפסד של -3 מיליון שקלים") == {-3_000_000.0}
+
+
+def test_descending_scales_compose_into_one_number():
+    for text, expected in (
+        ("סכום של מיליארד ומאתיים מיליון שקלים", 1_200_000_000.0),
+        (
+            "שני מיליארד ושלוש מאות מיליון ומאתיים אלף שקלים",
+            2_300_200_000.0,
+        ),
+        ("מיליון ומאתיים אלף וחמש מאות שקלים", 1_200_500.0),
+        ("שלושה מיליארד וחצי שקלים", 3_500_000_000.0),
+        ("סכום של מיליארד וחצי שקלים", 1_500_000_000.0),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert grounded == {expected}, (text, grounded)
+        assert _hebrew_recall(text) == {expected}, (text, _hebrew_recall(text))
 
 
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
