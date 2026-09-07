@@ -15870,6 +15870,55 @@ def test_a_quantity_in_any_unit_never_becomes_a_reference_label():
     assert _hebrew_recall("לפי סעיפים 1, 2 או 3 ישולם סכום של 100 שקלים") == {100.0}
 
 
+def test_a_unit_abbreviation_with_gershayim_marks_a_quantity():
+    assert _hebrew_recall("לפי סעיפים 1, 2, 4, 50 ק״ג יישקלו") == {50.0}
+    assert _hebrew_recall('לפי סעיפים 1, 2, 4, 50 ק"ג יישקלו') == {50.0}
+    assert _hebrew_recall("לפי סעיפים 1, 2, 4, 100 עד 200 מ״ר יימדדו") == {100.0, 200.0}
+    assert _hebrew_recall("לפי סעיפים 1, 2 או 3, 100 ש״ח ישולמו") == {100.0}
+    assert _hebrew_recall("לפי סעיפים 1 ו־2, 5 ס״מ") == {5.0}
+
+
+def test_the_construct_two_composes_inside_a_compound():
+    for text, expected in (
+        ("בתום עשרים ושני הימים", 22.0),
+        ("בתום מאה ושני הימים", 102.0),
+        ("בתום עשרים ושתי השנים", 22.0),
+        ("ישולם סכום של מאתיים ושני שקלים", 202.0),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert expected in grounded, (text, grounded)
+        assert not ({20.0, 100.0, 200.0, 2.0} & grounded), (text, grounded)
+        assert _hebrew_recall(text) == {expected}, (text, _hebrew_recall(text))
+    # On its own, or under the article, "שני" is still no cardinal two.
+    assert _hebrew_recall("לפי סעיף שני אלפים ישולם סכום של 100 שקלים") == {100.0}
+    assert _hebrew_recall("ישולם בעד הילד השני אחוז וחצי מהשכר") == {2.0, 0.015}
+    assert _hebrew_recall("מקדם של אחד ושני שלישים") == {round(5.0 / 3.0, 9)} or {
+        round(v, 9) for v in _hebrew_recall("מקדם של אחד ושני שלישים")
+    } == {round(5.0 / 3.0, 9)}
+
+
+def test_a_spelled_fractional_endpoint_shares_the_range_percent_noun():
+    for text, expected in (
+        ("שיעור המס יהיה בין חצי לשלושה אחוזים", {0.005, 0.03}),
+        ("שיעור המס יהיה רבע עד חצי אחוז", {0.0025, 0.005}),
+        ("שיעור המס יהיה בין רבע לחצי אחוז", {0.0025, 0.005}),
+        ("שיעור המס יהיה בין שלושה רבעים לשלושה אחוזים", {0.0075, 0.03}),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert all(any(abs(v - e) < 1e-12 for v in grounded) for e in expected), (
+            text,
+            grounded,
+        )
+        assert not ({0.5, 0.25, 0.75} & _hebrew_recall(text)), (
+            text,
+            _hebrew_recall(text),
+        )
+        assert {round(v, 12) for v in _hebrew_recall(text)} == expected, (
+            text,
+            _hebrew_recall(text),
+        )
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

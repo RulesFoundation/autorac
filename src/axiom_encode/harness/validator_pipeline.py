@@ -2078,9 +2078,11 @@ def _parse_hebrew_number_run(
     """
     units = {**_HEBREW_UNIT_VALUES, **_HEBREW_TEEN_UNIT_VALUES}
     # The construct forms that count a following noun -- "שני אלפים", "שתי
-    # מאות" -- are written like the ordinal "second"; they are units only in
-    # front of a scale word.
+    # מאות", "עשרים ושני הימים" -- are written like the ordinal "second";
+    # they are units in front of a scale word and inside a compound after a
+    # ten or a hundred, never at the start of a run on their own.
     scale_counts = {**units, "שני": 2.0, "שתי": 2.0}
+    construct_units = {"שני": 2.0, "שתי": 2.0}
     # "שנים" and "שתים" count only inside a teen ("שנים עשר"); on their own
     # they are the plural of "year" and the like, not a two.
     teen_only = _HEBREW_TEEN_ONLY_WORDS
@@ -2120,16 +2122,16 @@ def _parse_hebrew_number_run(
             total = _HEBREW_TENS_VALUES[word]
             following = word_at(position + 1)
             if (
-                following in units
+                following in scale_counts
                 and following not in _HEBREW_TEEN_TENS
                 and has_vav(position + 1)
                 and not fraction_noun_follows(position + 1)
             ):
-                return position + 2, total + units[following], "compound"
+                return position + 2, total + scale_counts[following], "compound"
             return position + 1, total, "tens"
         if word in _HEBREW_TEEN_TENS:
             return position + 1, 10.0, "unit"
-        if word in units:
+        if word in units or (word in construct_units and position > start):
             following = word_at(position + 1)
             if following in _HEBREW_TEEN_TENS and not has_vav(position + 1):
                 return position + 2, 10.0 + units[word], "teen"
@@ -2139,7 +2141,7 @@ def _parse_hebrew_number_run(
                 # "שלושה רבעים" is three quarters, a fractional tail or a
                 # counted fraction, never a three.
                 return None
-            return position + 1, units[word], "unit"
+            return position + 1, scale_counts[word], "unit"
         return None
 
     def parse_hundreds(position: int) -> tuple[int, float] | None:
@@ -2747,6 +2749,11 @@ def _hebrew_number_run_ending_at(
         parsed = _parse_hebrew_number_run(words)
         if parsed is not None and parsed[0] == len(words):
             return run[-width].start(), parsed[1], words[0]
+        # A fraction word is an endpoint too: "בין חצי לשלושה אחוזים", "רבע
+        # עד חצי אחוז".
+        fractional = _hebrew_fractional_count(words)
+        if fractional is not None:
+            return run[-width].start(), fractional, words[0]
     return None
 
 
@@ -3093,16 +3100,113 @@ _HEBREW_STRUCTURAL_DIGIT = (
 )
 # The unit nouns a quantity carries: money, time, rates, measures, weights,
 # volumes, energy, and counts of people and things. A number before one of
-# these is a quantity, never a reference label.
-_HEBREW_STRUCTURAL_UNIT_NOUNS = (
-    'שקלים חדשים|שקלים|שקל|ש"ח|ש״ח|₪|%|דולר|דולרים|יורו|אירו|ליש"ט|לירות|אגורות|'
-    "ימים|ימי|יום|חודשים|חודשי|חודש|שנים|שנות|שנה|שבועות|שבוע|שעות|שעת|שעה|דקות|דקה|"
-    "שניות|רבעונים|רבעון|תקופות|נקודות|נקודת|אחוז|אחוזים|"
-    'מטרים רבועים|מטרים|מטר|ס"מ|סנטימטרים|סנטימטר|מ"מ|מילימטרים|מילימטר|ק"מ|קילומטרים|'
-    'קילומטר|מ"ר|מ"ק|דונמים|דונם|ק"ג|קילוגרמים|קילוגרם|גרמים|גרם|טונות|טון|ליטרים|ליטר|'
-    'מ"ל|מיליליטר|קוט"ש|קילוואט|וואט|כ"ס|מעלות|'
-    "יחידות|יחידה|פעמים|נפשות|נפש|בני אדם|אנשים|עובדים|מועסקים|תלמידים|תושבים|"
-    "מקומות|חדרים|קומות|דירות|רכבים|כלי רכב|ילדים|ילד|הורים|מבוטחים|זכאים"
+# these is a quantity, never a reference label. An abbreviation is written
+# with an ASCII quote or with gershayim (ק"ג, ק״ג); both are matched.
+_HEBREW_STRUCTURAL_UNIT_NOUN_WORDS = (
+    "שקלים חדשים",
+    "שקלים",
+    "שקל",
+    'ש"ח',
+    "₪",
+    "%",
+    "דולר",
+    "דולרים",
+    "יורו",
+    "אירו",
+    'ליש"ט',
+    "לירות",
+    "אגורות",
+    "ימים",
+    "ימי",
+    "יום",
+    "חודשים",
+    "חודשי",
+    "חודש",
+    "שנים",
+    "שנות",
+    "שנה",
+    "שבועות",
+    "שבוע",
+    "שעות",
+    "שעת",
+    "שעה",
+    "דקות",
+    "דקה",
+    "שניות",
+    "רבעונים",
+    "רבעון",
+    "תקופות",
+    "נקודות",
+    "נקודת",
+    "אחוז",
+    "אחוזים",
+    "מטרים רבועים",
+    "מטרים",
+    "מטר",
+    'ס"מ',
+    "סנטימטרים",
+    "סנטימטר",
+    'מ"מ',
+    "מילימטרים",
+    "מילימטר",
+    'ק"מ',
+    "קילומטרים",
+    "קילומטר",
+    'מ"ר',
+    'מ"ק',
+    "דונמים",
+    "דונם",
+    'ק"ג',
+    "קילוגרמים",
+    "קילוגרם",
+    "גרמים",
+    "גרם",
+    "טונות",
+    "טון",
+    "ליטרים",
+    "ליטר",
+    'מ"ל',
+    "מיליליטר",
+    'קוט"ש',
+    "קילוואט",
+    "וואט",
+    'כ"ס',
+    "מעלות",
+    "יחידות",
+    "יחידה",
+    "פעמים",
+    "נפשות",
+    "נפש",
+    "בני אדם",
+    "אנשים",
+    "עובדים",
+    "מועסקים",
+    "תלמידים",
+    "תושבים",
+    "מקומות",
+    "חדרים",
+    "קומות",
+    "דירות",
+    "רכבים",
+    "כלי רכב",
+    "ילדים",
+    "ילד",
+    "הורים",
+    "מבוטחים",
+    "זכאים",
+)
+
+
+def _hebrew_unit_alternation(units: "Iterable[str]") -> str:
+    """The units as a regex alternation; an abbreviation's quote is ASCII or gershayim."""
+    return "|".join(
+        re.escape(unit).replace('"', '["\u05f4]')
+        for unit in sorted(units, key=len, reverse=True)
+    )
+
+
+_HEBREW_STRUCTURAL_UNIT_NOUNS = _hebrew_unit_alternation(
+    _HEBREW_STRUCTURAL_UNIT_NOUN_WORDS
 )
 # A quantity, not a further reference: a number followed by a unit noun.
 _HEBREW_STRUCTURAL_NOT_A_QUANTITY = "(?!\\s*(?:" + _HEBREW_STRUCTURAL_UNIT_NOUNS + "))"
