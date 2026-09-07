@@ -3224,6 +3224,7 @@ def _iter_hebrew_percent_phrase_matches(
         count_value: float | None = None
         run: list["re.Match[str]"] = []
         mixed: tuple[float, int] | None = None
+        count_head: "re.Match[str] | None" = None
         count_start = match.start()
         negative = False
         continues_amount = False
@@ -3365,13 +3366,20 @@ def _iter_hebrew_percent_phrase_matches(
                     and not (parsed[2] & _HEBREW_SCALE_KINDS and run_after_money)
                 ):
                     count_value = parsed[1]
-                    count_start = run[-width].start()
+                    count_head = run[-width]
+                    count_start = count_head.start()
                     break
                 fractional = _hebrew_fractional_count(words)
                 if fractional is not None:
                     count_value = fractional
-                    count_start = run[-width].start()
+                    count_head = run[-width]
+                    count_start = count_head.start()
                     break
+            if count_value is not None and _hebrew_unary_sign_at(text, count_start - 1):
+                # "−חצי אחוז", "−שלושה אחוזים": the sign before a spelled
+                # count signs the rate as it signs a printed one.
+                negative = True
+                count_start -= 1
         if continues_amount:
             continue
         if (
@@ -3391,20 +3399,28 @@ def _iter_hebrew_percent_phrase_matches(
             # "3 אלפים ו־200 וחצי אחוזים": the mixed count continues the
             # scaled amount; the printed pass reads the whole rate.
             continue
-        if count_value is not None and mixed is None and run:
-            # A run that begins with a scale word a printed multiplier
-            # precedes ("1.5 מיליון אחוזים", "3 אלפים וחמש מאות אחוזים") is
-            # that multiplier's, remainder and all: the printed pass reads
-            # the whole rate. Under a money amount the remainder counts a
-            # rate of its own ("סכום של 3 מיליון ועשרים אחוזים").
-            run_head = run[0]
-            if (
-                run_head.group(0) in _HEBREW_SCALE_VALUES
+        if count_value is not None and mixed is None and count_head is not None:
+            # A count that begins with a scale word a printed multiplier
+            # precedes ("1.5 מיליון אחוזים"), or that continues such an
+            # amount ("3 אלפים וחמש מאות אחוזים"), is that multiplier's,
+            # remainder and all: the printed pass reads the whole rate.
+            # Under a money amount the remainder counts a rate of its own
+            # ("סכום של 3 מיליון ועשרים אחוזים"). The count's own head
+            # decides, not the run's: "2 אלפים עד שלושת אלפים ומאה אחוזים"
+            # keeps its upper endpoint.
+            head_word = count_head.group(0)
+            multiplied = (
+                head_word in _HEBREW_SCALE_VALUES
                 and _search_before(
-                    _HEBREW_DIGITS_BEFORE_PATTERN, text, run_head.start(), 32
+                    _HEBREW_DIGITS_BEFORE_PATTERN, text, count_head.start(), 32
                 )
                 is not None
-                and not _hebrew_money_context_before(text, run_head.start())
+            ) or (
+                head_word.startswith("\u05d5")
+                and _hebrew_endpoint_continues_an_amount(text, count_head.start())
+            )
+            if multiplied and not _hebrew_money_context_before(
+                text, count_head.start()
             ):
                 continue
         if count_value is None and tail is None and tail_count is None:
@@ -3815,6 +3831,10 @@ def _iter_hebrew_shared_scale_range_matches(
         if printed_lower is not None:
             lower_value = _hebrew_printed_endpoint_value(printed_lower)
             if lower_value is None:
+                continue
+            if "," in printed_lower.group(0) or abs(lower_value) >= scale:
+                # "בין 2,000 ל־3 אלפים": a grouped or scale-sized number is
+                # a complete amount, not a multiplier that omits its scale.
                 continue
             lower_span = (printed_lower.start(), lower_end)
         else:
@@ -4447,6 +4467,27 @@ _HEBREW_RANGE_LOWER_BOUND_PATTERN = re.compile(
 )
 
 
+def _hebrew_spelled_span_carries_a_scale(text: str, start: int, end: int) -> bool:
+    """Whether the spelled number in ``text[start:end]`` carries a scale.
+
+    The parser's classification decides ("אלפיים" is two thousand, a scaled
+    numeral with no scale word), with the scale vocabulary as the fallback
+    for a run the parser reads only with its prefix stripped.
+    """
+    words = text[start:end].split()
+    if not words:
+        return False
+    parsed = _parse_hebrew_number_run(words)
+    if parsed is None and words[0][:1] in "\u05dc\u05de\u05d1\u05db":
+        parsed = _parse_hebrew_number_run([words[0][1:].lstrip("\u05be")] + words[1:])
+    if parsed is not None and parsed[2] & _HEBREW_SCALE_KINDS:
+        return True
+    return any(
+        word in _HEBREW_PRINTED_SCALE_VALUES or word in _HEBREW_SCALE_VALUES
+        for word in words
+    )
+
+
 def _hebrew_number_run_ending_at(
     text: str,
     end: int,
@@ -4524,11 +4565,10 @@ def _iter_hebrew_percent_range_lower_matches(
             if spelled is None:
                 continue
             upper_start, _value, upper_first = spelled
-            # A spelled endpoint with a scale word of its own ("לשלושת אלפים
-            # ומאתיים אחוזים") is scaled as a printed one is.
-            upper_scaled = any(
-                word in _HEBREW_PRINTED_SCALE_VALUES
-                for word in text[upper_start : noun.start()].split()
+            # A spelled endpoint with a scale of its own ("לשלושת אלפים
+            # ומאתיים אחוזים", "אלפיים") is scaled as a printed one is.
+            upper_scaled = _hebrew_spelled_span_carries_a_scale(
+                text, upper_start, noun.start()
             )
         # The join before it.
         join = _search_before(_HEBREW_RANGE_JOIN_BEFORE_PATTERN, text, upper_start, 12)
@@ -4568,11 +4608,24 @@ def _iter_hebrew_percent_range_lower_matches(
         # A lower endpoint carries a scale of its own when it is a printed
         # amount or its spelled words include a scale word, remainder and
         # all ("שלושת אלפים ומאה").
-        lower_scaled = lower_amount is not None or (
-            spelled_lower is not None
-            and any(
-                word in _HEBREW_PRINTED_SCALE_VALUES
-                for word in text[spelled_lower[0] : lower_flush].split()
+        # A lower endpoint is complete on its own when it is a printed
+        # amount, a spelled number with a scale, or a grouped or
+        # thousand-plus printed number ("בין 2,000 ל־3 אלפים אחוזים"); only
+        # a small bare number omits the upper endpoint's scale.
+        lower_scaled = (
+            lower_amount is not None
+            or (
+                spelled_lower is not None
+                and _hebrew_spelled_span_carries_a_scale(
+                    text, spelled_lower[0], lower_flush
+                )
+            )
+            or (
+                lower_digits is not None
+                and (
+                    "," in lower_digits.group(0)
+                    or abs(_hebrew_printed_endpoint_value(lower_digits) or 0) >= 1000
+                )
             )
         )
         if upper_scaled and not lower_scaled:
