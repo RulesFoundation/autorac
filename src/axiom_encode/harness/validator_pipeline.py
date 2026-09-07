@@ -3297,6 +3297,12 @@ def _iter_hebrew_percent_phrase_matches(
             # multiplier ("3 אלפים אחוזים וחצי"): the printed pass reads
             # the whole rate, tail included; a count of one is not it.
             continue
+        if mixed is not None and _hebrew_digits_continue_printed_scale_amount(
+            text, count_start
+        ):
+            # "3 אלפים ו־200 וחצי אחוזים": the mixed count continues the
+            # scaled amount; the printed pass reads the whole rate.
+            continue
         if count_value is not None and mixed is None and run:
             # A run that begins with a scale word a printed multiplier
             # precedes ("1.5 מיליון אחוזים", "3 אלפים וחמש מאות אחוזים") is
@@ -3408,9 +3414,23 @@ def _hebrew_digits_continue_printed_scale_amount(text: str, position: int) -> bo
     if scale_word is None:
         return False
     multiplier_end = len(text[: scale_word.start()].rstrip())
-    return _search_before(
-        _HEBREW_DIGITS_BEFORE_PATTERN, text, multiplier_end, 32
-    ) is not None and not _hebrew_money_context_before(text, scale_word.start())
+    if (
+        _search_before(_HEBREW_DIGITS_BEFORE_PATTERN, text, multiplier_end, 32)
+        is not None
+    ):
+        # A printed multiplier: "3 אלפים ו־200".
+        return not _hebrew_money_context_before(text, scale_word.start())
+    # A spelled scaled amount: "שלושת אלפים ו־200". The longest spelled number
+    # ending at the scale word carries a scale kind.
+    run = _hebrew_word_run_before(text, scale_end, tokens=_HebrewWordTokens(text))
+    for width in range(len(run), 0, -1):
+        words = [token.group(0) for token in run[-width:]]
+        parsed = _parse_hebrew_number_run(words)
+        if parsed is not None and parsed[0] == len(words):
+            return bool(
+                parsed[2] & _HEBREW_SCALE_KINDS
+            ) and not _hebrew_money_context_before(text, run[-width].start())
+    return False
 
 
 _HEBREW_SCALE_WORD_BEFORE_PATTERN = re.compile(
@@ -12796,11 +12816,18 @@ def _tokenize_numeric_occurrences_from_text(
             ):
                 noun_before = None
         if percent is not None or noun_before is not None:
-            span = (
-                (span[0], percent.end())
-                if percent is not None
-                else (noun_before.start(), span[1])
-            )
+            if percent is not None:
+                # The fractional tail after the marker is the rate's too,
+                # unless a unit of its own follows: "שלושת אלפים% וחצי" is
+                # 3,000.5 percent, "אחוזים וחצי שקל" 30 and half a shekel.
+                unit = _hebrew_percent_unit_after(cleaned, span[1])
+                if unit is not None:
+                    span = (span[0], unit[0])
+                    value += unit[1]
+                else:
+                    span = (span[0], percent.end())
+            else:
+                span = (noun_before.start(), span[1])
             if not _span_overlaps(span, grounding_spans):
                 collector.add_grounding(
                     cleaned_view,

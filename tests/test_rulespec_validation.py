@@ -17836,6 +17836,51 @@ def test_a_scaled_percentage_with_a_remainder_is_one_rate():
     }
 
 
+_SCALED_PERCENTAGE_LEADS = {"printed": "3 אלפים", "spelled": "שלושת אלפים"}
+_SCALED_PERCENTAGE_REMAINDERS = {
+    "none": ("", 0.0),
+    "spelled": (" וחמש מאות", 500.0),
+    "printed": (" ו־200", 200.0),
+    "mixed": (" ו־200 וחצי", 200.5),
+    "spelled-mixed": (" ומאתיים וחצי", 200.5),
+}
+_SCALED_PERCENTAGE_UNITS = {"noun": " אחוזים", "sign": "%"}
+_SCALED_PERCENTAGE_TAILS = {
+    "none": ("", 0.0),
+    "half": (" וחצי", 0.5),
+    "counted": (" ושלושה רבעים", 0.75),
+    "own-unit": (" וחצי שקל", None),
+}
+
+
+@pytest.mark.parametrize("lead", sorted(_SCALED_PERCENTAGE_LEADS))
+@pytest.mark.parametrize("remainder", sorted(_SCALED_PERCENTAGE_REMAINDERS))
+@pytest.mark.parametrize("unit", sorted(_SCALED_PERCENTAGE_UNITS))
+@pytest.mark.parametrize("tail", sorted(_SCALED_PERCENTAGE_TAILS))
+def test_a_scaled_percentage_reads_whole_in_every_form(lead, remainder, unit, tail):
+    # Printed or spelled leading amount, a spelled, printed or mixed
+    # remainder, the percent noun or the sign, and a tail of the rate's
+    # own or of another unit: one rate, in parity across every form.
+    if tail == "own-unit" and unit == "sign":
+        pytest.skip("no unit follows a sign")
+    remainder_text, remainder_value = _SCALED_PERCENTAGE_REMAINDERS[remainder]
+    tail_text, tail_value = _SCALED_PERCENTAGE_TAILS[tail]
+    text = (
+        "השיעור הוא "
+        + _SCALED_PERCENTAGE_LEADS[lead]
+        + remainder_text
+        + _SCALED_PERCENTAGE_UNITS[unit]
+        + tail_text
+    )
+    amount = 3_000.0 + remainder_value
+    if tail_value is None:
+        expected = {round(amount / 100, 6), 0.5}
+    else:
+        expected = {round((amount + tail_value) / 100, 6)}
+    recall = {round(v, 6) for v in _hebrew_recall(text)}
+    assert recall == expected, (text, recall)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
