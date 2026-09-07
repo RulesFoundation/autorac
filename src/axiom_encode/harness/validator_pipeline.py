@@ -2055,6 +2055,7 @@ _HEBREW_NUMBER_PREFIX_LETTERS = "\u05d5\u05d4\u05d1\u05db\u05dc\u05de\u05e9"
 _HEBREW_WORD_TOKEN_PATTERN = re.compile("[\u0590-\u05bd\u05bf-\u05ff]+")
 _HEBREW_TEEN_JOIN_PATTERN = re.compile("^\\s*[-\u05be]\\s*$")
 _HEBREW_PERCENT_WORD_PATTERN = re.compile("\\s+\u05d4?אחוז(?:ים|י)?(?![\u0590-\u05ff])")
+_HEBREW_PERCENT_SIGN_AFTER_PATTERN = re.compile("\\s*%")
 # The percent noun may precede its count -- "אחוז אחד" is one percent.
 _HEBREW_PERCENT_NOUN_BEFORE_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}\u05d4?אחוז(?:ים)?\\s+$"
@@ -2454,6 +2455,9 @@ _HEBREW_FRACTION_OPERAND_AFTER_PATTERN = re.compile(
     + _hebrew_alternation(set(_HEBREW_SCALE_VALUES) | {"של", "מן", "מתוך"})
     + ")(?![\u0590-\u05ff])|"
     + _HEBREW_FRACTION_BASE_AMOUNT_PATTERN.pattern
+    # A percent noun or sign: "3 מיליון וחצי אחוז" is three million, and
+    # half a percent.
+    + "|\\s+\u05d4?אחוז(?:ים|י)?(?![\u0590-\u05ff])|\\s*%"
     + ")"
 )
 
@@ -2473,6 +2477,13 @@ def _iter_hebrew_compound_number_matches(
     # copying, and a start that is not a number word is skipped at once.
     runs: list[tuple[int, int]] = []
     run_start = 0
+    # A word a percent sign marks ("ועשרים%") counts a rate: a scaled
+    # amount before it ends before it, whatever the parser would compose.
+    percent_marked = {
+        index
+        for index, token in enumerate(tokens)
+        if _HEBREW_PERCENT_SIGN_AFTER_PATTERN.match(text, token[1])
+    }
     for index in range(1, len(tokens) + 1):
         if index < len(tokens):
             gap = text[tokens[index - 1][1] : tokens[index][0]]
@@ -2499,6 +2510,17 @@ def _iter_hebrew_compound_number_matches(
                 index += 1
                 continue
             parsed = _parse_hebrew_number_run(words, index)
+            if parsed is not None and parsed[2] & _HEBREW_SCALE_KINDS:
+                marked = next(
+                    (
+                        offset
+                        for offset in range(index + 1, index + parsed[0])
+                        if start + offset in percent_marked
+                    ),
+                    None,
+                )
+                if marked is not None:
+                    parsed = _parse_hebrew_number_run(words[:marked], index)
             if parsed is not None:
                 consumed, value, kinds = parsed
                 if consumed >= 2 or kinds & {
@@ -3098,6 +3120,10 @@ def _hebrew_spelled_endpoint_before(
     run = _hebrew_word_run_before(text, end, tokens=tokens)
     if run and run[-1].group(0) in _HEBREW_CONSTRUCT_COUNT_WORDS:
         return None
+    # A printed whole with a spelled tail ("2 וחצי") is one endpoint.
+    mixed = _hebrew_printed_mixed_count(text, run)
+    if mixed is not None:
+        return mixed[1], mixed[0]
     for width in range(len(run), 0, -1):
         words = [token.group(0) for token in run[-width:]]
         parsed = _parse_hebrew_number_run(words)
@@ -3227,6 +3253,9 @@ def _hebrew_spelled_remainder_after(
         return None
     if _HEBREW_PERCENT_WORD_PATTERN.match(text, tokens[consumed - 1][1]) is not None:
         # "ועשרים אחוזים" is a rate, not a remainder of twenty.
+        return None
+    if _HEBREW_PERCENT_SIGN_AFTER_PATTERN.match(text, tokens[consumed - 1][1]):
+        # "ועשרים%" likewise.
         return None
     return tokens[consumed - 1][1], value
 

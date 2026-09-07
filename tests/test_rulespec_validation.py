@@ -17276,6 +17276,43 @@ def test_a_spelled_percentage_after_a_scaled_amount_keeps_the_amount():
         assert not any(v > 3_000_000.0 for v in grounded), (text, grounded)
 
 
+def test_a_fractional_percentage_after_a_scaled_amount_keeps_the_amount():
+    for text, expected in (
+        ("סכום של 3 מיליון וחצי אחוז מההכנסה", {3_000_000.0, 0.005}),
+        ("סכום של שלושה מיליון וחצי אחוז מההכנסה", {3_000_000.0, 0.005}),
+        ("סכום של 3 מיליון ורבע אחוז מההכנסה", {3_000_000.0, 0.0025}),
+        ("סכום של 3 מיליון ו־20% מההכנסה", {3_000_000.0, 0.2}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+        grounded = extract_numbers_from_text(text)
+        assert expected <= grounded and 1_000_000.0 not in grounded, (text, grounded)
+
+
+def test_a_percent_sign_marks_a_rate_after_a_scaled_amount():
+    for text in (
+        "סכום של 3 מיליון ועשרים% מההכנסה",
+        "סכום של שלושה מיליון ועשרים% מההכנסה",
+        "סכום של 3 מיליון ועשרים % מההכנסה",
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == {3_000_000.0, 0.2}, (text, recall)
+        grounded = extract_numbers_from_text(text)
+        assert not any(v > 3_000_000.0 for v in grounded), (text, grounded)
+
+
+def test_a_shared_scale_range_reads_mixed_endpoints():
+    for text, expected in (
+        ("בין 2 וחצי ל־3 מיליון שקלים", {2_500_000.0, 3_000_000.0}),
+        ("בין 3 ל־5 וחצי מיליון שקלים", {3_000_000.0, 5_500_000.0}),
+        ("בין 2 וחצי ל־5 וחצי מיליון שקלים", {2_500_000.0, 5_500_000.0}),
+        ("שניים וחצי עד שלושה מיליון שקלים", {2_500_000.0, 3_000_000.0}),
+    ):
+        assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+        grounded = extract_numbers_from_text(text)
+        assert expected <= grounded and 2.5 not in grounded, (text, grounded)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
