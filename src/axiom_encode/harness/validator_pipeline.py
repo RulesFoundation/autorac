@@ -2554,7 +2554,7 @@ _HEBREW_FRACTION_BASE_AMOUNT_PATTERN = re.compile(
 # המעסיק לפחות") means the noun governs something else.
 _HEBREW_MONEY_CONTEXT_CONNECTORS = (
     "של|בסך|בסכום|בגובה|בשיעור|בשווי|עד|לפחות|על|לא|יעלה|תעלה|עולה|העולה|"
-    "יפחת|תפחת|פחות|הפחות|שלא|שאינו|שאינה|לכל|היותר|כולל|הכולל|שנתי|שנתית|"
+    "יפחת|תפחת|פחות|הפחות|שלא|שאינו|שאינה|לכל|היותר|שנתי|שנתית|"
     "חודשי|חודשית|בסיסי|בסיסית|מרבי|מרבית|מזערי|מזערית|מינימלי|מינימלית|"
     "מקסימלי|מקסימלית|ממוצע|ממוצעת|הממוצע|יהיה|יהא|תהיה|תהא|הוא|היא|הם|הן|"
     # A dative ל is not among them: "תקציב ל־3 אלפים עובדים" and "תקציב
@@ -2584,7 +2584,7 @@ _HEBREW_MONEY_POSSESSOR_CONNECTORS = (
     "יפחת\\s+\u05de[\u05be-]?|תפחת\\s+\u05de[\u05be-]?|פחות\\s+\u05de[\u05be-]?|"
     "יותר\\s+\u05de[\u05be-]?|למעלה\\s+\u05de[\u05be-]?|"
     "יהיה|יהא|תהיה|תהא|הוא|היא|הם|הן|"
-    "\u05d4(?:כולל|כוללת|שנתי|שנתית|חודשי|חודשית|בסיסי|בסיסית|מרבי|מרבית|"
+    "\u05d4(?:שנתי|שנתית|חודשי|חודשית|בסיסי|בסיסית|מרבי|מרבית|"
     "מזערי|מזערית|מינימלי|מינימלית|מקסימלי|מקסימלית|ממוצע|ממוצעת)"
 )
 _HEBREW_MONEY_NOUN = (
@@ -2609,6 +2609,22 @@ _HEBREW_MONEY_PRINTED_TAIL = (
 #
 # The bare noun, with or without the article, and the connectors, with the
 # article or not ("המחזור השנתי הכולל", "הקנס יהיה לכל היותר בין").
+# "כולל" is the adjective "total" only where "של", a copula or another
+# adjective follows ("המחזור הכולל של", "התקציב הכולל שלא יעלה על"); before
+# a number, a threshold word or a noun it is the verb "includes", and what
+# it includes is a count of its own ("הסיוע כולל 3 אלפים ו־200 מיטות",
+# "התקציב הכולל לפחות 3 אלפים ו־200 עובדים").
+_HEBREW_MONEY_TOTAL_ADJECTIVE = (
+    "\u05d4?כולל(?:ת)?(?=\\s+(?:של|שלא|שאינו|שאינה|לא|יהיה|יהא|תהיה|תהא|הוא|היא|הם|הן|"
+    "\u05d4(?:שנתי|שנתית|חודשי|חודשית|בסיסי|בסיסית|מרבי|מרבית|מזערי|מזערית|"
+    "מינימלי|מינימלית|מקסימלי|מקסימלית|ממוצע|ממוצעת))(?![\u0590-\u05ff]))"
+)
+_HEBREW_MONEY_CONTEXT_CONNECTORS = (
+    _HEBREW_MONEY_TOTAL_ADJECTIVE + "|" + _HEBREW_MONEY_CONTEXT_CONNECTORS
+)
+_HEBREW_MONEY_POSSESSOR_CONNECTORS = (
+    _HEBREW_MONEY_TOTAL_ADJECTIVE + "|" + _HEBREW_MONEY_POSSESSOR_CONNECTORS
+)
 _HEBREW_MONEY_CONTEXT_PATTERN = re.compile(
     "(?:"
     "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}"

@@ -17697,6 +17697,28 @@ def test_an_articled_amount_noun_takes_no_possessor():
         assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
 
 
+def test_the_verb_includes_introduces_a_count_of_its_own():
+    for text in (
+        "הסיוע כולל 3 אלפים ו־200 מיטות",
+        "הסיוע כולל שלושה אלפים ומאתיים מיטות",
+        "התקציב הכולל לפחות 3 אלפים ו־200 עובדים",
+        "התקציב הכולל לפחות שלושה אלפים ומאתיים עובדים",
+        "המענק כולל עד 3 אלפים ו־200 מלגות",
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == {3_200.0}, (text, recall)
+        assert not ({3_000.0, 200.0} & extract_numbers_from_text(text)), text
+    # The adjective "total" still binds through "של" or a threshold phrase.
+    assert _hebrew_recall("המחזור השנתי הכולל של 3 מיליון ו־20 עובדים") == {
+        3_000_000.0,
+        20.0,
+    }
+    assert _hebrew_recall("המחזור השנתי הכולל שלא יעלה על 3 מיליון ו־20 עובדים") == {
+        3_000_000.0,
+        20.0,
+    }
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
