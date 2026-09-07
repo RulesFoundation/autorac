@@ -16695,6 +16695,53 @@ def test_a_percentage_walk_back_crosses_hyphen_vav_joins():
     assert {0.01, 0.02, 0.03} <= extract_numbers_from_text(text)
 
 
+def test_a_duration_verb_before_a_fraction_word_says_duration_and_a_noun_says_ordinal():
+    for text in (
+        "המערכת תשהה עשירית שנייה לאחר קבלת האות",
+        "המערכת המתינה עשירית שנייה לאחר קבלת האות",
+        "המערכת ממתינה עשירית שנייה לאחר קבלת האות",
+        "המנוע ישהה עשירית שנייה לאחר קבלת האות",
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert 10.0 not in grounded, (text, grounded)
+        assert {round(v, 12) for v in _hebrew_recall(text)} == {0.1}, (
+            text,
+            _hebrew_recall(text),
+        )
+    for text, expected in (
+        ("נפתחה מרפאה חמישית שנה לאחר פתיחת המרפאה הקודמת", {5.0}),
+        ("נערכה בדיקה חמישית שנה לאחר הבדיקה הקודמת", {5.0}),
+        (
+            "אישה שילדה לידה חמישית שנה לאחר הלידה הקודמת זכאית למענק של 100 שקלים",
+            {5.0, 100.0},
+        ),
+    ):
+        assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+
+
+def test_a_citation_word_before_a_schedule_takes_any_whitespace():
+    for text in (
+        "בהתאם  לתוספת 5, 2 או 3 אחוזים מהשכר",
+        "בהתאם\nלתוספת 5, 2 או 3 אחוזים מהשכר",
+        "לפי    תוספת 5, 2 או 3 אחוזים מהשכר",
+        "כאמור בתוספת 5, 2 או 3 אחוזים מהשכר",
+        "מכוח\n\nתוספת 5, 2 או 3 אחוזים מהשכר",
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert 5.0 in grounded and 0.05 not in grounded, (text, grounded)
+        assert {round(v, 12) for v in _hebrew_recall(text)} == {0.02, 0.03}, (
+            text,
+            _hebrew_recall(text),
+        )
+    assert {
+        round(v, 12) for v in _hebrew_recall("הקצבה תוגדל בתוספת 1, 2 או 3 אחוזים")
+    } == {
+        0.01,
+        0.02,
+        0.03,
+    }
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

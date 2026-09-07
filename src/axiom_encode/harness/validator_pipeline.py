@@ -3654,15 +3654,39 @@ _HEBREW_ORDINAL_CONTEXT_NOUN_PATTERN = re.compile(
 # with י; neither is a noun candidate here. The nouns that begin with those
 # letters ("ילדה", "יחידה", "מדרגה", "מיטה") are listed above.
 _HEBREW_FEMININE_WORD_BEFORE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?![\u05de\u05d9])[\u0590-\u05ff]{2,}[\u05d4\u05ea]\\s+$"
+    "(?<![\u0590-\u05ff])[\u0590-\u05ff]{2,}[\u05d4\u05ea]\\s+$"
+)
+# The verbs that govern a duration ("ממתינה עשירית שנייה", "תשהה עשירית
+# שנייה", "יופעל", "יידחה"): a word before the fraction word that is one of
+# these is a verb whatever its ending, and what follows is a duration.
+_HEBREW_DURATION_VERB_BEFORE_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])(?:"
+    "ממתין|ממתינה|ממתינים|ממתינות|המתין|המתינה|המתינו|ימתין|תמתין|ימתינו|להמתין|"
+    "שוהה|שוהים|שוהות|שהה|שהתה|שהו|ישהה|תשהה|ישהו|לשהות|"
+    "מופעל|מופעלת|הופעל|הופעלה|יופעל|תופעל|יופעלו|"
+    "נדחה|נדחתה|נדחו|יידחה|תידחה|יידחו|דוחה|"
+    "מתעכב|מתעכבת|התעכב|התעכבה|יתעכב|תתעכב|יעוכב|תעוכב|"
+    "מתבצע|מתבצעת|בוצע|בוצעה|יבוצע|תבוצע|יתבצע|תתבצע|"
+    "מסתיים|מסתיימת|הסתיים|הסתיימה|יסתיים|תסתיים|"
+    "נפסק|נפסקת|נפסקה|ייפסק|תיפסק|נמשך|נמשכת|נמשכה|יימשך|תימשך|"
+    "מתחיל|מתחילה|החל|החלה|יחל|תחל|יתחיל|תתחיל|"
+    "נכנס|נכנסת|נכנסה|ייכנס|תיכנס|חל|חלה|יחול|תחול|"
+    "ישולם|תשולם|שולם|שולמה|ישלם|תשלם|יינתן|תינתן|ניתן|ניתנה|יועבר|תועבר)\\s+$"
 )
 
 
 def _hebrew_feminine_noun_before(text: str, start: int) -> bool:
-    return (
-        _search_before(_HEBREW_ORDINAL_CONTEXT_NOUN_PATTERN, text, start) is not None
-        or _search_before(_HEBREW_FEMININE_WORD_BEFORE_PATTERN, text, start) is not None
-    )
+    """Whether a feminine noun the ordinal may modify stands right before ``start``.
+
+    A listed noun, or a word ending in ה or ת that is not a verb governing
+    a duration: "מרפאה חמישית שנה לאחר" is a fifth clinic, "המתינה עשירית
+    שנייה לאחר" waits a tenth of a second.
+    """
+    if _search_before(_HEBREW_ORDINAL_CONTEXT_NOUN_PATTERN, text, start) is not None:
+        return True
+    if _search_before(_HEBREW_DURATION_VERB_BEFORE_PATTERN, text, start) is not None:
+        return False
+    return _search_before(_HEBREW_FEMININE_WORD_BEFORE_PATTERN, text, start) is not None
 
 
 _HEBREW_TEMPORAL_AFTER_UNIT_PATTERN = re.compile(
@@ -3860,6 +3884,23 @@ _HEBREW_STRUCTURAL_NOUN_PREFIX = (
 )
 _HEBREW_STRUCTURAL_REFERENCE_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])" + _HEBREW_STRUCTURAL_NOUN_PREFIX + "(?:"
+    # A cited "תוספת" -- "לפי תוספת 5", "בהתאם לתוספת 5", "כאמור בתוספת 5",
+    # with any whitespace after the citation word -- is a schedule; the
+    # citation word joins the span.
+    "(?:(?:לפי|על פי|מכוח)\\s+|(?:בהתאם|כאמור|האמור|כמפורט|המפורט|הקבוע|הקבועה|המנויה)"
+    "\\s+)[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}\u05d4?"
+    + _HEBREW_STRUCTURAL_SUPPLEMENT_NOUN
+    + "\\s+(?:"
+    + _HEBREW_STRUCTURAL_DIGIT_ITEM
+    + _HEBREW_STRUCTURAL_NOT_A_QUANTITY_TAILED
+    + "(?:\\s*"
+    + _HEBREW_STRUCTURAL_LIST_JOIN
+    + "\\s*"
+    + _HEBREW_STRUCTURAL_DIGIT_ITEM
+    + _HEBREW_STRUCTURAL_NOT_A_QUANTITY_TAILED
+    + ")?"
+    "|" + _HEBREW_STRUCTURAL_NUMBER_WORD + _HEBREW_STRUCTURAL_NOT_A_QUANTITY + ")"
+    "|"
     # A plural noun heads a list of items -- each a reference or a range --
     # joined by commas and closed by at most one conjunction ("1, 2, 4",
     # "1, 2 או 3", "1 עד 3 ו־5"); after the closing join the sentence goes
@@ -3922,9 +3963,10 @@ _HEBREW_STRUCTURAL_REFERENCE_PATTERN = re.compile(
     + ")"
     "|(?:"
     + _HEBREW_STRUCTURAL_STRICT_SINGULAR_NOUNS
-    # A cited or definite "תוספת" ("לפי תוספת 5", "התוספת השנייה"), or one
-    # followed by a number and "לחוק"/"לפקודה", is a schedule.
-    + "|(?:(?<=לפי\\s)|(?<=לפי\\s\\s)|(?<=לפי\\s\\s\\s)|(?<=על פי\\s)|(?<=על פי\\s\\s)|(?<=על פי\\s\\s\\s)|(?<=מכוח\\s)|(?<=מכוח\\s\\s)|(?<=מכוח\\s\\s\\s)|(?<=בהתאם ל)|(?<=כאמור ב)|(?<=האמור ב)|(?<=כמפורט ב)|(?<=המפורט ב)|(?<=הקבוע ב)|(?<=הקבועה ב)|(?<=המנויה ב)|(?<=\\u05d4))"
+    # A definite "תוספת" ("התוספת השנייה"), or one followed by a number and
+    # "לחוק"/"לפקודה", is a schedule; a cited one is matched with its citation
+    # word below.
+    + "|(?<=\\u05d4)"
     + _HEBREW_STRUCTURAL_SUPPLEMENT_NOUN
     + "|"
     + _HEBREW_STRUCTURAL_SUPPLEMENT_NOUN
