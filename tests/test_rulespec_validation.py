@@ -17069,6 +17069,51 @@ def test_a_fraction_that_names_its_own_operand_is_no_scaled_tail():
     assert _hebrew_recall("סכום של מיליון וחצי שקלים") == {1_500_000.0}
 
 
+def test_a_zero_denominator_before_a_scale_word_does_not_abort_extraction():
+    import math
+
+    for text in ("סכום של 1⁄0 מיליון שקלים", "סכום של 1/0 מיליון שקלים"):
+        grounded = extract_numbers_from_text(text)
+        assert all(math.isfinite(v) for v in grounded), (text, grounded)
+        assert all(math.isfinite(v) for v in _hebrew_recall(text)), text
+
+
+def test_a_fraction_operand_is_read_grammatically():
+    # A construct or partitive naming an amount after the fraction word
+    # ("ההכנסה", "משכר העובד", "מתוך") gives it its own operand; a verb
+    # that begins with מ ("משולם", is paid) does not.
+    for text, expected in (
+        ("סכום של 3 מיליון וחמישית ההכנסה", {3_000_000.0, 0.2}),
+        ("סכום של מיליון וחמישית ההכנסה", {1_000_000.0, 0.2}),
+        ("סכום של 3 מיליון וחצי משכר העובד", {3_000_000.0, 0.5}),
+        ("סכום של 3 מיליון וחצי מתוך הסכום", {3_000_000.0, 0.5}),
+        ("סכום של 3 מיליון וחצי משולם לעובד", {3_500_000.0}),
+        ("סכום של מיליון וחצי משולם לעובד", {1_500_000.0}),
+    ):
+        assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+        assert expected <= extract_numbers_from_text(text), (
+            text,
+            extract_numbers_from_text(text),
+        )
+
+
+def test_a_counted_fractional_tail_in_a_mixed_multiplier_scales():
+    for text, expected in (
+        ("סכום של 3 ושלושה רבעים מיליון שקלים", 3_750_000.0),
+        ("סכום של שלושה ושלושה רבעים מיליון שקלים", 3_750_000.0),
+        ("סכום של 2 ושני שלישים מיליארד שקלים", 8_000_000_000.0 / 3.0),
+        ("סכום של שניים ושני שלישים מיליארד שקלים", 8_000_000_000.0 / 3.0),
+    ):
+        recall = _hebrew_recall(text)
+        assert len(recall) == 1 and abs(next(iter(recall)) - expected) < 1e-3, (
+            text,
+            recall,
+        )
+        grounded = extract_numbers_from_text(text)
+        assert any(abs(v - expected) < 1e-3 for v in grounded), (text, grounded)
+        assert not ({3.75, 1_000_000.0, 1_000_000_000.0} & grounded), (text, grounded)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
