@@ -3225,6 +3225,7 @@ def _iter_hebrew_percent_phrase_matches(
         mixed: tuple[float, int] | None = None
         count_start = match.start()
         negative = False
+        continues_amount = False
         if match.group("numerator"):
             # A printed fraction with a spelled tail ("1/2 אחוז וחצי" is one
             # percent) is read whole here; without a tail the fraction passes
@@ -3261,7 +3262,7 @@ def _iter_hebrew_percent_phrase_matches(
                 tokens = _HebrewWordTokens(text)
             if _hebrew_digits_continue_printed_scale_amount(
                 text, match.start("digits"), tokens
-            ):
+            ) or _hebrew_endpoint_continues_an_amount(text, match.start("digits")):
                 continue
             count_value = float(match.group("digits").replace(",", ""))
             digits_start = match.start("digits")
@@ -3322,6 +3323,7 @@ def _iter_hebrew_percent_phrase_matches(
             run_after_money = number_start is not None and _hebrew_money_context_before(
                 text, number_start
             )
+            continues_amount = False
             for width in range(len(run) if mixed is None else 0, 0, -1):
                 words = [token.group(0) for token in run[-width:]]
                 parsed = _parse_hebrew_number_run(words)
@@ -3330,6 +3332,16 @@ def _iter_hebrew_percent_phrase_matches(
                     and parsed[0] == len(words)
                     and not (parsed[2] & _HEBREW_SCALE_KINDS and run_after_money)
                 ):
+                    if run[-width].group(0).startswith(
+                        "\u05d5"
+                    ) and _hebrew_endpoint_continues_an_amount(
+                        text, run[-width].start()
+                    ):
+                        # "סכום של 3 מיליון ועשרים אחוזים", "3 אלפים ו־100
+                        # ועשרים אחוזים": the count continues a scaled
+                        # amount; the printed pass reads the whole rate.
+                        continues_amount = True
+                        break
                     count_value = parsed[1]
                     count_start = run[-width].start()
                     break
@@ -3338,6 +3350,8 @@ def _iter_hebrew_percent_phrase_matches(
                     count_value = fractional
                     count_start = run[-width].start()
                     break
+        if continues_amount:
+            continue
         if (
             count_value is None
             and mixed is None
@@ -3348,8 +3362,9 @@ def _iter_hebrew_percent_phrase_matches(
             # multiplier ("3 אלפים אחוזים וחצי"): the printed pass reads
             # the whole rate, tail included; a count of one is not it.
             continue
-        if mixed is not None and _hebrew_digits_continue_printed_scale_amount(
-            text, count_start, tokens
+        if mixed is not None and (
+            _hebrew_digits_continue_printed_scale_amount(text, count_start, tokens)
+            or _hebrew_endpoint_continues_an_amount(text, count_start)
         ):
             # "3 אלפים ו־200 וחצי אחוזים": the mixed count continues the
             # scaled amount; the printed pass reads the whole rate.
@@ -3639,23 +3654,48 @@ _HEBREW_VAV_JOIN_BEFORE_PATTERN = re.compile(
 )
 
 
+# The Hebrew word flush before a position, prefix and all.
+_HEBREW_WORD_FLUSH_BEFORE_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])[\u0590-\u05ff][\u0590-\u05ff\u05f3\u05f4']*\\s*$"
+)
+
+
 def _hebrew_endpoint_continues_an_amount(text: str, start: int) -> bool:
     """Whether the number at ``start`` is a vav-bound remainder of a scaled amount before it.
 
-    "בין 3 אלפים ומאה ל־4 אלפים": the lower endpoint is 3,100, complete on
-    its own, so it shares nothing with the upper scale word.
+    The walk back crosses every vav-bound component, printed or spelled,
+    to the scale word: "3 אלפים ומאה ו־20" continues at the 20 and at the
+    hundred alike. A range's lower endpoint that continues an amount is
+    that amount's, complete on its own ("בין 3 אלפים ומאה ל־4 אלפים" runs
+    from 3,100), and a percent phrase's count that does is the printed
+    pass's rate ("סכום של 3 מיליון ועשרים אחוזים").
     """
-    if text.startswith("\u05d5", start) and start > 0 and text[start - 1].isspace():
-        join_start = start
-    else:
-        join = _search_before(_HEBREW_VAV_JOIN_BEFORE_PATTERN, text, start, 4)
-        if join is None:
+    position = start
+    for _ in range(16):
+        if (
+            text.startswith("\u05d5", position)
+            and position > 0
+            and text[position - 1].isspace()
+        ):
+            join_start = position
+        else:
+            join = _search_before(_HEBREW_VAV_JOIN_BEFORE_PATTERN, text, position, 4)
+            if join is None:
+                return False
+            join_start = join.start()
+        if (
+            _search_before(_HEBREW_SCALE_WORD_BEFORE_PATTERN, text, join_start, 24)
+            is not None
+        ):
+            return True
+        before = len(text[:join_start].rstrip())
+        previous = _search_before(
+            _HEBREW_DIGITS_BEFORE_PATTERN, text, before, 32
+        ) or _search_before(_HEBREW_WORD_FLUSH_BEFORE_PATTERN, text, before, 24)
+        if previous is None or previous.start() >= position:
             return False
-        join_start = join.start()
-    return (
-        _search_before(_HEBREW_SCALE_WORD_BEFORE_PATTERN, text, join_start, 24)
-        is not None
-    )
+        position = previous.start()
+    return False
 
 
 def _iter_hebrew_shared_scale_range_matches(
@@ -3764,7 +3804,13 @@ def _iter_hebrew_shared_scale_range_matches(
             continue
         # "2 עד 3 אלפים אחוזים": the shared scale word carries a percent unit
         # too, and both endpoints are rates.
-        is_rate = _hebrew_percent_unit_after(text, scale_match.end()) is not None
+        # The shared unit is read after the whole upper endpoint, remainder
+        # included: "בין 2 ל־3 אלפים ומאתיים אחוזים" runs from twenty.
+        upper_tail = _hebrew_remainder_chain_after(
+            text, scale_match.end(), scale, False, judge=False
+        )
+        upper_end = upper_tail[1] if upper_tail is not None else scale_match.end()
+        is_rate = _hebrew_percent_unit_after(text, upper_end) is not None
         matches.append(
             (
                 lower_span,
@@ -3824,29 +3870,22 @@ def _hebrew_spelled_remainder_after(
         # "ושני שלישים" is two thirds, a fraction with its own reading, not
         # a remainder of two.
         return None
-    if (
-        judge
-        and money_context
-        and (
-            _HEBREW_PERCENT_WORD_PATTERN.match(text, tokens[consumed - 1][1])
-            is not None
-            or _HEBREW_PERCENT_SIGN_AFTER_PATTERN.match(text, tokens[consumed - 1][1])
-        )
-    ):
+    if judge and money_context:
         # "סכום של 3 מיליון ועשרים אחוזים": the twenty counts a rate, not
-        # the million's remainder. Without a money amount the whole is the
-        # rate: "3 אלפים וחמש מאות אחוזים" is 3,500 percent.
-        return None
-    if (
-        judge
-        and money_context
-        and _HEBREW_SEPARATE_QUANTITY_AFTER_PATTERN.match(
-            text, _hebrew_printed_continuation_end(text, tokens[consumed - 1][1])
+        # the million's remainder, and so does the whole continuation it
+        # opens ("ומאתיים ו־20 אחוזים"). "קנס של 3 מיליון ושלושים ימי
+        # מאסר", "מחזור של 3 מיליון ושני אלפים ו־500 עובדים": a separate
+        # quantity. Without a money amount the whole is the rate: "3 אלפים
+        # וחמש מאות אחוזים" is 3,500 percent.
+        continuation_end = _hebrew_printed_continuation_end(
+            text, tokens[consumed - 1][1]
         )
-    ):
-        # "קנס של 3 מיליון ושלושים ימי מאסר", "מחזור של 3 מיליון ושני אלפים
-        # ו־500 עובדים": a separate quantity, not a remainder of the amount.
-        return None
+        if (
+            _HEBREW_PERCENT_WORD_PATTERN.match(text, continuation_end) is not None
+            or _HEBREW_PERCENT_SIGN_AFTER_PATTERN.match(text, continuation_end)
+            or _HEBREW_SEPARATE_QUANTITY_AFTER_PATTERN.match(text, continuation_end)
+        ):
+            return None
     return tokens[consumed - 1][1], value
 
 
@@ -3968,16 +4007,15 @@ def _hebrew_remainder_chain_after(
     "remainder" unless ``judge`` finds, under a money context, a separate
     quantity after the whole chain ("קנס של 3 אלפים ו־100 ועשרים ימי
     מאסר" counts 120 days of prison, none of it the fine's) or a percent
-    unit ("סכום של 3 אלפים ו־100 ועשרים אחוזים" states rates after the
-    amount): "separate" and "rate".
+    unit ("סכום של 3 אלפים ו־100 ועשרים אחוזים" states a rate of 120
+    percent after the amount): "separate" and "rate". Either is read whole
+    by the caller, as a quantity or a rate of its own.
     """
     total = 0.0
     chain_start: int | None = None
     chain_end, chain_floor = end, floor
     while chain_floor > 1:
-        plain = _hebrew_printed_plain_remainder_pattern(money_context).match(
-            text, chain_end
-        )
+        plain = _HEBREW_PRINTED_PLAIN_REMAINDER_ANY_PATTERN.match(text, chain_end)
         if plain is not None:
             plain_value = _hebrew_printed_plain_remainder_value(plain)
             if plain_value is not None and 0 < plain_value < chain_floor:
@@ -4091,8 +4129,8 @@ def _iter_hebrew_printed_scale_matches(
         if value > 0
     }
     matches: list[tuple[tuple[int, int], float, bool]] = []
-    # Continuations judged a quantity of their own, read whole.
-    separate: list[tuple[tuple[int, int], float, bool]] = []
+    # Continuations judged a quantity or a rate of their own, read whole.
+    own: list[tuple[tuple[int, int], float, bool]] = []
     # A spelled amount inside a printed part ("מיליון" of "3 מיליון") is
     # that part's scale word, not a leading amount of its own.
     # Parts arrive in text order and never overlap one another, so whether a
@@ -4192,7 +4230,16 @@ def _iter_hebrew_printed_scale_matches(
             elif verdict == "separate":
                 # "קנס של 3 אלפים ו־100 ועשרים ימי מאסר": the continuation
                 # counts 120 days, a quantity of its own.
-                separate.append(((tail_start, tail_end), tail_value, False))
+                own.append(((tail_start, tail_end), tail_value, False))
+            elif verdict == "rate":
+                # "סכום של 3 אלפים ו־100 ועשרים אחוזים": the continuation
+                # states 120 percent, a rate of its own, tail included.
+                unit = _hebrew_percent_unit_after(text, tail_end)
+                if unit is not None:
+                    unit_end, unit_tail = unit
+                    own.append(
+                        ((tail_start, unit_end), (tail_value + unit_tail) / 100, True)
+                    )
         unit = _hebrew_percent_unit_after(text, end)
         if unit is not None:
             unit_end, unit_tail = unit
@@ -4215,9 +4262,7 @@ def _iter_hebrew_printed_scale_matches(
         ):
             continue
         spelled_money = _hebrew_money_context_before(text, spelled_start)
-        plain = _hebrew_printed_plain_remainder_pattern(spelled_money).match(
-            text, spelled_end
-        )
+        plain = _HEBREW_PRINTED_PLAIN_REMAINDER_ANY_PATTERN.match(text, spelled_end)
         if plain is None:
             continue
         plain_value = _hebrew_printed_plain_remainder_value(plain)
@@ -4230,9 +4275,15 @@ def _iter_hebrew_printed_scale_matches(
             continue
         tail_start, end, tail_value, verdict = tail
         if verdict == "separate":
-            separate.append(((tail_start, end), tail_value, False))
+            own.append(((tail_start, end), tail_value, False))
             continue
-        if verdict != "remainder":
+        if verdict == "rate":
+            unit = _hebrew_percent_unit_after(text, end)
+            if unit is not None:
+                unit_end, unit_tail = unit
+                own.append(
+                    ((tail_start, unit_end), (tail_value + unit_tail) / 100, True)
+                )
             continue
         total = spelled_value + tail_value
         unit = _hebrew_percent_unit_after(text, end)
@@ -4241,9 +4292,8 @@ def _iter_hebrew_printed_scale_matches(
             matches.append(((spelled_start, unit_end), (total + unit_tail) / 100, True))
         else:
             matches.append(((spelled_start, end), total, False))
-    matches.extend(separate)
-    matches.sort()
-    return matches
+    matches.extend(own)
+    return sorted(set(matches))
 
 
 # A printed whole and a vav-bound spelled fractional tail are one number
@@ -4451,6 +4501,12 @@ def _iter_hebrew_percent_range_lower_matches(
             if spelled is None:
                 continue
             upper_start, _value, upper_first = spelled
+            # A spelled endpoint with a scale word of its own ("לשלושת אלפים
+            # ומאתיים אחוזים") is scaled as a printed one is.
+            upper_scaled = any(
+                word in _HEBREW_PRINTED_SCALE_VALUES
+                for word in text[upper_start : noun.start()].split()
+            )
         # The join before it.
         join = _search_before(_HEBREW_RANGE_JOIN_BEFORE_PATTERN, text, upper_start, 12)
         if join is not None:
