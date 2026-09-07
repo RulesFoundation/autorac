@@ -3986,8 +3986,8 @@ def _iter_hebrew_shared_scale_range_matches(
                     or (
                         earlier_join is not None
                         and earlier_join.group(0).lstrip().startswith(",")
-                        and not _hebrew_word_stands_before(
-                            text, earlier_printed.start()
+                        and not _hebrew_comma_crossing_allowed(
+                            text, earlier_printed.start(), scale_match.end(), True
                         )
                     )
                 ):
@@ -4015,7 +4015,19 @@ def _iter_hebrew_shared_scale_range_matches(
                     _HEBREW_RANGE_WALK_STOP_PATTERN, text, earlier_span[0], 24
                 )
                 is not None
+                or (
+                    earlier_join is not None
+                    and earlier_join.group(0).lstrip().startswith(",")
+                    and not _hebrew_comma_crossing_allowed(
+                        text,
+                        earlier_span[0],
+                        scale_match.end(),
+                        earlier_printed is not None,
+                    )
+                )
             ):
+                # "על הכנסה עד 500, 2 או 3 מיליון": the threshold before the
+                # comma is a bound of its own, printed or spelled.
                 break
             matches.append(
                 (
@@ -4658,6 +4670,35 @@ def _hebrew_comma_list_has_evidence(text: str, unit_end: int) -> bool:
     return not any(stop in tail[: tail.index("בהתאמה")] for stop in ".;\n")
 
 
+# A threshold or limit governor before a number ("עד 500", "מעל 500", "בסך
+# 500", "מ־500"): the number is a bound of its own, not an item of a list a
+# comma continues.
+_HEBREW_THRESHOLD_GOVERNOR_BEFORE_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])(?:עד|ועד|מעל|מתחת|לפחות|לכל היותר|בין|בסך|של|החל|\u05de(?:\u05be|-)?)"
+    "\\s*$"
+)
+
+
+def _hebrew_comma_crossing_allowed(
+    text: str, item_start: int, unit_end: int, printed: bool
+) -> bool:
+    """Whether a walk back over list items may cross a comma to the item at ``item_start``.
+
+    Under "בהתאמה" after the unit, always. Otherwise the item must be
+    anchored by a Hebrew word (a printed one) that is no threshold or
+    limit governor: "שיעור המס יהיה 1, 2 או 3 אחוזים" lists three rates,
+    "על הכנסה עד 500, 2 או 3% מס" keeps its threshold, printed or spelled.
+    """
+    if _hebrew_comma_list_has_evidence(text, unit_end):
+        return True
+    if printed and not _hebrew_word_stands_before(text, item_start):
+        return False
+    return (
+        _search_before(_HEBREW_THRESHOLD_GOVERNOR_BEFORE_PATTERN, text, item_start, 16)
+        is None
+    )
+
+
 def _hebrew_word_stands_before(text: str, start: int) -> bool:
     """Whether a Hebrew word anchors the comma list a printed number at ``start`` belongs to.
 
@@ -4962,10 +5003,13 @@ def _iter_hebrew_percent_range_lower_matches(
                 or (
                     earlier_join is not None
                     and earlier_join.group(0).lstrip().startswith(",")
-                    and earlier_digits is not None
-                    and not _hebrew_word_stands_before(text, earlier_span[0])
+                    and not _hebrew_comma_crossing_allowed(
+                        text, earlier_span[0], noun.end(), earlier_digits is not None
+                    )
                 )
             ):
+                # "על הכנסה עד 500, 2 או 3% מס": the threshold before the
+                # comma is a bound of its own, printed or spelled.
                 break
             if earlier_value >= 1000 and not explicit_range:
                 break

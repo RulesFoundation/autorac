@@ -18509,6 +18509,31 @@ def test_an_earlier_range_or_alternative_is_no_list_evidence():
         assert not (wrong & extract_numbers_from_text(text)), text
 
 
+def test_a_walk_back_does_not_cross_a_comma_to_a_threshold():
+    for text, expected in (
+        ("על הכנסה עד 500, 2 או 3% מס.", {500.0, 0.02, 0.03}),
+        ("על הכנסה עד 500, 2 או 3 מיליון שקלים.", {500.0, 2_000_000.0, 3_000_000.0}),
+        ("על הכנסה עד חמש מאות, 2 או 3% מס.", {500.0, 0.02, 0.03}),
+        (
+            "על הכנסה עד חמש מאות, 2 או 3 מיליון שקלים.",
+            {500.0, 2_000_000.0, 3_000_000.0},
+        ),
+        ("על הכנסה של 100 עד 500, 2 או 3% מס.", {100.0, 500.0, 0.02, 0.03}),
+        ("בסך 500, 2 או 3 אחוזים", {500.0, 0.02, 0.03}),
+        ("שיעור המס יהיה 1, 2 או 3 אחוזים", {0.01, 0.02, 0.03}),
+        ("הסכומים הם 1, 2 או 3 מיליון שקלים", {1_000_000.0, 2_000_000.0, 3_000_000.0}),
+        ("עד 500, 2 או 3 אחוזים, בהתאמה", {5.0, 0.02, 0.03}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+    assert not (
+        {5.0, 500_000_000.0}
+        & extract_numbers_from_text(
+            "על הכנסה עד 500, 2 או 3% מס. ועד 500, 2 או 3 מיליון שקלים."
+        )
+    )
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
