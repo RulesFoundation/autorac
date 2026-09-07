@@ -4636,11 +4636,12 @@ def _hebrew_spelled_span_carries_a_scale(text: str, start: int, end: int) -> boo
 
 
 # A predicate that introduces a list of quantities, flush before its first
-# item: "השיעורים הם 1, 2 או 3 אחוזים", "שיעור המס יהיה 1, 2 או 3 אחוזים",
-# "כדלקמן: 1, 2, 3 אחוזים".
+# item: a plural copula ("השיעורים הם 1, 2 או 3 אחוזים", "שיעורי המס יהיו
+# 1, 2 או 3 אחוזים"), an explicit introducer ("כדלקמן: 1, 2, 3 אחוזים") or
+# a supplement noun. A singular copula introduces a value, not a list:
+# "אם ההכנסה היא 500, 2 או 3% ממנה" states a condition on 500.
 _HEBREW_LIST_PREDICATE_BEFORE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?:הם|הן|הוא|היא|יהיה|יהיו|תהיה|תהיינה|הינו|הינה|הינם|הינן"
-    "|שיעור|שיעורי|בשיעור|בשיעורי|בשיעורים|כדלקמן|הבאים|הבאות"
+    "(?<![\u0590-\u05ff])(?:הם|הן|יהיו|תהיינה|הינם|הינן|בשיעורים|כדלקמן|הבאים|הבאות"
     # A supplement's amounts share the noun ("תוספת 1, 2 או 3 אחוזים").
     "|(?:ב?תוספת|הנחה)(?:\\s+של)?)\\s*:?\\s*$"
 )
@@ -4653,7 +4654,9 @@ def _hebrew_list_item_anchored(
 
     The walk back crosses commas and conjunctions over earlier items,
     printed or spelled, to the list's first item and asks what stands
-    before it: a predicate ("הם", "יהיה", "כדלקמן:") anchors the list.
+    before it: a plural predicate ("הם", "יהיו") or an explicit introducer
+    ("כדלקמן:") anchors the list; a singular copula ("היא", "יהיה") states
+    one value and anchors nothing.
     Anything else -- a threshold governor ("עד 500", "שאינה עולה על 500"),
     a label, a reference, a bare start -- leaves the number a quantity of
     its own, so a comma before it separates clauses. This is the only
