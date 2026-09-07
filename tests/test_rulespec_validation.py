@@ -18336,6 +18336,44 @@ def test_shared_scales_reach_every_earlier_alternative():
     )
 
 
+def test_a_negative_spelled_lead_keeps_its_sign_through_composition():
+    for text, expected in (
+        ("הסכום הוא −שלושה מיליון ו־200 אלף שקלים", {-3_200_000.0}),
+        ("הסכום הוא −אלפיים ו־300 שקלים", {-2_300.0}),
+        ("הסכום הוא −3 מיליון ו־200 אלף שקלים", {-3_200_000.0}),
+        ("הסכום הוא −שלושה מיליון ומאתיים אלף שקלים", {-3_200_000.0}),
+        ("הסכום הוא שלושה מיליון ו־200 אלף שקלים", {3_200_000.0}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+    assert not (
+        {3_200_000.0, 2_300.0}
+        & extract_numbers_from_text(
+            "הסכום הוא −שלושה מיליון ו־200 אלף שקלים או −אלפיים ו־300 שקלים"
+        )
+    )
+
+
+def test_a_shared_scale_list_ending_with_a_vav_join():
+    for text, expected in (
+        (
+            "הסכומים הם 1, 2 ו־3 מיליון שקלים, בהתאמה",
+            {1_000_000.0, 2_000_000.0, 3_000_000.0},
+        ),
+        (
+            "הסכומים הם אחד, שניים ושלושה מיליון שקלים, בהתאמה",
+            {1_000_000.0, 2_000_000.0, 3_000_000.0},
+        ),
+        ("השיעורים הם 2 ו־3 אלפים אחוזים", {20.0, 30.0}),
+        ("הסכום הוא 3 מיליון ו־200 אלף שקלים", {3_200_000.0}),
+        ("הסכום הוא שלושה מיליון ו־200 אלף שקלים", {3_200_000.0}),
+        ("הסכום הוא חמישים ושלושה אלפים שקלים", {53_000.0}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+        assert not ({1.0, 2.0, 200_000_000.0} & extract_numbers_from_text(text)), text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

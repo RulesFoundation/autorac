@@ -3624,8 +3624,11 @@ _HEBREW_SHARED_SCALE_WORD_PATTERN = re.compile(
     + _HEBREW_PRINTED_SCALE_WORDS
     + ")(?![\u0590-\u05ff])"
 )
+# "ו־" closes a list that shares the scale word ("1, 2 ו־3 מיליון"); a
+# continuation's vav never stands before a bare small number the lower
+# endpoint rules admit, so the two do not meet.
 _HEBREW_SHARED_SCALE_JOIN_BEFORE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?P<join>לבין|ועד|עד|או|ל)(?:[\u05be-]\\s*|\\s+)$"
+    "(?<![\u0590-\u05ff])(?P<join>לבין|ועד|עד|או|ל|\u05d5)(?:[\u05be-]\\s*|\\s+)$"
 )
 # A noun that numbers the lower endpoint rather than counting it: "תוספת 2
 # עד מאה ועשרים אלף" is supplement 2, up to 120,000, and shares nothing.
@@ -3812,15 +3815,18 @@ def _iter_hebrew_shared_scale_range_matches(
                 continue
         else:
             # A ל prefix on a spelled upper endpoint joins under "בין" or
-            # "מ־" before the lower endpoint: "בין שלושה לחמישה מיליון".
+            # "מ־" before the lower endpoint: "בין שלושה לחמישה מיליון". A
+            # vav prefix closes a list on its own: "אחד, שניים ושלושה
+            # מיליון" (a composable pair, "חמישים ושלושה", is one number
+            # and never reaches here).
             upper_word = _HEBREW_WORD_TOKEN_PATTERN.match(text, upper_start)
+            if printed_upper is not None or upper_word is None:
+                continue
+            head = upper_word.group(0)
             if (
-                printed_upper is not None
-                or upper_word is None
-                or not upper_word.group(0).startswith("\u05dc")
+                head[:1] not in ("\u05dc", "\u05d5")
                 or _strip_hebrew_number_prefix(
-                    upper_word.group(0)[1:].lstrip("\u05be"),
-                    _HEBREW_RUN_START_VOCABULARY,
+                    head[1:].lstrip("\u05be"), _HEBREW_RUN_START_VOCABULARY
                 )
                 is None
             ):
@@ -3828,7 +3834,7 @@ def _iter_hebrew_shared_scale_range_matches(
             lower_end = len(text[:upper_start].rstrip())
             if lower_end == upper_start:
                 continue
-            needs_bound = True
+            needs_bound = head.startswith("\u05dc")
         printed_lower = _search_before(
             _HEBREW_DIGITS_BEFORE_PATTERN, text, lower_end, 32
         )
@@ -4296,6 +4302,12 @@ def _iter_hebrew_printed_scale_matches(
             matches.append(((start, end), -value if negative else value, False))
             composed.append((start, end))
 
+    def emit_led(spelled_start: int, end: int, value: float) -> None:
+        # "−שלושה מיליון ו־200 אלף", "−אלפיים ו־300": the leading spelled
+        # amount's sign is the whole's, span and value alike.
+        negative = _hebrew_unary_sign_at(text, spelled_start - 1)
+        emit(spelled_start - 1 if negative else spelled_start, end, value, negative)
+
     def emit_own(start: int, end: int, value: float, verdict: str) -> None:
         if verdict == "separate":
             own.append(((start, end), value, False))
@@ -4349,7 +4361,7 @@ def _iter_hebrew_printed_scale_matches(
                 consume_from(index, tail_end)
                 merged_spelled.add(spelled_end)
                 if verdict == "remainder":
-                    emit(spelled_start, tail_end, spelled_value + tail_value, False)
+                    emit_led(spelled_start, tail_end, spelled_value + tail_value)
                 else:
                     emit_own(tail_start, tail_end, tail_value, verdict)
                 led = True
@@ -4398,7 +4410,7 @@ def _iter_hebrew_printed_scale_matches(
         if verdict != "remainder":
             emit_own(tail_start, end, tail_value, verdict)
         elif printed_first:
-            emit(spelled_start, end, spelled_value + tail_value, False)
+            emit_led(spelled_start, end, spelled_value + tail_value)
     matches.extend(own)
     return sorted(set(matches))
 
