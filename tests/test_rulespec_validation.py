@@ -16122,6 +16122,43 @@ def test_a_measured_second_is_no_ordinal():
     assert _hebrew_recall("לידה שנייה מזכה במענק של 100 שקלים") == {2.0, 100.0}
 
 
+def test_a_percent_marker_after_a_mixed_number_makes_a_rate():
+    for text in (
+        "שיעור המס יהיה 3 וחצי%",
+        "שיעור המס יהיה שלושה וחצי%",
+        "שיעור המס יהיה 3 וחצי אחוזים",
+        "שיעור המס יהיה 3 וחצי %",
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert 0.035 in grounded, (text, grounded)
+        assert not ({3.0, 0.5, 3.5} & _hebrew_recall(text)), (
+            text,
+            _hebrew_recall(text),
+        )
+        assert _hebrew_recall(text) == {0.035}, (text, _hebrew_recall(text))
+    assert _hebrew_recall("יובאו בחשבון 3 וחצי נקודות זיכוי") == {3.5}
+
+
+def test_a_measured_second_under_the_article_or_in_construct_is_no_ordinal():
+    for text, expected in (
+        ("זמן התגובה לא יעלה על מחצית השנייה", {0.5}),
+        ("ישולם סכום של 100 שקלים בעד כל שניית המתנה", {100.0}),
+        ("זמן התגובה לא יעלה על רבע השנייה", {0.25}),
+    ):
+        assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+        assert 2.0 not in extract_numbers_from_text(text), text
+    assert 2.0 in extract_numbers_from_text("בפעם השנייה ישולם סכום של 100 שקלים")
+
+
+def test_a_following_one_keeps_an_ordinal_after_a_noun():
+    text = "בעד דירה שנייה אחת ישולם מס של 100 שקלים"
+    assert {1.0, 2.0, 100.0} <= extract_numbers_from_text(text)
+    assert {2.0, 100.0} <= _hebrew_recall(text)
+    for text in ("משך ההמתנה יהיה שנייה אחת", "התגובה תינתן תוך שנייה אחת"):
+        assert _hebrew_recall(text) == {1.0}, (text, _hebrew_recall(text))
+        assert 2.0 not in extract_numbers_from_text(text), text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

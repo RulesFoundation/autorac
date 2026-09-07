@@ -2789,9 +2789,13 @@ _HEBREW_PRINTED_MIXED_NUMBER_PATTERN = re.compile(
 
 def _iter_hebrew_printed_mixed_number_matches(
     text: str,
-) -> list[tuple[tuple[int, int], float]]:
-    """Printed wholes with spelled fractional tails, as one number each."""
-    matches: list[tuple[tuple[int, int], float]] = []
+) -> list[tuple[tuple[int, int], float, bool]]:
+    """Printed wholes with spelled fractional tails: (span, value, is a rate).
+
+    A percent marker right after the tail ("3 וחצי%") makes the number a
+    rate, marker included in the span.
+    """
+    matches: list[tuple[tuple[int, int], float, bool]] = []
     for match in _HEBREW_PRINTED_MIXED_NUMBER_PATTERN.finditer(text):
         value = float(match.group("whole").replace(",", ""))
         if match.group("tail"):
@@ -2803,7 +2807,11 @@ def _iter_hebrew_printed_mixed_number_matches(
             )
         if match.group("sign"):
             value = -value
-        matches.append((match.span(), value))
+        marker = _PERCENT_MARKER_AFTER_NUMBER_PATTERN.match(text, match.end())
+        if marker is not None:
+            matches.append(((match.start(), marker.end()), value, True))
+        else:
+            matches.append((match.span(), value, False))
     return matches
 
 
@@ -6355,34 +6363,47 @@ def _iter_hebrew_number_word_matches(
     return matches
 
 
-# "שנייה" is the ordinal "second" ("לידה שנייה") and the unit of time ("חצי
-# שנייה", "שנייה אחת", "בכל שנייה"); under the article it is the ordinal.
-_HEBREW_SECOND_WORDS = frozenset({"שנייה", "שניה"})
-_HEBREW_MEASURED_SECOND_BEFORE_PATTERN = re.compile(
-    "(?:\\d|(?<![\u0590-\u05ff])(?:"
+# "שנייה" is the ordinal "second" ("לידה שנייה", "הפעם השנייה") and the
+# unit of time ("חצי שנייה", "מחצית השנייה", "שנייה אחת", "בכל שנייה"); the
+# construct "שניית" ("שניית המתנה") is only ever the unit.
+_HEBREW_SECOND_WORDS = frozenset({"שנייה", "שניה", "שניית"})
+_HEBREW_FRACTION_BEFORE_SECOND_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])(?:"
     + "|".join(
         re.escape(w)
         for w in sorted(
-            set(_HEBREW_FRACTION_VALUES)
-            | {"כל", "בכל", "תוך", "למשך", "מדי", "אלפית", "מאית"},
-            key=len,
-            reverse=True,
+            set(_HEBREW_FRACTION_VALUES) | {"אלפית", "מאית"}, key=len, reverse=True
         )
     )
-    + "))\\s+$"
+    + ")\\s+$"
+)
+_HEBREW_MEASURED_SECOND_BEFORE_PATTERN = re.compile(
+    "(?:\\d|(?<![\u0590-\u05ff])(?:כל|בכל|תוך|למשך|מדי))\\s+$"
 )
 _HEBREW_MEASURED_SECOND_AFTER_PATTERN = re.compile("\\s+אח[תד](?![\u0590-\u05ff])")
 
 
 def _hebrew_measured_second(text: str, match: "re.Match[str]") -> bool:
-    """Whether this "שנייה" is the unit of time rather than the ordinal."""
-    if "\u05d4" in text[match.start() : match.start("word")]:
+    """Whether this "שנייה" is the unit of time rather than the ordinal.
+
+    A fraction word before it says unit even under the article ("מחצית
+    השנייה" is half a second); otherwise the article says ordinal ("הפעם
+    השנייה"). A digit or "כל"/"תוך"/"למשך" before it says unit, and a
+    following "אחת" does only where the clause before it says a quantity
+    follows ("יהיה שנייה אחת"), not after a noun ("דירה שנייה אחת").
+    """
+    if match.group("word") == "שניית":
+        return True
+    start = match.start()
+    if _search_before(_HEBREW_FRACTION_BEFORE_SECOND_PATTERN, text, start) is not None:
+        return True
+    if "\u05d4" in text[start : match.start("word")]:
         return False
-    return (
-        _search_before(_HEBREW_MEASURED_SECOND_BEFORE_PATTERN, text, match.start())
-        is not None
-        or _HEBREW_MEASURED_SECOND_AFTER_PATTERN.match(text, match.end()) is not None
-    )
+    if _search_before(_HEBREW_MEASURED_SECOND_BEFORE_PATTERN, text, start) is not None:
+        return True
+    return _HEBREW_MEASURED_SECOND_AFTER_PATTERN.match(
+        text, match.end()
+    ) is not None and _hebrew_fraction_context_before(text, start)
 
 
 def _parse_belgian_numeric_phrase(raw: str) -> float | None:
@@ -10482,12 +10503,22 @@ def _tokenize_numeric_occurrences_from_text(
         grounding_spans.append(span)
         inventory_spans.append(span)
 
-    for span, value in _iter_hebrew_printed_mixed_number_matches(cleaned):
+    for span, value, is_rate in _iter_hebrew_printed_mixed_number_matches(cleaned):
         if _span_overlaps(span, grounding_spans) or _span_overlaps(
             span, inventory_spans
         ):
             continue
-        add_both(cleaned_view, span, value)
+        if is_rate:
+            add_both(
+                cleaned_view,
+                span,
+                value / 100,
+                source_value=value,
+                force_rate_context=True,
+                requires_rate_context=True,
+            )
+        else:
+            add_both(cleaned_view, span, value)
         grounding_spans.append(span)
         inventory_spans.append(span)
 
@@ -10795,7 +10826,12 @@ def _tokenize_numeric_occurrences_from_text(
         percent = (
             None
             if definite_ordinal
-            else _HEBREW_PERCENT_WORD_PATTERN.match(cleaned, span[1])
+            else (
+                _HEBREW_PERCENT_WORD_PATTERN.match(cleaned, span[1])
+                # The marker serves a spelled number as it serves a printed
+                # one: "שלושה וחצי%" is 0.035.
+                or _PERCENT_MARKER_AFTER_NUMBER_PATTERN.match(cleaned, span[1])
+            )
         )
         noun_before = None
         if (
