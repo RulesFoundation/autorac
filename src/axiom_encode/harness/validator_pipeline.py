@@ -1986,6 +1986,17 @@ _HEBREW_BILLION_WORDS = {
 # The scale tiers of the spoken grammar, largest first: the scale words a
 # count precedes, the values a bare scale word stands for on its own, and
 # the kind recorded. "אלפיים" is a bare two thousand and counts nothing.
+_HEBREW_SCALE_KINDS = frozenset({"thousand", "million", "billion"})
+_HEBREW_PERCENT_NOUN_WORDS = frozenset({"אחוז", "אחוזים", "אחוזי"})
+
+
+def _hebrew_is_percent_noun(word: str) -> bool:
+    """Whether ``word`` is a percent noun, with or without the article."""
+    return word in _HEBREW_PERCENT_NOUN_WORDS or (
+        word.startswith("\u05d4") and word[1:] in _HEBREW_PERCENT_NOUN_WORDS
+    )
+
+
 _HEBREW_SCALE_TIERS: tuple[tuple[dict[str, float], dict[str, float], str], ...] = (
     (_HEBREW_BILLION_WORDS, {"מיליארד": 1_000_000_000.0}, "billion"),
     (_HEBREW_MILLION_WORDS, {"מיליון": 1_000_000.0}, "million"),
@@ -2225,7 +2236,9 @@ def _parse_hebrew_number_run(
         """
         if position >= len(words):
             return False
-        if word_at(position) in _HEBREW_SCALE_VALUES:
+        if word_at(position) in _HEBREW_SCALE_VALUES or _hebrew_is_percent_noun(
+            words[position]
+        ):
             return True
         probe = " " + " ".join(words[position : position + 2])
         return _HEBREW_FRACTION_OPERAND_AFTER_PATTERN.match(probe) is not None
@@ -2353,6 +2366,15 @@ def _parse_hebrew_number_run(
             kinds.add("fraction")
             scaled_tail = True
     rest = None if scaled_tail else parse_below_thousand(cursor)
+    if (
+        rest is not None
+        and kinds & _HEBREW_SCALE_KINDS
+        and rest[0] < len(words)
+        and _hebrew_is_percent_noun(words[rest[0]])
+    ):
+        # "שלושה מיליון ועשרים אחוזים": the twenty counts a rate, not the
+        # million's remainder.
+        rest = None
     if rest is not None:
         cursor, amount, rest_kinds = rest
         value += amount
@@ -2932,7 +2954,14 @@ def _iter_hebrew_percent_phrase_matches(
             for width in range(len(run) if mixed is None else 0, 0, -1):
                 words = [token.group(0) for token in run[-width:]]
                 parsed = _parse_hebrew_number_run(words)
-                if parsed is not None and parsed[0] == len(words):
+                # A scale word before the count is an amount of its own:
+                # "3 מיליון ועשרים אחוזים" is three million, and twenty
+                # percent, never a million-and-twenty percent.
+                if (
+                    parsed is not None
+                    and parsed[0] == len(words)
+                    and not parsed[2] & _HEBREW_SCALE_KINDS
+                ):
                     count_value = parsed[1]
                     count_start = run[-width].start()
                     break
@@ -3025,15 +3054,24 @@ _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN = re.compile(
     + "|אחוז)[\u0590-\u05ff]*)"
 )
 # A range whose endpoints share one trailing scale word: "בין 3 ל־5 מיליון"
-# runs from three million to five million, "שלושה עד חמישה מיליון" too.
-# "בין 3 למיליון" has a scale word for its upper endpoint alone and stays
-# apart.
-_HEBREW_SHARED_SCALE_RANGE_PATTERN = re.compile(
-    "(?<![\\d.,/\u2044\u0590-\u05ff])"
-    "(?P<lower>\\d{1,3}(?:,\\d{3})+|\\d+(?:\\.\\d+)?|[\u0590-\u05ff]+)"
-    "\\s+(?P<join>לבין|ועד|עד|או|ל)(?:[\u05be-]\\s*|\\s+)"
-    "(?P<upper>\\d{1,3}(?:,\\d{3})+|\\d+(?:\\.\\d+)?|[\u0590-\u05ff]+)"
-    "\\s+(?P<scale>" + _HEBREW_PRINTED_SCALE_WORDS + ")(?![\u0590-\u05ff])"
+# runs from three million to five million, "שלושה עד חמישה מיליון" too, and
+# "עשרים ושלושה עד שלושים מיליון" from twenty-three million. "בין 3 למיליון"
+# has a scale word for its upper endpoint alone and stays apart.
+_HEBREW_SHARED_SCALE_WORD_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])(?P<scale>"
+    + _HEBREW_PRINTED_SCALE_WORDS
+    + ")(?![\u0590-\u05ff])"
+)
+_HEBREW_SHARED_SCALE_JOIN_BEFORE_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])(?P<join>לבין|ועד|עד|או|ל)(?:[\u05be-]\\s*|\\s+)$"
+)
+# A noun that numbers the lower endpoint rather than counting it: "תוספת 2
+# עד מאה ועשרים אלף" is supplement 2, up to 120,000, and shares nothing.
+_HEBREW_SHARED_SCALE_LABEL_BEFORE_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9\u05d4]{0,2}(?:"
+    "תוספת|תוספות|סעיף|סעיפים|פסקה|פסקאות|תקנה|תקנות|פרט|פרטים|לוח|טור|שורה|"
+    "חלק|פרק|סימן|נספח|טופס|דרגה|שלב|קבוצה|רמה|סוג|מספר|מס'"
+    ")\\s+$"
 )
 
 
@@ -3053,19 +3091,23 @@ _HEBREW_CONSTRUCT_COUNT_WORDS = frozenset(
 )
 
 
-def _hebrew_range_endpoint_value(token: str) -> float | None:
-    """A printed number or a one-word spelled absolute number, or None."""
-    if token[0].isdigit():
-        return float(token.replace(",", ""))
-    if token in _HEBREW_CONSTRUCT_COUNT_WORDS:
+def _hebrew_spelled_endpoint_before(
+    text: str, end: int, tokens: "_HebrewWordTokens"
+) -> tuple[int, float] | None:
+    """The longest spelled number ending flush at ``end`` with no scale word of its own."""
+    run = _hebrew_word_run_before(text, end, tokens=tokens)
+    if run and run[-1].group(0) in _HEBREW_CONSTRUCT_COUNT_WORDS:
         return None
-    parsed = _parse_hebrew_number_run([token], 0)
-    if parsed is None:
-        return None
-    consumed, value, kinds = parsed
-    if consumed != 1 or kinds & {"fraction", "thousand", "million", "billion"}:
-        return None
-    return value
+    for width in range(len(run), 0, -1):
+        words = [token.group(0) for token in run[-width:]]
+        parsed = _parse_hebrew_number_run(words)
+        if (
+            parsed is not None
+            and parsed[0] == len(words)
+            and not parsed[2] & _HEBREW_SCALE_KINDS
+        ):
+            return run[-width].start(), parsed[1]
+    return None
 
 
 def _iter_hebrew_shared_scale_range_matches(
@@ -3074,19 +3116,66 @@ def _iter_hebrew_shared_scale_range_matches(
 ) -> list[tuple[tuple[int, int], float]]:
     """The lower endpoint of a range whose scale word both endpoints share.
 
-    ``structural_spans`` are the reference spans the structural pass found:
-    "תוספת 2 עד שלושת אלפים" names a supplement, not a range's lower bound.
+    Each endpoint is printed (sign and fraction included) or spelled, one
+    word or several; the upper endpoint stands flush before the scale word
+    and the join (ל־, עד, ועד, או, לבין) flush before it. ``structural_spans``
+    are the reference spans the structural pass found: "תוספת 2 עד שלושת
+    אלפים" names a supplement, not a range's lower bound.
     """
     matches: list[tuple[tuple[int, int], float]] = []
-    for match in _HEBREW_SHARED_SCALE_RANGE_PATTERN.finditer(text):
-        if _span_overlaps(match.span("lower"), structural_spans):
+    tokens: _HebrewWordTokens | None = None
+    for scale_match in _HEBREW_SHARED_SCALE_WORD_PATTERN.finditer(text):
+        scale = _HEBREW_PRINTED_SCALE_VALUES[scale_match.group("scale")]
+        upper_end = len(text[: scale_match.start()].rstrip())
+        if upper_end == scale_match.start():
             continue
-        lower = _hebrew_range_endpoint_value(match.group("lower"))
-        upper = _hebrew_range_endpoint_value(match.group("upper"))
-        if lower is None or upper is None:
+        if tokens is None:
+            tokens = _HebrewWordTokens(text)
+        printed_upper = _search_before(
+            _HEBREW_DIGITS_BEFORE_PATTERN, text, upper_end, 32
+        )
+        if printed_upper is not None:
+            if _hebrew_printed_endpoint_value(printed_upper) is None:
+                continue
+            upper_start = printed_upper.start()
+        else:
+            spelled_upper = _hebrew_spelled_endpoint_before(text, upper_end, tokens)
+            if spelled_upper is None:
+                continue
+            upper_start = spelled_upper[0]
+        join = _search_before(
+            _HEBREW_SHARED_SCALE_JOIN_BEFORE_PATTERN, text, upper_start, 12
+        )
+        if join is None:
             continue
-        scale = _HEBREW_PRINTED_SCALE_VALUES[match.group("scale")]
-        matches.append((match.span("lower"), lower * scale))
+        lower_end = len(text[: join.start()].rstrip())
+        if lower_end == join.start():
+            continue
+        printed_lower = _search_before(
+            _HEBREW_DIGITS_BEFORE_PATTERN, text, lower_end, 32
+        )
+        if printed_lower is not None:
+            lower_value = _hebrew_printed_endpoint_value(printed_lower)
+            if lower_value is None:
+                continue
+            lower_span = (printed_lower.start(), lower_end)
+        else:
+            spelled_lower = _hebrew_spelled_endpoint_before(text, lower_end, tokens)
+            if spelled_lower is None:
+                continue
+            lower_span = (spelled_lower[0], lower_end)
+            lower_value = spelled_lower[1]
+        if (
+            _span_overlaps(lower_span, structural_spans)
+            or _search_before(
+                _HEBREW_SHARED_SCALE_LABEL_BEFORE_PATTERN, text, lower_span[0], 24
+            )
+            is not None
+            or _search_before(_HEBREW_RANGE_WALK_STOP_PATTERN, text, lower_span[0], 24)
+            is not None
+        ):
+            continue
+        matches.append((lower_span, lower_value * scale))
     return matches
 
 
@@ -3135,6 +3224,9 @@ def _hebrew_spelled_remainder_after(
     ):
         # "ושני שלישים" is two thirds, a fraction with its own reading, not
         # a remainder of two.
+        return None
+    if _HEBREW_PERCENT_WORD_PATTERN.match(text, tokens[consumed - 1][1]) is not None:
+        # "ועשרים אחוזים" is a rate, not a remainder of twenty.
         return None
     return tokens[consumed - 1][1], value
 
@@ -3392,7 +3484,11 @@ def _hebrew_number_run_ending_at(
     for width in range(len(run), 0, -1):
         words = [token.group(0) for token in run[-width:]]
         parsed = _parse_hebrew_number_run(words)
-        if parsed is not None and parsed[0] == len(words):
+        if (
+            parsed is not None
+            and parsed[0] == len(words)
+            and not parsed[2] & _HEBREW_SCALE_KINDS
+        ):
             return run[-width].start(), parsed[1], words[0]
         # A fraction word is an endpoint too: "בין חצי לשלושה אחוזים", "רבע
         # עד חצי אחוז".

@@ -17237,6 +17237,45 @@ def test_range_endpoints_share_a_trailing_scale_word():
     }
 
 
+def test_a_shared_scale_range_keeps_a_signed_lower_endpoint():
+    for text in ("בין -3 ל־5 מיליון שקלים", "בין −3 ל־5 מיליון שקלים"):
+        assert _hebrew_recall(text) == {-3_000_000.0, 5_000_000.0}, (
+            text,
+            _hebrew_recall(text),
+        )
+        grounded = extract_numbers_from_text(text)
+        assert -3_000_000.0 in grounded and 3_000_000.0 not in grounded, (
+            text,
+            grounded,
+        )
+
+
+def test_a_shared_scale_range_reads_compound_spelled_endpoints():
+    for text, expected in (
+        ("עשרים ושלושה עד שלושים מיליון שקלים", {23_000_000.0, 30_000_000.0}),
+        ("בין מאה ועשרים ל־200 אלף שקלים", {120_000.0, 200_000.0}),
+        ("בין 120 למאתיים וחמישים אלף שקלים", {120.0, 250_000.0}),
+        (
+            "שלושים וחמישה עד ארבעים ושניים מיליון שקלים",
+            {35_000_000.0, 42_000_000.0},
+        ),
+    ):
+        assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+        grounded = extract_numbers_from_text(text)
+        assert expected <= grounded and 3_000_000.0 not in grounded, (text, grounded)
+
+
+def test_a_spelled_percentage_after_a_scaled_amount_keeps_the_amount():
+    for text in (
+        "סכום של 3 מיליון ועשרים אחוזים מההכנסה",
+        "סכום של שלושה מיליון ועשרים אחוזים מההכנסה",
+    ):
+        assert _hebrew_recall(text) == {3_000_000.0, 0.2}, (text, _hebrew_recall(text))
+        grounded = extract_numbers_from_text(text)
+        assert {3_000_000.0, 0.2} <= grounded, (text, grounded)
+        assert not any(v > 3_000_000.0 for v in grounded), (text, grounded)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
