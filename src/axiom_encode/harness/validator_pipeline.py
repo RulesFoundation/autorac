@@ -3270,7 +3270,9 @@ _HEBREW_STRUCTURAL_DIGIT = (
 # volumes, energy, and counts of people and things. A number before one of
 # these is a quantity, never a reference label. An abbreviation is written
 # with an ASCII quote or with gershayim (ק"ג, ק״ג); both are matched.
-_HEBREW_STRUCTURAL_UNIT_NOUN_WORDS = (
+# Units of measure: money, time, rates, lengths, areas, weights, volumes,
+# energy. A fraction word before one of these is a fraction ("עשירית שקל").
+_HEBREW_MEASURE_UNIT_WORDS = (
     "שקלים חדשים",
     "שקלים",
     "שקל",
@@ -3340,6 +3342,16 @@ _HEBREW_STRUCTURAL_UNIT_NOUN_WORDS = (
     "וואט",
     'כ"ס',
     "מעלות",
+    "אגורה",
+    "נקודה",
+    "לירה",
+    "שנייה",
+    "שניה",
+)
+# Count nouns: people and things. A number before one is a quantity, but
+# several double as predicates ("זכאית", "מקבלת"), so a fraction word
+# before one keeps its ordinal reading ("דרגה חמישית זכאית").
+_HEBREW_COUNT_NOUN_WORDS = (
     "יחידות",
     "יחידה",
     "פעמים",
@@ -3423,11 +3435,6 @@ _HEBREW_STRUCTURAL_UNIT_NOUN_WORDS = (
     "יתומים",
     "אלמנות",
     "אלמנים",
-    "אגורה",
-    "נקודה",
-    "לירה",
-    "שנייה",
-    "שניה",
     "משפחה",
     "משק בית",
     "עובד",
@@ -3498,6 +3505,9 @@ _HEBREW_STRUCTURAL_UNIT_NOUN_WORDS = (
     "זוג",
     "יחיד",
 )
+_HEBREW_STRUCTURAL_UNIT_NOUN_WORDS = (
+    _HEBREW_MEASURE_UNIT_WORDS + _HEBREW_COUNT_NOUN_WORDS
+)
 
 
 def _hebrew_unit_alternation(units: "Iterable[str]") -> str:
@@ -3526,29 +3536,15 @@ _HEBREW_STRUCTURAL_UNIT_NOUNS = _hebrew_unit_alternation(
 _HEBREW_UNIT_AFTER_PATTERN = re.compile(
     "\\s+(?:" + _HEBREW_STRUCTURAL_UNIT_NOUNS + ")(?![\u0590-\u05ff])"
 )
-# The unit after a fraction word: the same lexicon less the relational
-# nouns, which introduce a count of their own ("דירה חמישית בת שלושה
-# חדרים" is a fifth apartment of three rooms, not a fifth of a daughter).
+# The unit that says fraction after an ordinal-shaped word: a unit of
+# measure only. A count noun there may be a predicate ("דרגה חמישית זכאית",
+# "דירה חמישית בת שלושה חדרים"), and the word keeps its ordinal reading.
 _HEBREW_FRACTION_UNIT_AFTER_PATTERN = re.compile(
     "\\s+(?:"
-    + _hebrew_unit_alternation(
-        word
-        for word in _HEBREW_STRUCTURAL_UNIT_NOUN_WORDS
-        if word not in {"בן", "בת", "אב", "אם"}
-    )
+    + _hebrew_unit_alternation(_HEBREW_MEASURE_UNIT_WORDS)
     + ")(?![\u0590-\u05ff])"
 )
-# A quantity, not a further reference: a number followed by a unit noun.
-_HEBREW_STRUCTURAL_NOT_A_QUANTITY = "(?!\\s*(?:" + _HEBREW_STRUCTURAL_UNIT_NOUNS + "))"
-_HEBREW_STRUCTURAL_LIST_JOIN = "(?:\u05d5\u05be?|או)"
-_HEBREW_STRUCTURAL_RANGE_JOIN = "(?:עד|[-\u2013\u2014])"
-# Nor the first half of a coordinated quantity or a range of amounts,
-# printed or spelled: in "1, 2, 4, 100 או 200 דולר", "1, 2, 4, 100 עד 200
-# דולר" and "תוספת שתיים עד שלוש נקודות" the number before the join is an
-# amount with the one after it.
-# The endpoint after the join may be a compound or a mixed number ("3 וחצי",
-# "עשרים וחמישה"): a printed or spelled number and up to four more number
-# words, vav-bound or not, before the unit.
+# Every word the numeric grammar reads, for the guards below.
 _HEBREW_STRUCTURAL_NUMBER_WORD_ANY = _hebrew_alternation(
     _HEBREW_NUMBER_VOCABULARY
     | set(_HEBREW_TEEN_UNIT_VALUES)
@@ -3556,14 +3552,47 @@ _HEBREW_STRUCTURAL_NUMBER_WORD_ANY = _hebrew_alternation(
     | set(_HEBREW_FRACTION_COUNT_VALUES)
     | {"שני", "שתי", "שניים", "שתיים"}
 )
+# A quantity, not a further reference: a number followed by a unit noun,
+# with the rest of the number ("3 1⁄2", "3 וחצי") between: a printed
+# fraction or vav-bound number words. A bare number word after a reference
+# ("התוספת השנייה שלושה ילדים") is the statute's own count, not a tail.
+_HEBREW_STRUCTURAL_QUANTITY_TAIL = (
+    "(?:\\s+\\d+\\s*[/\u2044]\\s*\\d+|\\s+\u05d5(?:"
+    + _HEBREW_STRUCTURAL_NUMBER_WORD_ANY
+    + ")){0,16}"
+)
+_HEBREW_STRUCTURAL_NOT_A_QUANTITY_TAILED = (
+    "(?!"
+    + _HEBREW_STRUCTURAL_QUANTITY_TAIL
+    + "\\s*(?:"
+    + _HEBREW_STRUCTURAL_UNIT_NOUNS
+    + "))"
+)
+# After a spelled reference the number is complete, and a vav-bound word is
+# the conjunction ("התוספות השנייה ושלושה ילדים"): the unit must follow at once.
+_HEBREW_STRUCTURAL_NOT_A_QUANTITY = "(?!\\s*(?:" + _HEBREW_STRUCTURAL_UNIT_NOUNS + "))"
+_HEBREW_STRUCTURAL_LIST_JOIN = "(?:\u05d5\u05be?|או)"
+_HEBREW_STRUCTURAL_RANGE_JOIN = "(?:עד|[-\u2013\u2014])"
+# Nor the first half of a coordinated quantity or a range of amounts,
+# printed or spelled: in "1, 2, 4, 100 או 200 דולר", "1, 2, 4, 100 עד 200
+# דולר" and "תוספת שתיים עד שלוש נקודות" the number before the join is an
+# amount with the one after it.
+# The endpoint after the join is anything the numeric grammar reads: a
+# printed number with an optional printed fraction ("3 1⁄2") or spelled tail
+# ("3 וחצי"), or a run of up to sixteen number words ("שלושים ואחד אלף
+# מאתיים ושלושים וחמישה"), before the unit.
 _HEBREW_STRUCTURAL_COORDINATED_QUANTITY = (
     "\\s*(?:"
     + _HEBREW_STRUCTURAL_LIST_JOIN
     + "|"
     + _HEBREW_STRUCTURAL_RANGE_JOIN
-    + ")\\s*(?:\\d+(?:[.,]\\d+)?|[\u0590-\u05ff]+)"
+    + ")\\s*(?:"
+    "(?:(?<![\u05d0-\u05ea])[-\u2212])?(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:[.,]\\d+)?"
+    "(?:\\s+\\d+\\s*[/\u2044]\\s*\\d+)?"
     "(?:\\s+\u05d5?(?:" + _HEBREW_STRUCTURAL_NUMBER_WORD_ANY + ")){0,4}"
-    "\\s*(?:" + _HEBREW_STRUCTURAL_UNIT_NOUNS + ")(?![\u0590-\u05ff])"
+    "|\u05d5?(?:" + _HEBREW_STRUCTURAL_NUMBER_WORD_ANY + ")"
+    "(?:\\s+\u05d5?(?:" + _HEBREW_STRUCTURAL_NUMBER_WORD_ANY + ")){0,15}"
+    ")\\s*(?:" + _HEBREW_STRUCTURAL_UNIT_NOUNS + ")(?![\u0590-\u05ff])"
 )
 _HEBREW_STRUCTURAL_NOT_A_COORDINATED_QUANTITY = (
     "(?!" + _HEBREW_STRUCTURAL_COORDINATED_QUANTITY + ")"
@@ -3578,7 +3607,7 @@ _HEBREW_STRUCTURAL_DIGIT_ITEM = (
     + _HEBREW_STRUCTURAL_RANGE_JOIN
     + "\\s*"
     + _HEBREW_STRUCTURAL_DIGIT
-    + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
+    + _HEBREW_STRUCTURAL_NOT_A_QUANTITY_TAILED
     + ")?"
 )
 _HEBREW_STRUCTURAL_PLURAL_NOUNS = (
@@ -3600,18 +3629,18 @@ _HEBREW_STRUCTURAL_REFERENCE_PATTERN = re.compile(
     "(?:" + _HEBREW_STRUCTURAL_PLURAL_NOUNS + ")\\s+"
     "(?:"
     + _HEBREW_STRUCTURAL_DIGIT_ITEM
-    + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
+    + _HEBREW_STRUCTURAL_NOT_A_QUANTITY_TAILED
     + _HEBREW_STRUCTURAL_NOT_A_COORDINATED_QUANTITY
     + "(?:\\s*,\\s*"
     + _HEBREW_STRUCTURAL_DIGIT_ITEM
-    + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
+    + _HEBREW_STRUCTURAL_NOT_A_QUANTITY_TAILED
     + _HEBREW_STRUCTURAL_NOT_A_COORDINATED_QUANTITY
     + ")*"
     + "(?:\\s*"
     + _HEBREW_STRUCTURAL_LIST_JOIN
     + "\\s*"
     + _HEBREW_STRUCTURAL_DIGIT_ITEM
-    + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
+    + _HEBREW_STRUCTURAL_NOT_A_QUANTITY_TAILED
     + ")?"
     # A spelled reference under the article is a reference whatever follows
     # ("התוספות השנייה ושלושה ילדים" keeps its three children substantive); a
@@ -3632,13 +3661,13 @@ _HEBREW_STRUCTURAL_REFERENCE_PATTERN = re.compile(
     "|(?:" + _HEBREW_STRUCTURAL_SINGULAR_NOUNS + ")\\s+"
     "(?:"
     + _HEBREW_STRUCTURAL_DIGIT_ITEM
-    + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
+    + _HEBREW_STRUCTURAL_NOT_A_QUANTITY_TAILED
     + _HEBREW_STRUCTURAL_NOT_A_COORDINATED_QUANTITY
     + "(?:\\s*"
     + _HEBREW_STRUCTURAL_LIST_JOIN
     + "\\s*"
     + _HEBREW_STRUCTURAL_DIGIT_ITEM
-    + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
+    + _HEBREW_STRUCTURAL_NOT_A_QUANTITY_TAILED
     + ")?"
     "|\u05d4"
     + _HEBREW_STRUCTURAL_NUMBER_WORD_BODY

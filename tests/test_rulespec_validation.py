@@ -16326,6 +16326,35 @@ def test_the_alternative_spelling_of_second_is_a_unit():
     assert _hebrew_recall("לידה שניה מזכה במענק של 100 שקלים") == {2.0, 100.0}
 
 
+def test_a_coordinated_quantity_with_a_printed_fraction_or_a_long_compound_keeps_both():
+    for text, expected in (
+        ("תוספת 2 עד 3 1⁄2 שקלים לכל ילד", {2.0, 3.5}),
+        (
+            "תוספת 2 עד שלושים ואחד אלף מאתיים ושלושים וחמישה שקלים לכל ילד",
+            {2.0, 31235.0},
+        ),
+        ("תוספת 2 או 1,500 שקלים לכל ילד", {2.0, 1500.0}),
+    ):
+        assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+    assert _hebrew_recall("לפי סעיפים 1 עד 3 יחולו על עובדים") == set()
+
+
+def test_a_predicate_after_an_ordinal_is_no_unit():
+    for text in (
+        "עובדת בדרגה חמישית זכאית למענק של 100 שקלים",
+        "עובדת בדרגה חמישית מקבלת מענק של 100 שקלים",
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert 5.0 in grounded and 0.2 not in grounded, (text, grounded)
+        assert _hebrew_recall(text) == {5.0, 100.0}, (text, _hebrew_recall(text))
+    for text, expected in (
+        ("ישולם סכום של עשירית שקל", {0.1}),
+        ("זמן התגובה יהיה עשירית שנייה", {0.1}),
+        ("יובאו בחשבון חמישית נקודת זיכוי", {0.2}),
+    ):
+        assert {round(v, 12) for v in _hebrew_recall(text)} == expected, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
