@@ -17675,6 +17675,28 @@ def test_a_modifier_before_a_participles_complement_binds_nothing():
     }
 
 
+def test_an_articled_amount_noun_takes_no_possessor():
+    # A construct chain never articles its first noun; "המענק המממן" is
+    # attribution, and the participle -- listed or not -- opens a clause.
+    for text in (
+        "המענק המממן לפחות 3 אלפים ו־200 עובדים",
+        "המענק המממן לפחות שלושה אלפים ומאתיים עובדים",
+        "התקציב המכסה לפחות 3 אלפים ו־200 עובדים",
+        "התקציב המכסה לפחות שלושה אלפים ומאתיים עובדים",
+        "הקצבה הניתנת לפחות ל־3 אלפים ו־200 עובדים",
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == {3_200.0}, (text, recall)
+        assert not ({3_000.0, 200.0} & extract_numbers_from_text(text)), text
+    # The construct state keeps binding through its possessor.
+    for text, expected in (
+        ("סכום המענק לפחות 3 מיליון ו־30 ימי מאסר", {3_000_000.0, 30.0}),
+        ("הכנסת המפעל של 3 מיליון ו־20 עובדים", {3_000_000.0, 20.0}),
+        ("קצבת העובד השנתית של שלושה מיליון ועשרים עובדים", {3_000_000.0, 20.0}),
+    ):
+        assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

@@ -2587,25 +2587,48 @@ _HEBREW_MONEY_POSSESSOR_CONNECTORS = (
     "\u05d4(?:כולל|כוללת|שנתי|שנתית|חודשי|חודשית|בסיסי|בסיסית|מרבי|מרבית|"
     "מזערי|מזערית|מינימלי|מינימלית|מקסימלי|מקסימלית|ממוצע|ממוצעת)"
 )
-_HEBREW_MONEY_CONTEXT_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9\u05d4]{0,2}(?:(?:"
+_HEBREW_MONEY_NOUN = (
+    "(?:(?:"
     + _HEBREW_AMOUNT_NOUN_STEMS.replace("|מס|", "|")
-    + ")[\u0590-\u05ff]{0,6}|מס(?:ים|י)?)(?![\u0590-\u05ff])"
-    # Two ways on to the number. With one articled possessor ("מחזור
-    # העסקאות", "שכר העובד", "סכום המענק", "הכנסת המפעל"; never a relative
-    # participle): the preposition-free connectors alone. Without one: the
-    # connectors, with the article or not ("המחזור השנתי הכולל", "הקנס יהיה
-    # לכל היותר בין").
-    "(?:\\s+(?!\u05d4(?:"
+    + ")[\u0590-\u05ff]{0,6}|מס(?:ים|י)?)"
+)
+# A printed multiplier may stand between the noun and the scale word the
+# caller asks about ("קנס של 3 מיליון", asked at "מיליון").
+_HEBREW_MONEY_PRINTED_TAIL = (
+    "(?:\\s*(?<![\\d.,])[-\u2212]?(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?"
+    "(?:\\s+\\d+\\s*[/\u2044]\\s*\\d+)?)?\\s*$"
+)
+# Two grammars lead from an amount noun to the number it governs.
+#
+# A construct chain: the amount noun in the construct state -- no article
+# of its own -- and one articled possessor ("סכום המענק", "הכנסת המפעל",
+# "מחזור העסקאות", "שכר העובד"), then preposition-free connectors alone. An
+# articled amount noun followed by an articled word is attribution, not
+# possession ("המענק המממן", "הקצבה המחולקת", "התקציב המכסה"): the word
+# opens a clause of its own, whatever it is, and binds nothing.
+#
+# The bare noun, with or without the article, and the connectors, with the
+# article or not ("המחזור השנתי הכולל", "הקנס יהיה לכל היותר בין").
+_HEBREW_MONEY_CONTEXT_PATTERN = re.compile(
+    "(?:"
+    "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}"
+    + _HEBREW_MONEY_NOUN
+    + "(?![\u0590-\u05ff])"
+    "\\s+(?!\u05d4(?:"
     + _HEBREW_RELATIVE_PARTICIPLES
     + ")(?![\u0590-\u05ff]))\u05d4[\u0590-\u05ff]{2,}(?:\\s+(?:"
     + _HEBREW_MONEY_POSSESSOR_CONNECTORS
     + ")(?![\u0590-\u05ff])){0,6}"
-    "|(?:\\s+\u05d4?(?:" + _HEBREW_MONEY_CONTEXT_CONNECTORS + ")[\u05be-]?){0,6})"
-    # A printed multiplier may stand between the noun and the scale word the
-    # caller asks about ("קנס של 3 מיליון", asked at "מיליון").
-    "(?:\\s*(?<![\\d.,])[-\u2212]?(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?"
-    "(?:\\s+\\d+\\s*[/\u2044]\\s*\\d+)?)?\\s*$"
+    + _HEBREW_MONEY_PRINTED_TAIL
+    + "|"
+    "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9\u05d4]{0,2}"
+    + _HEBREW_MONEY_NOUN
+    + "(?![\u0590-\u05ff])"
+    "(?:\\s+\u05d4?(?:"
+    + _HEBREW_MONEY_CONTEXT_CONNECTORS
+    + ")[\u05be-]?){0,6}"
+    + _HEBREW_MONEY_PRINTED_TAIL
+    + ")"
 )
 
 
