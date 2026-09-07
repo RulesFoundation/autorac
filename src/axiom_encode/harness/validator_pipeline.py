@@ -3188,6 +3188,8 @@ def _iter_hebrew_percent_phrase_matches(
             tail = tail_count = None
             end = match.end("noun")
         count_value: float | None = None
+        run: list["re.Match[str]"] = []
+        mixed: tuple[float, int] | None = None
         count_start = match.start()
         negative = False
         if match.group("numerator"):
@@ -3230,16 +3232,38 @@ def _iter_hebrew_percent_phrase_matches(
             mixed = _hebrew_printed_mixed_count(text, run)
             if mixed is not None:
                 count_value, count_start = mixed
+            # A scaled count is the rate's own ("שלושת אלפים אחוזים" is
+            # 3,000 percent) unless a money amount governs the run: "סכום
+            # של 3 מיליון ועשרים אחוזים" and "סכום של שלושה מיליון ועשרים
+            # אחוזים" are three million, and twenty percent, never a
+            # million-and-twenty percent. Read once at the run's start, so
+            # a shorter run beginning at the scale word cannot escape it.
+            number_start = next(
+                (
+                    run[-width].start()
+                    for width in range(len(run) if mixed is None else 0, 0, -1)
+                    if (
+                        (
+                            parsed := _parse_hebrew_number_run(
+                                [token.group(0) for token in run[-width:]]
+                            )
+                        )
+                        is not None
+                        and parsed[0] == width
+                    )
+                ),
+                None,
+            )
+            run_after_money = number_start is not None and _hebrew_money_context_before(
+                text, number_start
+            )
             for width in range(len(run) if mixed is None else 0, 0, -1):
                 words = [token.group(0) for token in run[-width:]]
                 parsed = _parse_hebrew_number_run(words)
-                # A scale word before the count is an amount of its own:
-                # "3 מיליון ועשרים אחוזים" is three million, and twenty
-                # percent, never a million-and-twenty percent.
                 if (
                     parsed is not None
                     and parsed[0] == len(words)
-                    and not parsed[2] & _HEBREW_SCALE_KINDS
+                    and not (parsed[2] & _HEBREW_SCALE_KINDS and run_after_money)
                 ):
                     count_value = parsed[1]
                     count_start = run[-width].start()
@@ -3249,6 +3273,28 @@ def _iter_hebrew_percent_phrase_matches(
                     count_value = fractional
                     count_start = run[-width].start()
                     break
+        if (
+            count_value is None
+            and mixed is None
+            and run
+            and run[-1].group(0) in _HEBREW_SCALE_VALUES
+        ):
+            # A scale word left unread before the noun carries a printed
+            # multiplier ("3 אלפים אחוזים וחצי"): the printed pass reads
+            # the whole rate, tail included; a count of one is not it.
+            continue
+        if count_value is not None and mixed is None:
+            # A count that begins with a scale word a printed multiplier
+            # precedes ("1.5 מיליון אחוזים") is that multiplier's: the
+            # printed pass reads the whole rate.
+            first = _HEBREW_WORD_TOKEN_PATTERN.match(text, count_start)
+            if (
+                first is not None
+                and first.group(0) in _HEBREW_SCALE_VALUES
+                and _search_before(_HEBREW_DIGITS_BEFORE_PATTERN, text, count_start, 32)
+                is not None
+            ):
+                continue
         if count_value is None and tail is None and tail_count is None:
             # The bare singular noun in a quantity slot is one percent:
             # "תוספת של אחוז מההכנסה" -- a quantity word before it and a
@@ -3615,12 +3661,46 @@ def _hebrew_spelled_remainder_after(
     return tokens[consumed - 1][1], value
 
 
-def _hebrew_percent_unit_after(text: str, end: int) -> int | None:
-    """Where a percent noun or sign right after ``end`` ends, or None."""
+_HEBREW_PERCENT_TAIL_AFTER_PATTERN = re.compile(
+    "\\s+\u05d5(?:(?P<tail>"
+    + "|".join(
+        re.escape(w)
+        for w in sorted(_HEBREW_MIXED_FRACTION_VALUES, key=len, reverse=True)
+    )
+    + ")|(?P<tail_count>"
+    + "|".join(
+        re.escape(w)
+        for w in sorted(_HEBREW_FRACTION_COUNT_VALUES, key=len, reverse=True)
+    )
+    + ")\\s+(?P<tail_fraction>"
+    + "|".join(
+        re.escape(w)
+        for w in sorted(_HEBREW_COUNTED_FRACTION_VALUES, key=len, reverse=True)
+    )
+    + "))(?![\u0590-\u05ff])"
+)
+
+
+def _hebrew_percent_unit_after(text: str, end: int) -> tuple[int, float] | None:
+    """A percent noun or sign right after ``end``, with its fractional tail.
+
+    Returns (where the unit and its tail end, the tail's value in percent):
+    "אחוזים וחצי" adds half a percent, "אחוזים ושלושה רבעים" three quarters.
+    """
     unit = _HEBREW_PERCENT_WORD_PATTERN.match(text, end)
     if unit is None:
         unit = _HEBREW_PERCENT_SIGN_AFTER_PATTERN.match(text, end)
-    return unit.end() if unit is not None else None
+    if unit is None:
+        return None
+    tail = _HEBREW_PERCENT_TAIL_AFTER_PATTERN.match(text, unit.end())
+    if tail is None:
+        return unit.end(), 0.0
+    if tail.group("tail"):
+        return tail.end(), _HEBREW_MIXED_FRACTION_VALUES[tail.group("tail")]
+    return tail.end(), (
+        _HEBREW_FRACTION_COUNT_VALUES[tail.group("tail_count")]
+        * _HEBREW_COUNTED_FRACTION_VALUES[tail.group("tail_fraction")]
+    )
 
 
 def _hebrew_printed_continuation_end(text: str, end: int) -> int:
@@ -3829,11 +3909,11 @@ def _iter_hebrew_printed_scale_matches(
             if plain_value is not None and 0 < plain_value < floor:
                 value += plain_value
                 end = plain.end()
-        unit_end = _hebrew_percent_unit_after(text, end)
-        if unit_end is not None:
-            matches.append(
-                ((start, unit_end), (-value if negative else value) / 100, True)
-            )
+        unit = _hebrew_percent_unit_after(text, end)
+        if unit is not None:
+            unit_end, unit_tail = unit
+            rate = (value + unit_tail) / 100
+            matches.append(((start, unit_end), -rate if negative else rate, True))
         else:
             matches.append(((start, end), -value if negative else value, False))
         index += 1
@@ -3859,9 +3939,12 @@ def _iter_hebrew_printed_scale_matches(
         plain_value = _hebrew_printed_plain_remainder_value(plain)
         if plain_value is not None and 0 < plain_value < spelled_floor:
             total = spelled_value + plain_value
-            unit_end = _hebrew_percent_unit_after(text, plain.end())
-            if unit_end is not None:
-                matches.append(((spelled_start, unit_end), total / 100, True))
+            unit = _hebrew_percent_unit_after(text, plain.end())
+            if unit is not None:
+                unit_end, unit_tail = unit
+                matches.append(
+                    ((spelled_start, unit_end), (total + unit_tail) / 100, True)
+                )
             else:
                 matches.append(((spelled_start, plain.end()), total, False))
     matches.sort()

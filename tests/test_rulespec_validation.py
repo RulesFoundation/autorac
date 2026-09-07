@@ -17777,6 +17777,33 @@ def test_a_printed_scale_amount_before_a_percent_unit_is_a_rate():
     assert _hebrew_recall("סכום של 3 אלפים שקלים") == {3_000.0}
 
 
+def test_a_scaled_percentage_keeps_its_fractional_tail():
+    for text, expected in (
+        ("השיעור הוא 3 אלפים אחוזים וחצי", 30.005),
+        ("השיעור הוא שלושת אלפים אחוזים וחצי", 30.005),
+        ("השיעור הוא 3000 אחוזים וחצי", 30.005),
+        ("השיעור הוא 3 אלפים אחוזים ושלושה רבעים", 30.0075),
+        ("השיעור הוא שלושת אלפים אחוזים ושלושה רבעים", 30.0075),
+        ("השיעור הוא שלושת אלפים וחמש מאות אחוזים", 35.0),
+    ):
+        recall = _hebrew_recall(text)
+        assert len(recall) == 1 and abs(next(iter(recall)) - expected) < 1e-9, (
+            text,
+            recall,
+        )
+        grounded = extract_numbers_from_text(text)
+        assert not ({0.015, 3.0, 3_000.0, 1_000.0} & grounded), (text, grounded)
+    # A money amount before the count still keeps the rate to its remainder.
+    assert _hebrew_recall("סכום של 3 מיליון ועשרים אחוזים מההכנסה") == {
+        3_000_000.0,
+        0.2,
+    }
+    assert _hebrew_recall("סכום של שלושה מיליון ועשרים אחוזים מההכנסה") == {
+        3_000_000.0,
+        0.2,
+    }
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
