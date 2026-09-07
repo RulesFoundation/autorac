@@ -3442,7 +3442,7 @@ def _hebrew_spelled_endpoint_before(
 def _iter_hebrew_shared_scale_range_matches(
     text: str,
     structural_spans: "Sequence[tuple[int, int]]" = (),
-) -> list[tuple[tuple[int, int], float]]:
+) -> list[tuple[tuple[int, int], float, bool]]:
     """The lower endpoint of a range whose scale word both endpoints share.
 
     Each endpoint is printed (sign and fraction included) or spelled, one
@@ -3451,7 +3451,7 @@ def _iter_hebrew_shared_scale_range_matches(
     are the reference spans the structural pass found: "תוספת 2 עד שלושת
     אלפים" names a supplement, not a range's lower bound.
     """
-    matches: list[tuple[tuple[int, int], float]] = []
+    matches: list[tuple[tuple[int, int], float, bool]] = []
     tokens: _HebrewWordTokens | None = None
     for scale_match in _HEBREW_SHARED_SCALE_WORD_PATTERN.finditer(text):
         scale = _HEBREW_PRINTED_SCALE_VALUES[scale_match.group("scale")]
@@ -3541,7 +3541,16 @@ def _iter_hebrew_shared_scale_range_matches(
             is not None
         ):
             continue
-        matches.append((lower_span, lower_value * scale))
+        # "2 עד 3 אלפים אחוזים": the shared scale word carries a percent unit
+        # too, and both endpoints are rates.
+        is_rate = _hebrew_percent_unit_after(text, scale_match.end()) is not None
+        matches.append(
+            (
+                lower_span,
+                lower_value * scale / 100 if is_rate else lower_value * scale,
+                is_rate,
+            )
+        )
     return matches
 
 
@@ -3606,6 +3615,14 @@ def _hebrew_spelled_remainder_after(
     return tokens[consumed - 1][1], value
 
 
+def _hebrew_percent_unit_after(text: str, end: int) -> int | None:
+    """Where a percent noun or sign right after ``end`` ends, or None."""
+    unit = _HEBREW_PERCENT_WORD_PATTERN.match(text, end)
+    if unit is None:
+        unit = _HEBREW_PERCENT_SIGN_AFTER_PATTERN.match(text, end)
+    return unit.end() if unit is not None else None
+
+
 def _hebrew_printed_continuation_end(text: str, end: int) -> int:
     """Where an amount's printed continuation ends: printed parts and a plain remainder joined by ו."""
     while True:
@@ -3642,8 +3659,12 @@ def _hebrew_printed_chain_end(
 
 def _iter_hebrew_printed_scale_matches(
     text: str,
-) -> list[tuple[tuple[int, int], float]]:
+) -> list[tuple[tuple[int, int], float, bool]]:
     """Printed multipliers with a Hebrew scale word, as one amount each.
+
+    A percent noun or sign right after the amount makes it a rate, read
+    with its unit before the span is reserved: "3 אלפים אחוזים" is 30, as
+    "שלושת אלפים אחוזים" is.
 
     A scale word carrying a prefix is not a multiplier's scale: "בין 3
     למיליון" runs between 3 and a million, and each endpoint stands on its
@@ -3711,7 +3732,7 @@ def _iter_hebrew_printed_scale_matches(
         for span, value in _iter_hebrew_compound_number_matches(text)
         if value > 0
     }
-    matches: list[tuple[tuple[int, int], float]] = []
+    matches: list[tuple[tuple[int, int], float, bool]] = []
     # A spelled amount inside a printed part ("מיליון" of "3 מיליון") is
     # that part's scale word, not a leading amount of its own.
     part_spans = [(part[0], part[1]) for part in parts]
@@ -3808,7 +3829,13 @@ def _iter_hebrew_printed_scale_matches(
             if plain_value is not None and 0 < plain_value < floor:
                 value += plain_value
                 end = plain.end()
-        matches.append(((start, end), -value if negative else value))
+        unit_end = _hebrew_percent_unit_after(text, end)
+        if unit_end is not None:
+            matches.append(
+                ((start, unit_end), (-value if negative else value) / 100, True)
+            )
+        else:
+            matches.append(((start, end), -value if negative else value, False))
         index += 1
     # A spelled amount and a printed remainder below every scale, with no
     # printed multiplier between them: "שלושה מיליון ו־200 שקלים".
@@ -3831,7 +3858,12 @@ def _iter_hebrew_printed_scale_matches(
             continue
         plain_value = _hebrew_printed_plain_remainder_value(plain)
         if plain_value is not None and 0 < plain_value < spelled_floor:
-            matches.append(((spelled_start, plain.end()), spelled_value + plain_value))
+            total = spelled_value + plain_value
+            unit_end = _hebrew_percent_unit_after(text, plain.end())
+            if unit_end is not None:
+                matches.append(((spelled_start, unit_end), total / 100, True))
+            else:
+                matches.append(((spelled_start, plain.end()), total, False))
     matches.sort()
     return matches
 
@@ -12198,23 +12230,43 @@ def _tokenize_numeric_occurrences_from_text(
         grounding_spans.append(span)
         inventory_spans.append(span)
 
-    for span, value in _iter_hebrew_shared_scale_range_matches(
+    for span, value, is_rate in _iter_hebrew_shared_scale_range_matches(
         cleaned, _structural_numeric_component_spans(cleaned)
     ):
         if _span_overlaps(span, grounding_spans) or _span_overlaps(
             span, inventory_spans
         ):
             continue
-        add_both(cleaned_view, span, value)
+        if is_rate:
+            add_both(
+                cleaned_view,
+                span,
+                value,
+                source_value=value * 100,
+                force_rate_context=True,
+                requires_rate_context=True,
+            )
+        else:
+            add_both(cleaned_view, span, value)
         grounding_spans.append(span)
         inventory_spans.append(span)
 
-    for span, value in _iter_hebrew_printed_scale_matches(cleaned):
+    for span, value, is_rate in _iter_hebrew_printed_scale_matches(cleaned):
         if _span_overlaps(span, grounding_spans) or _span_overlaps(
             span, inventory_spans
         ):
             continue
-        add_both(cleaned_view, span, value)
+        if is_rate:
+            add_both(
+                cleaned_view,
+                span,
+                value,
+                source_value=value * 100,
+                force_rate_context=True,
+                requires_rate_context=True,
+            )
+        else:
+            add_both(cleaned_view, span, value)
         grounding_spans.append(span)
         inventory_spans.append(span)
 

@@ -17755,6 +17755,28 @@ def test_includes_no_fewer_than_introduces_a_count_of_its_own():
     }
 
 
+def test_a_printed_scale_amount_before_a_percent_unit_is_a_rate():
+    for text, expected in (
+        ("השיעור הוא 3 אלפים אחוזים", {30.0}),
+        ("השיעור הוא שלושת אלפים אחוזים", {30.0}),
+        ("השיעור הוא 3 אלפים %", {30.0}),
+        ("השיעור הוא 2 עד 3 אלפים אחוזים", {20.0, 30.0}),
+        ("השיעור הוא בין 2 ל־3 אלפים אחוזים", {20.0, 30.0}),
+        ("השיעור הוא 1.5 מיליון אחוזים", {15_000.0}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+        grounded = extract_numbers_from_text(text)
+        assert expected <= grounded and not (
+            {3_000.0, 2_000.0, 1_500_000.0} & grounded
+        ), (
+            text,
+            grounded,
+        )
+    # Without the unit the amount stays an amount.
+    assert _hebrew_recall("סכום של 3 אלפים שקלים") == {3_000.0}
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
