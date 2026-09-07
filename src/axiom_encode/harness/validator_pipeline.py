@@ -2520,7 +2520,21 @@ def _iter_hebrew_compound_number_matches(
                     None,
                 )
                 if marked is not None:
-                    parsed = _parse_hebrew_number_run(words[:marked], index)
+                    # The rate's count is the longest number ending at the
+                    # marked word ("ועשרים וחמישה%" is twenty-five percent);
+                    # the amount ends before all of it.
+                    cut = marked
+                    for offset in range(index + 1, marked + 1):
+                        rate_words = words[offset : marked + 1]
+                        rate = _parse_hebrew_number_run(rate_words)
+                        if (
+                            rate is not None
+                            and rate[0] == len(rate_words)
+                            and not rate[2] & _HEBREW_SCALE_KINDS
+                        ) or _hebrew_fractional_count(rate_words) is not None:
+                            cut = offset
+                            break
+                    parsed = _parse_hebrew_number_run(words[:cut], index)
             if parsed is not None:
                 consumed, value, kinds = parsed
                 if consumed >= 2 or kinds & {
@@ -3133,6 +3147,11 @@ def _hebrew_spelled_endpoint_before(
             and not parsed[2] & _HEBREW_SCALE_KINDS
         ):
             return run[-width].start(), parsed[1]
+        # A fraction is an endpoint too: "בין חצי ל־3 מיליון", "בין שלושה
+        # רבעים ל־3 מיליון".
+        fractional = _hebrew_fractional_count(words)
+        if fractional is not None:
+            return run[-width].start(), fractional
     return None
 
 
