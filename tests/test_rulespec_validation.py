@@ -14999,6 +14999,17 @@ def _hebrew_recall(text: str) -> set[float]:
     }
 
 
+def _hebrew_recall_with_alternatives(text: str) -> set[tuple[float, tuple[float, ...]]]:
+    from axiom_encode.harness.validator_pipeline import _scalar_recall_numeric_inventory
+
+    return {
+        (round(o.value, 9), tuple(sorted(round(a, 9) for a in o.alternative_values)))
+        for o in _scalar_recall_numeric_inventory(
+            extract_typed_numeric_inventory_occurrences_from_text(text)
+        )
+    }
+
+
 def test_a_hebrew_compound_number_is_one_number():
     # "After twenty-three days": the compound is 23, and neither the twenty
     # nor the three is a value of its own to ground or to recall.
@@ -16592,19 +16603,21 @@ def test_a_fractional_duration_needs_ordinal_evidence_to_be_an_ordinal():
     }
 
 
-def test_any_feminine_noun_before_a_fraction_word_is_ordinal_evidence():
+def test_an_unlisted_noun_before_a_fraction_word_leaves_both_readings():
+    # "בדיקה" is no listed noun and "נערכה" no duration verb: a fifth
+    # examination a year after, or a fifth of a year after. Both ground;
+    # the primary reading is the ordinal for a unit larger than an hour.
     text = "נערכה בדיקה חמישית שנה לאחר הבדיקה הקודמת"
-    grounded = extract_numbers_from_text(text)
-    assert 5.0 in grounded and 0.2 not in grounded, grounded
-    assert _hebrew_recall(text) == {5.0}
+    assert {5.0, 0.2} <= extract_numbers_from_text(text)
+    assert _hebrew_recall_with_alternatives(text) == {(5.0, (0.2,))}
     for text, expected in (
-        ("המכשיר יופעל עשירית שנייה לאחר קבלת האות", {0.1}),
-        ("הפיצוי ישולם חמישית שנה לאחר ההודעה", {0.2}),
-        ("הסכום יהיה חמישית שנה לאחר מכן", {0.2}),
+        ("המכשיר יופעל עשירית שנייה לאחר קבלת האות", {(0.1, ())}),
+        ("הפיצוי ישולם חמישית שנה לאחר ההודעה", {(0.2, ())}),
+        ("הסכום יהיה חמישית שנה לאחר מכן", {(0.2, ())}),
     ):
-        assert {round(v, 12) for v in _hebrew_recall(text)} == expected, (
+        assert _hebrew_recall_with_alternatives(text) == expected, (
             text,
-            _hebrew_recall(text),
+            _hebrew_recall_with_alternatives(text),
         )
 
 
@@ -16742,25 +16755,29 @@ def test_a_citation_word_before_a_schedule_takes_any_whitespace():
     }
 
 
-def test_a_fraction_of_a_small_time_unit_is_a_duration_and_of_a_large_one_an_ordinal():
-    for text in (
-        "המערכת הופעלה והמתינה עשירית שנייה לאחר קבלת האות",
-        "המערכת פעלה עשירית שנייה לאחר קבלת האות",
-        "התוכנה הגיבה עשירית שנייה לאחר הלחיצה",
-        "המערכת נסגרה חמישית דקה לאחר ההודעה",
-    ):
-        grounded = extract_numbers_from_text(text)
-        assert not ({10.0, 5.0} & grounded), (text, grounded)
-        assert len(_hebrew_recall(text)) == 1 and max(_hebrew_recall(text)) < 1, text
+def test_the_unit_size_orders_an_unsettled_reading_and_a_verb_or_noun_settles_it():
+    # Unsettled (no listed noun, no duration verb): a small unit puts the
+    # duration first, a large one the ordinal first; the other reading is
+    # the alternative either way.
     for text, expected in (
-        ("נפתחה מרפאה חמישית שנה לאחר פתיחת המרפאה הקודמת", {5.0}),
-        ("נערכה בדיקה חמישית שנה לאחר הבדיקה הקודמת", {5.0}),
-        ("הוקמה ועדה חמישית חודש לאחר הוועדה הקודמת", {5.0}),
-        ("הפיצוי ישולם חמישית שנה לאחר ההודעה", {0.2}),
+        ("התוכנה הגיבה עשירית שנייה לאחר הלחיצה", {(0.1, (10.0,))}),
+        ("המערכת נסגרה חמישית דקה לאחר ההודעה", {(0.2, (5.0,))}),
+        ("נפתחה מרפאה חמישית שנה לאחר פתיחת המרפאה הקודמת", {(5.0, (0.2,))}),
+        ("הוקמה ועדה חמישית חודש לאחר הוועדה הקודמת", {(5.0, (0.2,))}),
     ):
-        assert {round(v, 12) for v in _hebrew_recall(text)} == expected, (
+        assert _hebrew_recall_with_alternatives(text) == expected, (
             text,
-            _hebrew_recall(text),
+            _hebrew_recall_with_alternatives(text),
+        )
+    # Settled by a duration verb or a clause context: one reading.
+    for text, expected in (
+        ("המערכת הופעלה והמתינה עשירית שנייה לאחר קבלת האות", {(0.1, ())}),
+        ("המערכת פעלה עשירית שנייה לאחר קבלת האות", {(0.1, ())}),
+        ("הפיצוי ישולם חמישית שנה לאחר ההודעה", {(0.2, ())}),
+    ):
+        assert _hebrew_recall_with_alternatives(text) == expected, (
+            text,
+            _hebrew_recall_with_alternatives(text),
         )
 
 
@@ -16783,6 +16800,53 @@ def test_a_citation_word_takes_any_internal_whitespace():
         0.02,
         0.03,
     }
+
+
+def test_an_ambiguous_ordinal_or_duration_is_recorded_with_both_readings():
+    # Nothing in the text settles these: a fifth examination an hour after,
+    # or a fifth of an hour after; absent a fifth of a year, or a fifth
+    # absence a year after. Both readings ground, and the recall obligation
+    # is met by either.
+    for text, primary, alternative in (
+        ("נערכה בדיקה חמישית שעה לאחר הבדיקה הקודמת", 0.2, 5.0),
+        ("העובד נעדר חמישית שנה לאחר התאונה", 5.0, 0.2),
+        ("נפתחה מרפאה חמישית שנה לאחר פתיחת המרפאה הקודמת", 5.0, 0.2),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert {primary, alternative} <= grounded, (text, grounded)
+        assert _hebrew_recall_with_alternatives(text) == {(primary, (alternative,))}, (
+            text,
+            _hebrew_recall_with_alternatives(text),
+        )
+    # Settled cases stay settled, with no alternative.
+    assert _hebrew_recall_with_alternatives(
+        "המערכת פעלה עשירית שנייה לאחר קבלת האות"
+    ) == {(0.1, ())}
+    assert _hebrew_recall_with_alternatives(
+        "לידה חמישית שנה לאחר הלידה הקודמת זכאית למענק של 100 שקלים"
+    ) == {(5.0, ()), (100.0, ())}
+
+
+def test_a_hebrew_number_composes_millions_and_scaled_tails():
+    for text, expected in (
+        ("מחזור עסקאות שאינו עולה על שלושה מיליון שקלים חדשים", 3_000_000.0),
+        ("סכום של מיליון וחצי שקלים חדשים", 1_500_000.0),
+        ("סכום של שלושה מיליון וחצי שקלים", 3_500_000.0),
+        ("ישולם סכום של שני מיליון ומאתיים אלף שקלים", 2_200_000.0),
+        ("סכום של מאה ועשרים מיליון שקלים", 120_000_000.0),
+        ("סכום של מיליארד שקלים", 1_000_000_000.0),
+        ("סכום של אלף וחצי שקלים", 1_500.0),
+        ("סכום של שלושת אלפים וחצי שקלים", 3_500.0),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert expected in grounded, (text, grounded)
+        assert not ({3.0, 0.5, 2.0, 1_000_000.0, 1000.0, 1000.5} & grounded), (
+            text,
+            grounded,
+        )
+        assert _hebrew_recall(text) == {expected}, (text, _hebrew_recall(text))
+    assert _hebrew_recall("אחד עשר אלף ומאתיים שקלים") == {11_200.0}
+    assert _hebrew_recall("מקדם של אחד וחצי") == {1.5}
 
 
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():

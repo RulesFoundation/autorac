@@ -1972,13 +1972,24 @@ _HEBREW_UNIT_VALUES = {
 }
 _HEBREW_HUNDRED_WORDS = {"מאה": 100.0, "מאתיים": 200.0}
 _HEBREW_THOUSAND_WORDS = {"אלף": 1000.0, "אלפיים": 2000.0}
+_HEBREW_MILLION_WORDS = {
+    "מיליון": 1_000_000.0,
+    "מיליונים": 1_000_000.0,
+    "מיליארד": 1_000_000_000.0,
+    "מיליארדים": 1_000_000_000.0,
+}
 
 
 def _hebrew_alternation(words: Iterable[str]) -> str:
     return "|".join(re.escape(word) for word in sorted(words, key=len, reverse=True))
 
 
-_HEBREW_SCALE_VALUES = {"מאות": 100.0, "אלפים": 1000.0, "אלף": 1000.0}
+_HEBREW_SCALE_VALUES = {
+    "מאות": 100.0,
+    "אלפים": 1000.0,
+    "אלף": 1000.0,
+    **_HEBREW_MILLION_WORDS,
+}
 _HEBREW_TEEN_TENS = frozenset(_HEBREW_TEEN_TENS_WORDS)
 _HEBREW_MIXED_FRACTION_VALUES = {
     "חצי": 0.5,
@@ -2185,22 +2196,78 @@ def _parse_hebrew_number_run(
     kinds: set[str] = set()
     cursor = start
     first = word_at(start)
+    # A millions part: "מיליון", "שלושה מיליון", "מאה ועשרים מיליון"; a
+    # vav-bound fractional tail right after the scale word scales with it
+    # ("מיליון וחצי" is 1,500,000).
+    if first in _HEBREW_MILLION_WORDS:
+        millions: tuple[int, float] | None = (start + 1, 1.0)
+    else:
+        below = parse_below_thousand(start)
+        if (
+            below is None
+            and first in scale_counts
+            and word_at(start + 1) in _HEBREW_MILLION_WORDS
+        ):
+            below = (start + 1, scale_counts[first], {"unit"})
+        millions = (
+            (below[0] + 1, below[1])
+            if below is not None and word_at(below[0]) in _HEBREW_MILLION_WORDS
+            else None
+        )
+    if millions is not None:
+        cursor, count = millions
+        scale = _HEBREW_MILLION_WORDS[
+            words[cursor - 1]
+            if words[cursor - 1] in _HEBREW_MILLION_WORDS
+            else words[cursor - 1][1:]
+        ]
+        if (
+            cursor < len(words)
+            and has_vav(cursor)
+            and words[cursor][1:] in _HEBREW_MIXED_FRACTION_VALUES
+        ):
+            count += _HEBREW_MIXED_FRACTION_VALUES[words[cursor][1:]]
+            kinds.add("fraction")
+            cursor += 1
+        value += count * scale
+        kinds.add("million")
+        first = word_at(cursor)
+        if first is not None and first.startswith("\u05d5"):
+            first = first[1:]
     if first in _HEBREW_THOUSAND_WORDS:
         value += _HEBREW_THOUSAND_WORDS[first]
         kinds.add("thousand")
-        cursor = start + 1
+        cursor += 1
+        # "אלף וחצי" is 1,500: a tail right after the bare scale word
+        # scales with it.
+        if (
+            cursor < len(words)
+            and has_vav(cursor)
+            and words[cursor][1:] in _HEBREW_MIXED_FRACTION_VALUES
+        ):
+            value += _HEBREW_MIXED_FRACTION_VALUES[words[cursor][1:]] * 1000.0
+            kinds.add("fraction")
+            cursor += 1
     else:
-        count = parse_below_thousand(start)
+        count = parse_below_thousand(cursor)
         if (
             count is None
             and first in scale_counts
-            and word_at(start + 1) in ("אלף", "אלפים")
+            and word_at(cursor + 1) in ("אלף", "אלפים")
         ):
-            count = (start + 1, scale_counts[first], {"unit"})
+            count = (cursor + 1, scale_counts[first], {"unit"})
         if count is not None and word_at(count[0]) in ("אלף", "אלפים"):
             value += count[1] * 1000.0
             kinds.add("thousand")
             cursor = count[0] + 1
+            if (
+                cursor < len(words)
+                and has_vav(cursor)
+                and words[cursor][1:] in _HEBREW_MIXED_FRACTION_VALUES
+            ):
+                value += _HEBREW_MIXED_FRACTION_VALUES[words[cursor][1:]] * 1000.0
+                kinds.add("fraction")
+                cursor += 1
     rest = parse_below_thousand(cursor)
     if rest is not None:
         cursor, amount, rest_kinds = rest
@@ -2302,7 +2369,13 @@ def _iter_hebrew_compound_number_matches(
             parsed = _parse_hebrew_number_run(words, index)
             if parsed is not None:
                 consumed, value, kinds = parsed
-                if consumed >= 2 or kinds & {"tens", "hundred", "thousand", "compound"}:
+                if consumed >= 2 or kinds & {
+                    "tens",
+                    "hundred",
+                    "thousand",
+                    "million",
+                    "compound",
+                }:
                     matches.append(
                         (
                             (
@@ -2485,6 +2558,19 @@ def _iter_hebrew_fraction_word_matches(
                     # tenth of a second: a unit after the word says fraction.
                     or _hebrew_fraction_unit_after(
                         text, match.end("fraction"), match.start()
+                    )
+                    == "fraction"
+                    # An ambiguous case reads as the fraction here only where
+                    # that is its primary reading; the integration records
+                    # both readings as alternatives either way.
+                    or (
+                        _hebrew_fraction_unit_after(
+                            text, match.end("fraction"), match.start()
+                        )
+                        == "ambiguous"
+                        and _hebrew_ambiguous_reading_prefers_duration(
+                            text, match.end("fraction")
+                        )
                     )
                 )
                 loose = bool(match.group("loose_partitive")) and (
@@ -3679,21 +3765,27 @@ _HEBREW_DURATION_VERB_BEFORE_PATTERN = re.compile(
 )
 
 
-def _hebrew_ordinal_context(text: str, start: int, unit_position: int) -> bool:
-    """Whether an ordinal-shaped fraction word before a time unit is an ordinal.
+def _hebrew_ordinal_context(text: str, start: int, unit_position: int) -> str:
+    """How an ordinal-shaped fraction word before a time unit and a temporal phrase reads.
 
-    A listed noun the ordinal modifies right before it says ordinal ("לידה
-    חמישית שנה לאחר"); a verb that governs a duration, with or without a
-    conjunction prefix, says duration ("והמתינה עשירית שנייה לאחר"); failing
-    both, the unit decides -- a fraction of a second, a minute or an hour is
-    a duration ("פעלה עשירית שנייה לאחר"), while a fifth something a year or
-    a month after is an ordinal ("מרפאה חמישית שנה לאחר").
+    "ordinal" where a listed noun the ordinal modifies stands right before
+    it ("לידה חמישית שנה לאחר"); "duration" where a verb that governs a
+    duration does, with or without a conjunction prefix ("והמתינה עשירית
+    שנייה לאחר"); "ambiguous" otherwise -- "מרפאה חמישית שנה לאחר" and
+    "נעדר חמישית שנה לאחר" are both grammatical, and no lexicon settles
+    them. The ambiguous case is recorded with both readings, so an
+    encoding may state either.
     """
     if _search_before(_HEBREW_ORDINAL_CONTEXT_NOUN_PATTERN, text, start) is not None:
-        return True
+        return "ordinal"
     if _search_before(_HEBREW_DURATION_VERB_BEFORE_PATTERN, text, start) is not None:
-        return False
-    return _HEBREW_SMALL_TIME_UNIT_AFTER_PATTERN.match(text, unit_position) is None
+        return "duration"
+    return "ambiguous"
+
+
+def _hebrew_ambiguous_reading_prefers_duration(text: str, unit_position: int) -> bool:
+    """The primary reading of an ambiguous case: a fraction of a second, minute or hour reads as a duration first."""
+    return _HEBREW_SMALL_TIME_UNIT_AFTER_PATTERN.match(text, unit_position) is not None
 
 
 _HEBREW_TEMPORAL_AFTER_UNIT_PATTERN = re.compile(
@@ -3701,35 +3793,74 @@ _HEBREW_TEMPORAL_AFTER_UNIT_PATTERN = re.compile(
 )
 
 
-def _hebrew_fraction_unit_after(text: str, position: int, start: int) -> bool:
+def _hebrew_fraction_unit_after(text: str, position: int, start: int) -> str:
     """Whether a unit of measure after ``position`` says the word before is a fraction.
 
-    A unit that opens a temporal phrase ("שנה לאחר") says so only where the
-    clause before the word says a quantity follows: "ישולם סכום של עשירית
-    שקל לאחר הגשת הבקשה" pays a tenth of a shekel after the application,
-    while "לידה חמישית שנה לאחר הלידה הקודמת" is a fifth birth a year after.
+    "fraction", "no", or "ambiguous". A unit that opens a temporal phrase
+    ("שנה לאחר") says fraction only where the clause before the word says
+    a quantity follows or a duration verb governs it; a listed noun before
+    the word says ordinal; anything else is ambiguous.
     """
     unit = _HEBREW_FRACTION_UNIT_AFTER_PATTERN.match(text, position)
     if unit is None:
-        return False
+        return "no"
     # Only a unit of time opens a temporal phrase; "עשירית שקל לאחר הגשת
     # הבקשה" is a tenth of a shekel whatever follows.
     if _HEBREW_TIME_UNIT_AFTER_PATTERN.match(text, position) is None:
-        return True
+        return "fraction"
     if _HEBREW_TEMPORAL_AFTER_UNIT_PATTERN.match(text, unit.end()) is None:
-        return True
-    # A time unit before a temporal phrase says ordinal only with evidence of
-    # one: no clause context, and a noun the ordinal modifies right before
-    # ("לידה חמישית שנה לאחר"); "המכשיר יופעל עשירית שנייה לאחר קבלת האות"
-    # is a tenth of a second.
-    return _hebrew_fraction_context_before(text, start) or not _hebrew_ordinal_context(
-        text, start, position
-    )
+        return "fraction"
+    if _hebrew_fraction_context_before(text, start):
+        return "fraction"
+    context = _hebrew_ordinal_context(text, start, position)
+    if context == "duration":
+        return "fraction"
+    if context == "ordinal":
+        return "no"
+    return "ambiguous"
+
+
+def _iter_hebrew_ambiguous_ordinal_fraction_matches(
+    text: str,
+) -> list[tuple[tuple[int, int], float, float]]:
+    """Ordinal-shaped fraction words read both ways: (span, primary, alternative).
+
+    "מרפאה חמישית שנה לאחר" is a fifth clinic a year after, or a fifth of
+    a year after; both are grammatical and nothing in the text settles it.
+    The primary reading is the duration for a fraction of a second, a
+    minute or an hour, the ordinal otherwise; the other is recorded as an
+    alternative the encoding may state instead.
+    """
+    matches: list[tuple[tuple[int, int], float, float]] = []
+    for match in _HEBREW_FRACTION_WORD_PATTERN.finditer(text):
+        word = match.group("fraction")
+        if (
+            match.group("count")
+            or match.group("article")
+            or word in _HEBREW_UNAMBIGUOUS_FRACTION_WORDS
+            or word not in _HEBREW_FRACTION_VALUES
+            or word not in _HEBREW_ORDINAL_WORDS
+        ):
+            continue
+        if (
+            _hebrew_fraction_unit_after(text, match.end("fraction"), match.start())
+            != "ambiguous"
+        ):
+            continue
+        fraction = _HEBREW_FRACTION_VALUES[word]
+        ordinal = round(1.0 / fraction)
+        span = (match.start(), match.end("fraction"))
+        if _hebrew_ambiguous_reading_prefers_duration(text, match.end("fraction")):
+            matches.append((span, fraction, float(ordinal)))
+        else:
+            matches.append((span, float(ordinal), fraction))
+    return matches
 
 
 # Every word the numeric grammar reads, for the guards below.
 _HEBREW_STRUCTURAL_NUMBER_WORD_ANY = _hebrew_alternation(
     _HEBREW_NUMBER_VOCABULARY
+    | set(_HEBREW_MILLION_WORDS)
     | set(_HEBREW_TEEN_UNIT_VALUES)
     | set(_HEBREW_COUNTED_FRACTION_VALUES)
     | set(_HEBREW_FRACTION_COUNT_VALUES)
@@ -11254,6 +11385,28 @@ def _tokenize_numeric_occurrences_from_text(
     # more" is as incomplete as one that omits a printed 3. Teens arrive as one
     # span ahead of their halves, and the overlap test keeps them atomic here
     # as it does for grounding.
+    # An ordinal-shaped fraction word the text leaves ambiguous ("מרפאה
+    # חמישית שנה לאחר") is recorded with both readings: either grounds, and
+    # the recall obligation is met by either.
+    for span, primary, alternative in _iter_hebrew_ambiguous_ordinal_fraction_matches(
+        cleaned
+    ):
+        if _span_overlaps(span, grounding_spans) or _span_overlaps(
+            span, inventory_spans
+        ):
+            continue
+        collector.add_grounding(
+            cleaned_view, span, primary, alternative_values=(alternative,)
+        )
+        collector.add_grounding(
+            cleaned_view, span, alternative, alternative_values=(primary,)
+        )
+        collector.add_inventory(
+            cleaned_view, span, primary, alternative_values=(alternative,)
+        )
+        grounding_spans.append(span)
+        inventory_spans.append(span)
+
     hebrew_word_matches = _iter_hebrew_number_word_matches(cleaned)
     for span, value in hebrew_word_matches:
         # "twenty-three percent" is the rate 0.23, grounded and recalled the
