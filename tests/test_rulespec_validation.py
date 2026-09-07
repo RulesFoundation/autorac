@@ -15266,12 +15266,21 @@ def test_an_ascii_fraction_before_a_percent_word_is_one_rate():
 def test_hebrew_compound_scanning_is_linear_on_long_prose():
     import time
 
+    from axiom_encode.harness.validator_pipeline import (
+        _iter_hebrew_compound_number_matches,
+    )
+
     for repeats in (1000, 2000):
         text = "הוראות חוק זה יחולו על העובד " * repeats
         started = time.perf_counter()
-        extract_numbers_from_text(text)
+        matches = _iter_hebrew_compound_number_matches(text)
         elapsed = time.perf_counter() - started
+        assert matches == []
         assert elapsed < 1.0, (repeats, elapsed)
+    started = time.perf_counter()
+    extract_numbers_from_text("הוראות חוק זה יחולו על העובד " * 2000)
+    elapsed = time.perf_counter() - started
+    assert elapsed < 3.0, elapsed
 
 
 def test_an_ascii_mixed_percentage_is_one_rate():
@@ -15316,13 +15325,28 @@ def test_a_structural_reference_takes_the_whole_number_grammar():
 def test_hebrew_compound_scanning_is_linear_on_teen_only_words():
     import time
 
-    for repeats in (10000, 20000):
+    from axiom_encode.harness.validator_pipeline import (
+        _iter_hebrew_compound_number_matches,
+    )
+
+    # "שנים" is a two only inside a teen; on its own it is "years", and a
+    # source that says "many years" twenty thousand times is not twenty
+    # thousand starts to parse from. The pass is timed on its own, because
+    # the whole pipeline's time on a CI runner is not the pass's; it took
+    # 1.6-2.0 s there against a 1.5 s bound while the pass itself took 0.02.
+    assert 2.0 not in extract_numbers_from_text("שנים רבות " * 2000)
+    for repeats in (20000, 40000):
         text = "שנים רבות " * repeats
         started = time.perf_counter()
-        grounded = extract_numbers_from_text(text)
+        matches = _iter_hebrew_compound_number_matches(text)
         elapsed = time.perf_counter() - started
-        assert 2.0 not in grounded
-        assert elapsed < 1.5, (repeats, elapsed)
+        assert matches == []
+        assert elapsed < 1.0, (repeats, elapsed)
+    started = time.perf_counter()
+    grounded = extract_numbers_from_text("שנים רבות " * 20000)
+    elapsed = time.perf_counter() - started
+    assert 2.0 not in grounded
+    assert elapsed < 6.0, elapsed
 
 
 def test_a_counted_fraction_after_tens_or_hundreds_is_a_fractional_tail():
@@ -15743,6 +15767,65 @@ def test_the_fraction_pass_scans_thousands_of_phrases_in_linear_time():
     assert len(matches) == 4000
     assert all(abs(value - 0.2) < 1e-12 for _span, value in matches)
     assert elapsed < 2.0, elapsed
+
+
+def test_a_prefixed_percent_noun_is_still_a_rate():
+    for text, expected in (
+        ("התשלום יוגדל באחוז אחד מההכנסה", 0.01),
+        ("התשלום יוגדל באחוז וחצי מההכנסה", 0.015),
+        ("התשלום יוגדל בשני אחוזים", 0.02),
+        ("הקצבה תופחת באחוזים האמורים בסעיף 5, כלומר בשלושה אחוזים", 0.03),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert expected in grounded, (text, grounded)
+        assert not ({1.0, 0.5, 2.0, 3.0} & _hebrew_recall(text)), (
+            text,
+            _hebrew_recall(text),
+        )
+        assert expected in _hebrew_recall(text), (text, _hebrew_recall(text))
+
+
+def test_a_reference_label_is_a_whole_number():
+    text = "לפי סעיפים 1, 2, 4, 1,500 עד 2,500 דולר ישולמו לכל ילד"
+    assert _hebrew_recall(text) == {1500.0, 2500.0}
+    assert {1.0, 2.0, 4.0} <= extract_numbers_from_text(text)
+    assert _hebrew_recall("לפי סעיפים 1, 2, 1,500 שקלים ישולמו") == {1500.0}
+    assert _hebrew_recall("לפי סעיפים 1, 2 ו־3, 2,500 שקלים ישולמו") == {2500.0}
+    assert _hebrew_recall("לפי סעיף 1, 2.5 נקודות זיכוי יינתנו") == {2.5}
+
+
+def test_a_range_of_rates_shares_its_percent_noun():
+    for text in (
+        "שיעור המס יהיה בין 2 ל־3 אחוזים",
+        "שיעור המס יהיה בין שניים לשלושה אחוזים",
+        "שיעור המס יהיה 2 עד 3 אחוזים",
+        "שיעור המס יהיה מ־2 עד 3 אחוזים",
+        "שיעור המס יהיה 2 או 3 אחוזים",
+        "שיעור המס יהיה בין שניים ל־3 אחוזים",
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert {0.02, 0.03} <= grounded, (text, grounded)
+        assert _hebrew_recall(text) == {0.02, 0.03}, (text, _hebrew_recall(text))
+    # A number before the noun's clause is not a lower endpoint.
+    assert _hebrew_recall("לפי סעיף 5 ישולמו 3 אחוזים") == {0.03}
+    assert _hebrew_recall("בשיעור של עד 3 אחוזים") == {0.03}
+    assert _hebrew_recall("ישולמו 2 שקלים ל־3 אחוזים מהעובדים") == {2.0, 0.03}
+
+
+def test_a_preposition_before_a_he_noun_after_an_ordinal_is_no_partitive():
+    text = "לידה חמישית מהיריון נפרד מזכה במענק של 100 שקלים"
+    grounded = extract_numbers_from_text(text)
+    assert 5.0 in grounded and 0.2 not in grounded, grounded
+    assert _hebrew_recall(text) == {5.0, 100.0}
+    # The partitive still reads where the clause or the noun says fraction.
+    for text in (
+        "הסכום יהיה חמישית מהמשכורת",
+        "חמישית מההכנסה תנוכה מהקצבה",
+        "ישולם, חמישית מהתקציב",
+        "בשיעור של חמישית מההכנסה",
+        "לידה חמישית מהשכר הממוצע",
+    ):
+        assert _hebrew_recall(text) == {0.2}, (text, _hebrew_recall(text))
 
 
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():

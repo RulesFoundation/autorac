@@ -23126,6 +23126,30 @@ rules:
         assert rewritten is not None
         assert "א" in rewritten
 
+    @pytest.mark.parametrize("tag", ["!!omap", "!!pairs"])
+    def test_generated_yaml_unescape_compares_tuple_alias_graphs_in_linear_time(
+        self, tag
+    ):
+        # The safe loader builds !!omap and !!pairs as lists of tuples. A
+        # tuple compared by Python's own equality walks every alias path
+        # again -- depths 22, 24 and 26 took 0.16, 0.67 and 2.68 seconds --
+        # so it is a node of the memoized comparison like a list.
+        import time
+
+        lines = ["a0: &a0 [0]"]
+        for level in range(1, 33):
+            lines.append(
+                f"a{level}: &a{level} {tag} "
+                f"[{{x: *a{level - 1}}}, {{y: *a{level - 1}}}]"
+            )
+        lines.append('summary: "\\u05d0"')
+        text = "\n".join(lines) + "\n"
+        started = time.perf_counter()
+        rewritten = _unescape_non_ascii_yaml_escapes(text)
+        assert time.perf_counter() - started < 2.0
+        assert rewritten is not None
+        assert "א" in rewritten
+
     def test_generated_yaml_unescape_declines_a_document_its_constructor_rejects(self):
         # An unquoted date that does not exist raises ValueError from the
         # constructor; the rewrite declines and the companion loader reports.

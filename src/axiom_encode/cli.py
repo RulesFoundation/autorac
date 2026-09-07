@@ -50153,7 +50153,10 @@ def _yaml_documents_equivalent(
     key = (id(left), id(right))
     if key in memo:
         return memo[key]
-    if isinstance(left, (dict, list)) or isinstance(right, (dict, list)):
+    # The safe loader builds !!omap and !!pairs as lists of tuples; a tuple
+    # is a node like a list, compared through the memo, never by Python's
+    # own recursive equality, which would walk every alias path again.
+    if isinstance(left, (dict, list, tuple)) or isinstance(right, (dict, list, tuple)):
         if key in active:
             raise _CyclicYamlDocument()
         active.add(key)
@@ -50163,7 +50166,11 @@ def _yaml_documents_equivalent(
                     _yaml_documents_equivalent(left[k], right[k], memo, active)
                     for k in left
                 )
-            elif isinstance(left, list) and isinstance(right, list):
+            elif (
+                isinstance(left, (list, tuple))
+                and isinstance(right, (list, tuple))
+                and type(left) is type(right)
+            ):
                 result = len(left) == len(right) and all(
                     _yaml_documents_equivalent(a, b, memo, active)
                     for a, b in zip(left, right, strict=True)

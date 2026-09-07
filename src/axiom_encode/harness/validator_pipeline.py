@@ -2012,7 +2012,7 @@ _HEBREW_TEEN_JOIN_PATTERN = re.compile("^\\s*[-\u05be]\\s*$")
 _HEBREW_PERCENT_WORD_PATTERN = re.compile("\\s+\u05d4?אחוז(?:ים|י)?(?![\u0590-\u05ff])")
 # The percent noun may precede its count -- "אחוז אחד" is one percent.
 _HEBREW_PERCENT_NOUN_BEFORE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])\u05d4?אחוז(?:ים)?\\s+$"
+    "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}\u05d4?אחוז(?:ים)?\\s+$"
 )
 
 
@@ -2420,6 +2420,23 @@ def _search_before(
     return pattern.search(text, max(0, end - window), end)
 
 
+_HEBREW_CLAUSE_BOUNDARY_CHARACTERS = frozenset(",;:.()[]\"'\u05f3\u05f4-\u2013\u2014\n")
+
+
+def _hebrew_fraction_context_before(text: str, start: int) -> bool:
+    """Whether the clause before ``start`` says a fraction follows.
+
+    A copula, a quantity word or a verb of paying, receiving or deducting
+    right before it does; so does a clause start -- the beginning of the
+    text or a punctuation mark -- where "חמישית מההכנסה" opens a clause. A
+    noun there ("לידה", "דרגה") leaves an ordinal-shaped word an ordinal.
+    """
+    if _search_before(_HEBREW_FRACTION_COPULA_PATTERN, text, start) is not None:
+        return True
+    before = text[:start].rstrip()
+    return not before or before[-1] in _HEBREW_CLAUSE_BOUNDARY_CHARACTERS
+
+
 def _iter_hebrew_fraction_word_matches(
     text: str,
 ) -> list[tuple[tuple[int, int], float]]:
@@ -2443,15 +2460,29 @@ def _iter_hebrew_fraction_word_matches(
                 # third birth that qualifies and "דרגה חמישית המקנה" a fifth
                 # grade that confers. A bare מ- or ה-word after the fraction
                 # word counts only when a copula or a quantity word precedes.
-                loose = bool(match.group("loose_partitive")) and (
-                    _search_before(_HEBREW_FRACTION_COPULA_PATTERN, text, match.start())
-                    is not None
-                    or _HEBREW_FRACTION_BASE_AMOUNT_PATTERN.match(
+                names_an_amount = (
+                    _HEBREW_FRACTION_BASE_AMOUNT_PATTERN.match(
                         text, match.end("fraction")
                     )
                     is not None
                 )
-                if not count and not match.group("partitive") and not loose:
+                loose = bool(match.group("loose_partitive")) and (
+                    _hebrew_fraction_context_before(text, match.start())
+                    or names_an_amount
+                )
+                # "מה" before a word is the partitive "of the" or the
+                # preposition מ before a noun that begins with ה: "לידה חמישית
+                # מהיריון נפרד" is a fifth birth from a separate pregnancy.
+                # It says fraction where the clause does (a copula, a verb of
+                # paying, a clause start) or where the noun names an amount
+                # ("מההכנסה"); "מן" and the percent noun always do.
+                partitive = match.group("partitive") or ""
+                strict = bool(partitive) and (
+                    not partitive.lstrip().startswith("\u05de\u05d4")
+                    or names_an_amount
+                    or _hebrew_fraction_context_before(text, match.start())
+                )
+                if not count and not strict and not loose:
                     continue
             value = _HEBREW_FRACTION_VALUES[word]
         if count:
@@ -2468,6 +2499,7 @@ _HEBREW_PERCENT_PHRASE_PATTERN = re.compile(
     "(?<![\u0590-\u05ff\\d.,])"
     "(?:(?P<digits>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)\\s+"
     "|(?:(?P<whole>\\d+)\\s+)?(?P<numerator>\\d+)\\s*[/\u2044]\\s*(?P<denominator>\\d+)\\s+)?"
+    "(?P<noun_prefix>[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2})"
     "(?P<noun>\u05d4?אחוז(?:ים)?)"
     "(?:\\s+\u05d5(?:(?P<tail>"
     + "|".join(
@@ -2657,6 +2689,101 @@ def _iter_hebrew_percent_phrase_matches(
         if negative:
             value = -value
         matches.append(((count_start, match.end()), value / 100))
+    return matches
+
+
+# A range of rates shares its percent noun: "בין 2 ל־3 אחוזים", "בין שניים
+# לשלושה אחוזים", "2 עד 3 אחוזים", "מ־2 עד 3 אחוזים". The passes above read
+# the upper endpoint with the noun; this reads the lower one as a rate too.
+_HEBREW_PERCENT_NOUN_ANYWHERE_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}\u05d4?אחוז(?:ים)?"
+    "(?![\u0590-\u05ff])"
+)
+_HEBREW_DIGITS_BEFORE_PATTERN = re.compile(
+    "(?<![\\d.,])(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)\\s+$"
+)
+# The join between the endpoints. "עד", "ועד", "לבין" and "או" make a range
+# or a pair of rates on their own; "ל־", a ל prefix on a spelled endpoint,
+# "ו־" and a dash do so only under "בין" or "מ־" before the lower endpoint.
+# The cleaner detaches a maqaf into a space, so "ל־3" arrives here as "ל 3".
+_HEBREW_RANGE_JOIN_BEFORE_PATTERN = re.compile(
+    "(?:(?<![\u0590-\u05ff])(?P<free>עד|ועד|לבין|או)\\s+"
+    "|(?<![\u0590-\u05ff])(?P<bound>[\u05dc\u05d5])(?:\u05be|\\s)\\s*"
+    "|\\s(?P<dash>[-\u2013\u2014])\\s)$"
+)
+_HEBREW_RANGE_LOWER_BOUND_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])(?:בין|\u05de\u05be?|החל \u05de\u05be?)\\s*$"
+)
+
+
+def _hebrew_number_run_ending_at(
+    text: str, end: int, tokens: "_HebrewWordTokens"
+) -> tuple[int, float, str] | None:
+    """The longest spelled number ending flush at ``end``: (start, value, first word)."""
+    run = _hebrew_word_run_before(text, end, tokens=tokens)
+    for width in range(len(run), 0, -1):
+        words = [token.group(0) for token in run[-width:]]
+        parsed = _parse_hebrew_number_run(words)
+        if parsed is not None and parsed[0] == len(words):
+            return run[-width].start(), parsed[1], words[0]
+    return None
+
+
+def _iter_hebrew_percent_range_lower_matches(
+    text: str,
+) -> list[tuple[tuple[int, int], float]]:
+    """The lower endpoint of a range of rates, as a rate, with its span."""
+    matches: list[tuple[tuple[int, int], float]] = []
+    tokens: _HebrewWordTokens | None = None
+    for noun in _HEBREW_PERCENT_NOUN_ANYWHERE_PATTERN.finditer(text):
+        if tokens is None:
+            tokens = _HebrewWordTokens(text)
+        # The upper endpoint, printed or spelled, right before the noun.
+        upper_first: str | None = None
+        digits = _search_before(_HEBREW_DIGITS_BEFORE_PATTERN, text, noun.start(), 32)
+        if digits is not None:
+            upper_start = digits.start("number")
+        else:
+            spelled = _hebrew_number_run_ending_at(text, noun.start(), tokens)
+            if spelled is None:
+                continue
+            upper_start, _value, upper_first = spelled
+        # The join before it.
+        join = _search_before(_HEBREW_RANGE_JOIN_BEFORE_PATTERN, text, upper_start, 12)
+        if join is not None:
+            lower_end = join.start()
+            needs_bound = join.group("free") is None
+        elif (
+            upper_first is not None
+            and upper_first.startswith("\u05dc")
+            and _strip_hebrew_number_prefix(
+                upper_first[1:].lstrip("\u05be"), _HEBREW_RUN_START_VOCABULARY
+            )
+            is not None
+        ):
+            lower_end = len(text[:upper_start].rstrip())
+            needs_bound = True
+        else:
+            continue
+        # The lower endpoint, printed or spelled, right before the join.
+        lower_digits = _search_before(
+            _HEBREW_DIGITS_BEFORE_PATTERN, text, lower_end, 32
+        )
+        if lower_digits is not None:
+            lower_span = lower_digits.span("number")
+            lower_value = float(lower_digits.group("number").replace(",", ""))
+        else:
+            spelled = _hebrew_number_run_ending_at(text, lower_end, tokens)
+            if spelled is None:
+                continue
+            lower_span = (spelled[0], len(text[:lower_end].rstrip()))
+            lower_value = spelled[1]
+        if needs_bound and (
+            _search_before(_HEBREW_RANGE_LOWER_BOUND_PATTERN, text, lower_span[0], 16)
+            is None
+        ):
+            continue
+        matches.append((lower_span, lower_value / 100))
     return matches
 
 
@@ -2934,9 +3061,12 @@ _HEBREW_STRUCTURAL_NUMBER_WORD_LIST = (
     + ")?"
 )
 # A reference label: digits, an optional letter, and any parenthesized
-# labels ("1", "1א", "1(א)", "2(ב)(3)").
+# labels ("1", "1א", "1(א)", "2(ב)(3)"). The digits are a whole number: the
+# "1" of "1,500" and the "2" of "2,500" are no labels, so "1, 2, 4, 1,500 עד
+# 2,500 דולר" ends its list at 4.
 _HEBREW_STRUCTURAL_DIGIT = (
-    "\\d+[\u05d0-\u05ea]?(?:\\((?:\\d+[\u05d0-\u05ea]?|[\u05d0-\u05ea]{1,2})\\))*"
+    "\\d+(?![,.]\\d)[\u05d0-\u05ea]?"
+    "(?:\\((?:\\d+[\u05d0-\u05ea]?|[\u05d0-\u05ea]{1,2})\\))*"
 )
 _HEBREW_STRUCTURAL_UNIT_NOUNS = (
     'שקלים|שקל|ש"ח|ש״ח|₪|%|דולר|דולרים|יורו|אירו|ליש"ט|לירות|אגורות|ימים|יום|'
@@ -9865,6 +9995,22 @@ def _tokenize_numeric_occurrences_from_text(
         match.span() for match in _FRACTION_SLASH_PATTERN.finditer(cleaned)
     ]
     for span, rate in _iter_hebrew_percent_phrase_matches(cleaned):
+        if _span_overlaps(span, grounding_spans) or _span_overlaps(
+            span, inventory_spans
+        ):
+            continue
+        add_both(
+            cleaned_view,
+            span,
+            rate,
+            source_value=rate * 100,
+            force_rate_context=True,
+            requires_rate_context=True,
+        )
+        grounding_spans.append(span)
+        inventory_spans.append(span)
+
+    for span, rate in _iter_hebrew_percent_range_lower_matches(cleaned):
         if _span_overlaps(span, grounding_spans) or _span_overlaps(
             span, inventory_spans
         ):
