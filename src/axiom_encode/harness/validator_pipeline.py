@@ -1984,7 +1984,9 @@ _HEBREW_MIXED_FRACTION_VALUES = {
     "חצי": 0.5,
     "מחצית": 0.5,
     "שליש": 1.0 / 3.0,
+    "שלישית": 1.0 / 3.0,
     "רבע": 0.25,
+    "רביעית": 0.25,
     "חמישית": 0.2,
     "שישית": 1.0 / 6.0,
     "שביעית": 1.0 / 7.0,
@@ -2853,13 +2855,14 @@ def _hebrew_printed_endpoint_value(match: "re.Match[str]") -> float | None:
 
 
 # The join between the endpoints. "עד", "ועד", "לבין" and "או" make a range
-# or a pair of rates on their own; "ל־", a ל prefix on a spelled endpoint,
-# "ו־" and a dash do so only under "בין" or "מ־" before the lower endpoint.
+# or a pair of rates on their own; "ל־", a ל prefix on a spelled endpoint
+# and "ו־" do so only under "בין" or "מ־" before the lower endpoint. A
+# spaced dash is no join: in a tax schedule row ("על כל שקל חדש מ־84,120 –
+# 10%") it separates a threshold from its rate.
 # The cleaner detaches a maqaf into a space, so "ל־3" arrives here as "ל 3".
 _HEBREW_RANGE_JOIN_BEFORE_PATTERN = re.compile(
     "(?:(?<![\u0590-\u05ff])(?P<free>עד|ועד|לבין|או)\\s+"
-    "|(?<![\u0590-\u05ff])(?P<bound>[\u05dc\u05d5])(?:\u05be|[-\u2013]|\\s)\\s*"
-    "|\\s(?P<dash>[-\u2013\u2014])\\s)$"
+    "|(?<![\u0590-\u05ff])(?P<bound>[\u05dc\u05d5])(?:\u05be|[-\u2013]|\\s)\\s*)$"
 )
 _HEBREW_RANGE_LOWER_BOUND_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])(?:בין|\u05de(?:\u05be|-)?|החל \u05de(?:\u05be|-)?)\\s*$"
@@ -2987,8 +2990,14 @@ _EUROPEAN_MONEY_AMOUNT_PATTERN = re.compile(
     r"(?:\s*\]\s*\d+)?\s*(?:euro|euros|eur\b|€)",
     re.IGNORECASE,
 )
+# A hyphen after a Hebrew letter joins a prefix to the number ("ל-3%") and
+# is no sign; a sign no letter precedes still negates ("-3%").
+_PERCENTAGE_RAW_NUMBER_UNSIGNED = (
+    r"(?:\d{1,3}(?:[.\u00a0\u202f ]\d{3})+|\d+)(?:\s*[,.]\d{1,4})?|\d+\.\d+"
+)
 _DIRECT_PERCENTAGE_PATTERN = re.compile(
-    rf"(?P<number>{_PERCENTAGE_RAW_NUMBER})\s*(?:%|\bp\.?\s*c\.?\b)",
+    rf"(?P<number>(?:(?<![\u05d0-\u05ea])-)?(?:{_PERCENTAGE_RAW_NUMBER_UNSIGNED}))"
+    r"\s*(?:%|\bp\.?\s*c\.?\b)",
     re.IGNORECASE,
 )
 _PERCENT_MARKER_AFTER_NUMBER_PATTERN = re.compile(
@@ -3553,6 +3562,7 @@ _HEBREW_STRUCTURAL_REFERENCE_PATTERN = re.compile(
     "(?:" + _HEBREW_STRUCTURAL_PLURAL_NOUNS + ")\\s+"
     "(?:"
     + _HEBREW_STRUCTURAL_DIGIT_ITEM
+    + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
     + "(?:\\s*,\\s*"
     + _HEBREW_STRUCTURAL_DIGIT_ITEM
     + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
@@ -3564,19 +3574,20 @@ _HEBREW_STRUCTURAL_REFERENCE_PATTERN = re.compile(
     + _HEBREW_STRUCTURAL_DIGIT_ITEM
     + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
     + ")?"
-    "|" + _HEBREW_STRUCTURAL_NUMBER_WORD_LIST + ")"
+    "|" + _HEBREW_STRUCTURAL_NUMBER_WORD_LIST + _HEBREW_STRUCTURAL_NOT_A_QUANTITY + ")"
     # A singular noun takes one item, or a pair joined by a conjunction --
     # never a comma, which ends the reference ("סעיף 1, 100 שקלים").
     "|(?:" + _HEBREW_STRUCTURAL_SINGULAR_NOUNS + ")\\s+"
     "(?:"
     + _HEBREW_STRUCTURAL_DIGIT_ITEM
+    + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
     + "(?:\\s*"
     + _HEBREW_STRUCTURAL_LIST_JOIN
     + "\\s*"
     + _HEBREW_STRUCTURAL_DIGIT_ITEM
     + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
     + ")?"
-    "|" + _HEBREW_STRUCTURAL_NUMBER_WORD + ")"
+    "|" + _HEBREW_STRUCTURAL_NUMBER_WORD + _HEBREW_STRUCTURAL_NOT_A_QUANTITY + ")"
     ")"
     "(?![\u0590-\u05ff\\d])"
 )
@@ -3629,6 +3640,10 @@ def _hebrew_structural_word_reference_spans(text: str) -> list[tuple[int, int]]:
             continue
         end = tokens[parsed[0] - 1].end()
         if end < len(text) and text[end].isdigit():
+            continue
+        # "תוספת שתי נקודות זיכוי" is a supplement of two credit points: a
+        # number with a unit after it is a quantity, whatever noun precedes.
+        if _HEBREW_UNIT_AFTER_PATTERN.match(text, end) is not None:
             continue
         spans.append((match.start(), end))
     return spans
@@ -6385,7 +6400,7 @@ _HEBREW_FRACTION_BEFORE_SECOND_PATTERN = re.compile(
 )
 _HEBREW_MEASURED_SECOND_BEFORE_PATTERN = re.compile(
     "(?:\\d|(?<![\u0590-\u05ff])(?:כל|בכל|תוך|בתוך|למשך|במשך|מדי|לאחר|אחרי|כעבור|"
-    "בחלוף|מקץ|לפני|עד))\\s+$"
+    "בחלוף|מקץ|לפני|עד|על|מעל|לפחות))\\s+$"
 )
 _HEBREW_MEASURED_SECOND_AFTER_PATTERN = re.compile("\\s+אח[תד](?![\u0590-\u05ff])")
 

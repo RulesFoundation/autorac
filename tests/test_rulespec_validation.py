@@ -16207,6 +16207,69 @@ def test_a_measured_second_after_a_prefixed_fraction_or_a_temporal_preposition()
     assert {2.0, 100.0} <= _hebrew_recall(text)
 
 
+def test_a_schedule_row_dash_is_no_range_join():
+    text = "על כל שקל חדש מ־84,120 – 10%"
+    grounded = extract_numbers_from_text(text)
+    assert {84120.0, 0.1} <= grounded, grounded
+    assert 841.2 not in grounded
+    assert _hebrew_recall(text) == {84120.0, 0.1}
+    assert _hebrew_recall("על כל שקל חדש מ-84,120 – 10%") == {84120.0, 0.1}
+
+
+def test_a_supplement_with_a_unit_is_a_quantity_not_a_reference():
+    for text, expected in (
+        ("תוספת 2 שקלים לכל ילד", {2.0}),
+        ("תוספת שתי נקודות זיכוי", {2.0}),
+        ("תוספת שלושה ילדים", {3.0}),
+        ("סעיף 5 שנים", {5.0}),
+    ):
+        assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+    # A genuine schedule reference stays structural.
+    assert _hebrew_recall("לפי התוספת השנייה ישולם סכום של 100 שקלים") == {100.0}
+    assert _hebrew_recall("לפי תוספת 2 ישולם סכום של 100 שקלים") == {100.0}
+
+
+def test_a_prefix_hyphen_before_a_symbol_percentage_is_no_sign():
+    for text, expected in (
+        ("שיעור המס יהיה מ-2 ל-3%", {0.02, 0.03}),
+        ("שיעור המס יהיה ל-3%", {0.03}),
+        ("שיעור המס יהיה -3%", {-0.03}),
+        ("שיעור המס יהיה בין -2 ל-3%", {-0.02, 0.03}),
+    ):
+        assert {round(v, 12) for v in _hebrew_recall(text)} == expected, (
+            text,
+            _hebrew_recall(text),
+        )
+
+
+def test_a_duration_limit_before_a_measured_second():
+    for text in ("משך ההמתנה לא יעלה על שנייה אחת", "משך ההמתנה יהיה לפחות שנייה אחת"):
+        assert _hebrew_recall(text) == {1.0}, (text, _hebrew_recall(text))
+        assert 2.0 not in extract_numbers_from_text(text), text
+    assert {2.0, 100.0} <= _hebrew_recall("בעד דירה שנייה אחת ישולם מס של 100 שקלים")
+    assert _hebrew_recall("לידה שנייה מזכה במענק של 100 שקלים") == {2.0, 100.0}
+
+
+def test_a_range_endpoint_takes_every_fraction_word():
+    for text, expected in (
+        ("שיעור המס יהיה בין חצי לשלישית אחוז", {0.005, 1.0 / 300.0}),
+        ("שיעור המס יהיה שמינית עד רביעית אחוז", {0.00125, 0.0025}),
+        ("שיעור המס יהיה בין חצי לשליש אחוז", {0.005, 1.0 / 300.0}),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert all(any(abs(v - e) < 1e-12 for v in grounded) for e in expected), (
+            text,
+            grounded,
+        )
+        assert not ({0.5, 8.0, 0.125, 3.0, 4.0} & _hebrew_recall(text)), (
+            text,
+            _hebrew_recall(text),
+        )
+        assert {round(v, 12) for v in _hebrew_recall(text)} == {
+            round(e, 12) for e in expected
+        }, (text, _hebrew_recall(text))
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
