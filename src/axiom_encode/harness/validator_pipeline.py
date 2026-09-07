@@ -2571,6 +2571,12 @@ _HEBREW_RELATIVE_PARTICIPLES = (
     "רוכשים|מנהל|מנהלת|מנהלים|מבצע|מבצעת|מבצעים|חייב|חייבת|חייבים|זכאי|"
     "זכאית|זכאים|עוסק|עוסקת|עוסקים|מחייב|מחייבת"
 )
+_HEBREW_MONEY_POSSESSOR_FOLLOWERS = (
+    "של|בסך|בסכום|בגובה|בשיעור|בשווי|עד|לפחות|לא|שלא|שאינו|שאינה|לכל|"
+    "יהיה|יהא|תהיה|תהא|הוא|היא|הם|הן|"
+    "\u05d4(?:כולל|כוללת|שנתי|שנתית|חודשי|חודשית|בסיסי|בסיסית|מרבי|מרבית|"
+    "מזערי|מזערית|מינימלי|מינימלית|מקסימלי|מקסימלית|ממוצע|ממוצעת)"
+)
 _HEBREW_MONEY_CONTEXT_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9\u05d4]{0,2}(?:(?:"
     + _HEBREW_AMOUNT_NOUN_STEMS.replace("|מס|", "|")
@@ -2581,9 +2587,14 @@ _HEBREW_MONEY_CONTEXT_PATTERN = re.compile(
     # One articled possessor may qualify the noun ("מחזור העסקאות", "שכר
     # העובד", "סכום המענק", "הכנסת המפעל"); a relative participle ("המפעל
     # המעסיק לפחות …") opens a clause of its own and binds nothing.
+    # A possessor is followed by "של", an articled adjective, a copula or a
+    # threshold phrase; a bare preposition after it ("המחולקת בין", "המיועד
+    # ל־") complements a participle and binds nothing.
     "(?:\\s+(?!\u05d4(?:"
     + _HEBREW_RELATIVE_PARTICIPLES
-    + ")(?![\u0590-\u05ff]))\u05d4[\u0590-\u05ff]{2,}){0,1}"
+    + ")(?![\u0590-\u05ff]))\u05d4[\u0590-\u05ff]{2,}(?=\\s+(?:"
+    + _HEBREW_MONEY_POSSESSOR_FOLLOWERS
+    + ")(?![\u0590-\u05ff]))){0,1}"
     "(?:\\s+\u05d4?(?:" + _HEBREW_MONEY_CONTEXT_CONNECTORS + ")[\u05be-]?){0,5}"
     "(?:\\s*(?<![\\d.,])[-\u2212]?(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?"
     "(?:\\s+\\d+\\s*[/\u2044]\\s*\\d+)?)?\\s*$"

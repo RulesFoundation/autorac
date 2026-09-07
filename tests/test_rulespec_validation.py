@@ -17627,6 +17627,29 @@ def test_a_dative_lamed_marks_a_beneficiary_count_not_an_amount():
     assert _hebrew_recall("קנס של עד 3 מיליון ו־30 ימי מאסר") == {3_000_000.0, 30.0}
 
 
+def test_a_participle_with_a_prepositional_complement_binds_nothing():
+    for text in (
+        "הקצבה המחולקת בין 3 אלפים ו־200 עובדים",
+        "הקצבה המחולקת בין שלושה אלפים ומאתיים עובדים",
+        "המענק המחולק בין 3 אלפים ו־200 עובדים",
+        "המענק המחולק בין שלושה אלפים ומאתיים עובדים",
+        "התקציב המוקצה ב־3 אלפים ו־200 יישובים",
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == {3_200.0}, (text, recall)
+        assert not ({3_000.0, 200.0} & extract_numbers_from_text(text)), text
+    # A possessor followed by "של", an adjective or a threshold still binds.
+    assert _hebrew_recall("הקצבה של 3 מיליון ו־20 עובדים") == {3_000_000.0, 20.0}
+    assert _hebrew_recall("קצבת העובד השנתית של 3 מיליון ו־20 עובדים") == {
+        3_000_000.0,
+        20.0,
+    }
+    assert _hebrew_recall("סכום המענק לא יעלה על 3 מיליון ו־30 ימי מאסר") == {
+        3_000_000.0,
+        30.0,
+    }
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
