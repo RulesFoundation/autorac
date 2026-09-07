@@ -18171,6 +18171,34 @@ def test_a_shared_scale_unit_is_read_after_printed_lower_scales():
         assert not ({3_000_000.0, 200_000.0} & extract_numbers_from_text(text)), text
 
 
+def test_a_fully_spelled_continuation_before_a_percent_unit_is_one_rate():
+    for text, expected in (
+        ("סכום של 3 מיליון ושני אלפים וחמש מאות אחוזים", {3_000_000.0, 25.0}),
+        ("סכום של 3 מיליון ושני אלפים וחמש מאות%", {3_000_000.0, 25.0}),
+        ("סכום של שלושת אלפים ושלוש מאות ועשרים אחוזים", {3_000.0, 3.2}),
+        ("סכום של 3 מיליון ועשרים אחוזים", {3_000_000.0, 0.2}),
+        ("השיעור הוא 3 מיליון ושני אלפים וחמש מאות אחוזים", {30_025.0}),
+    ):
+        recall = {round(v, 6) for v in _hebrew_recall(text)}
+        assert recall == expected, (text, recall)
+    assert not (
+        {2_000.0, 5.0, 0.05}
+        & extract_numbers_from_text("סכום של 3 מיליון ושני אלפים וחמש מאות אחוזים")
+    )
+
+
+def test_a_spelled_lower_endpoint_with_a_remainder_shares_the_unit():
+    for text, expected in (
+        ("השיעור הוא בין שלושת אלפים ומאה ל־4 אלפים אחוזים", {31.0, 40.0}),
+        ("השיעור הוא בין שלושת אלפים ומאה ל־4 אלפים%", {31.0, 40.0}),
+        ("השיעור הוא בין שלושת אלפים ומאה ועשרים לארבעת אלפים אחוזים", {31.2, 40.0}),
+        ("השיעור הוא בין שניים לארבעת אלפים ומאה אחוזים", {20.0, 41.0}),
+    ):
+        recall = {round(v, 6) for v in _hebrew_recall(text)}
+        assert recall == expected, (text, recall)
+        assert not ({3_100.0, 3_120.0, 0.02} & extract_numbers_from_text(text)), text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
