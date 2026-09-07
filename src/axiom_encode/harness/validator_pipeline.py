@@ -2118,6 +2118,7 @@ def _parse_hebrew_number_run(
     words: "Sequence[str]",
     start: int = 0,
     money_context: bool | None = None,
+    text_separate_after: "Callable[[int], bool] | None" = None,
 ) -> tuple[int, float, set[str]] | None:
     """Parse the longest number a run of Hebrew words spells from its start.
 
@@ -2242,12 +2243,20 @@ def _parse_hebrew_number_run(
         )
 
     def separate_quantity_at(position: int) -> bool:
-        """Whether the word at ``position`` names a quantity apart from a money amount."""
-        return (
-            money_context
-            and position < len(words)
+        """Whether a quantity apart from a money amount begins at ``position``.
+
+        The word there is a unit or count noun, or -- through the caller's
+        text-level probe -- a printed continuation ("ו־500") leads to one:
+        "שלושה מיליון ושני אלפים ו־500 עובדים" counts 2,500 workers.
+        """
+        if not money_context:
+            return False
+        if (
+            position < len(words)
             and words[position] in _HEBREW_SEPARATE_QUANTITY_WORD_FORMS
-        )
+        ):
+            return True
+        return text_separate_after is not None and text_separate_after(position)
 
     def fraction_names_own_operand(position: int) -> bool:
         """Whether the word at ``position`` gives the fraction before it its own operand.
@@ -2546,6 +2555,9 @@ _HEBREW_MONEY_CONTEXT_PATTERN = re.compile(
     # Connectors may carry the article ("המחזור השנתי הכולל"); a printed
     # multiplier may stand between the noun and the scale word the caller
     # asks about ("קנס של 3 מיליון", asked at "מיליון").
+    # A construct chain qualifies the noun ("מחזור העסקאות", "שכר העובד",
+    # "סכום המענק"): up to two articled nouns right after it.
+    "(?:\\s+\u05d4[\u0590-\u05ff]{2,}){0,2}"
     "(?:\\s+\u05d4?(?:" + _HEBREW_MONEY_CONTEXT_CONNECTORS + ")[\u05be-]?){0,5}"
     "(?:\\s*(?<![\\d.,])[-\u2212]?(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?"
     "(?:\\s+\\d+\\s*[/\u2044]\\s*\\d+)?)?\\s*$"
@@ -2616,6 +2628,20 @@ def _iter_hebrew_compound_number_matches(
         run_start = index
     for start, end in runs:
         words = [token[2] for token in tokens[start:end]]
+
+        def text_separate_after(position: int, start: int = start) -> bool:
+            # The candidate ends before words[position]; its printed
+            # continuation, if any, starts after words[position - 1].
+            if position <= 0 or start + position - 1 >= len(tokens):
+                return False
+            text_end = tokens[start + position - 1][1]
+            chain_end = _hebrew_printed_continuation_end(text, text_end)
+            return (
+                chain_end != text_end
+                and _HEBREW_SEPARATE_QUANTITY_AFTER_PATTERN.match(text, chain_end)
+                is not None
+            )
+
         index = 0
         while index < len(words):
             head = _strip_hebrew_number_prefix(
@@ -2633,6 +2659,7 @@ def _iter_hebrew_compound_number_matches(
                 words,
                 index,
                 _hebrew_money_context_before(text, tokens[start + index][0]),
+                text_separate_after,
             )
             if parsed is not None and parsed[2] & _HEBREW_SCALE_KINDS:
                 marked = next(
@@ -2662,6 +2689,7 @@ def _iter_hebrew_compound_number_matches(
                         words[:cut],
                         index,
                         _hebrew_money_context_before(text, tokens[start + index][0]),
+                        text_separate_after,
                     )
             if parsed is not None:
                 consumed, value, kinds = parsed
@@ -3483,12 +3511,26 @@ def _hebrew_spelled_remainder_after(
         # "ועשרים%" likewise.
         return None
     if money_context and _HEBREW_SEPARATE_QUANTITY_AFTER_PATTERN.match(
-        text, tokens[consumed - 1][1]
+        text, _hebrew_printed_continuation_end(text, tokens[consumed - 1][1])
     ):
-        # "קנס של 3 מיליון ושלושים ימי מאסר": a separate quantity, not a
-        # remainder of the fine.
+        # "קנס של 3 מיליון ושלושים ימי מאסר", "מחזור של 3 מיליון ושני אלפים
+        # ו־500 עובדים": a separate quantity, not a remainder of the amount.
         return None
     return tokens[consumed - 1][1], value
+
+
+def _hebrew_printed_continuation_end(text: str, end: int) -> int:
+    """Where an amount's printed continuation ends: printed parts and a plain remainder joined by ו."""
+    while True:
+        join = _HEBREW_PRINTED_REMAINDER_JOIN_PATTERN.match(text, end)
+        if join is None:
+            return end
+        part = _HEBREW_PRINTED_SCALE_PATTERN.match(text, join.end())
+        if part is not None:
+            end = part.end()
+            continue
+        plain = _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN.match(text, end)
+        return plain.end() if plain is not None else end
 
 
 def _hebrew_printed_chain_end(

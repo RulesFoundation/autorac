@@ -17565,6 +17565,34 @@ def test_a_whole_lower_scale_quantity_stands_apart_from_a_money_amount():
     }
 
 
+def test_a_mixed_lower_scale_quantity_is_read_through_its_printed_remainder():
+    for text, expected in (
+        ("מחזור שנתי של שלושה מיליון ושני אלפים ו־500 עובדים", {3_000_000.0, 2_500.0}),
+        ("מחזור שנתי של 3 מיליון ושני אלפים ו־500 עובדים", {3_000_000.0, 2_500.0}),
+        ("מחזור שנתי של 3 מיליון ושני אלפים ו־500 שקלים", {3_002_500.0}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+        grounded = extract_numbers_from_text(text)
+        assert expected <= grounded, (text, grounded)
+        if len(expected) == 2:
+            assert not ({3_002_000.0, 500.0} & grounded), (text, grounded)
+
+
+def test_a_construct_chain_qualifies_the_amount_noun():
+    for text, expected in (
+        ("מחזור העסקאות השנתי של 3 מיליון ו־20 עובדים", {3_000_000.0, 20.0}),
+        ("מחזור העסקאות השנתי של שלושה מיליון ועשרים עובדים", {3_000_000.0, 20.0}),
+        ("סכום המענק לא יעלה על 3 מיליון ו־30 ימי מאסר", {3_000_000.0, 30.0}),
+        ("שכר העובד החודשי של 3 אלפים ו־200 שקלים", {3_200.0}),
+    ):
+        assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+    # A verb or an unarticled noun between still breaks the binding.
+    assert _hebrew_recall("המענק יינתן למפעל המעסיק לפחות 3 אלפים ו־200 עובדים") == {
+        3_200.0
+    }
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
