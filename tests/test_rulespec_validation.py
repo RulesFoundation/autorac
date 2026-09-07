@@ -16021,6 +16021,48 @@ def test_a_people_count_in_any_form_marks_a_quantity():
     assert _hebrew_recall("לפי סעיפים 1, 2 או 3, 15 עצמאיות") == {15.0}
 
 
+def test_a_hyphen_after_a_prefix_before_a_unicode_fraction_is_no_sign():
+    for text, expected in (
+        ("יובאו בחשבון כ-1⁄4 נקודת זיכוי", {0.25}),
+        ("יובאו בחשבון כ־1⁄4 נקודת זיכוי", {0.25}),
+        ("שיעור המס יהיה בין 2 ל-3 1⁄2 אחוזים", {0.02, 0.035}),
+        ("יובאו בחשבון -1⁄4 נקודת זיכוי", {-0.25}),
+    ):
+        assert {round(v, 12) for v in _hebrew_recall(text)} == expected, (
+            text,
+            _hebrew_recall(text),
+        )
+
+
+def test_a_mixed_printed_and_spelled_endpoint_is_one_range_endpoint():
+    for text in (
+        "שיעור המס יהיה בין 2 וחצי ל־3 וחצי אחוזים",
+        "שיעור המס יהיה 2 וחצי עד 3 וחצי אחוזים",
+        "שיעור המס יהיה בין 2 וחצי לשלושה וחצי אחוזים",
+        "שיעור המס יהיה בין שניים וחצי ל־3 וחצי אחוזים",
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert {0.025, 0.035} <= grounded, (text, grounded)
+        assert not ({2.0, 0.5, 3.0} & _hebrew_recall(text)), (
+            text,
+            _hebrew_recall(text),
+        )
+        assert {round(v, 12) for v in _hebrew_recall(text)} == {0.025, 0.035}, text
+
+
+def test_a_fractional_tail_with_a_singular_unit_is_not_the_rate():
+    for text, unit_value in (
+        ("ישולם מס של שני אחוזים וחצי אגורה", 0.5),
+        ("ישולם מס של שני אחוזים וחצי נקודה", 0.5),
+        ("ישולם מס של שני אחוזים ורבע שעה", 0.25),
+        ("ישולם מס של שני אחוזים וחצי יום", 0.5),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert {0.02, unit_value} <= grounded, (text, grounded)
+        assert 0.025 not in grounded and 0.0225 not in grounded, (text, grounded)
+        assert _hebrew_recall(text) == {0.02, unit_value}, (text, _hebrew_recall(text))
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

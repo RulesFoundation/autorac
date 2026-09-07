@@ -1510,9 +1510,11 @@ _CONTEXTUAL_ASCII_FRACTION_PATTERN = re.compile(
 # halves), and the run is left to the passes that read decimals. A unary minus
 # set against the numerator (or the whole number of a mixed number) belongs to
 # the value.
+# A hyphen after a Hebrew letter joins a prefix to the fraction ("כ-1⁄4")
+# and is no sign; only a sign that no Hebrew letter precedes negates.
 _FRACTION_SLASH_PATTERN = re.compile(
     "(?<![\\d\u2044.,])"
-    "(?P<sign>[-\u2212])?"
+    "(?:(?<![\u0590-\u05ff])(?P<sign>[-\u2212]))?"
     "(?:(?P<whole>\\d+)\\s+)?"
     "(?P<numerator>\\d+)\\s*\u2044\\s*(?P<denominator>\\d+)"
     "(?![\\d\u2044])(?![.,]\\d)"
@@ -2806,6 +2808,11 @@ def _hebrew_number_run_ending_at(
 ) -> tuple[int, float, str] | None:
     """The longest spelled number ending flush at ``end``: (start, value, first word)."""
     run = _hebrew_word_run_before(text, end, tokens=tokens)
+    # A printed whole with a spelled tail ("2 וחצי") is one endpoint; its
+    # first word is the tail, which carries no range prefix of its own.
+    mixed = _hebrew_printed_mixed_count(text, run)
+    if mixed is not None:
+        return mixed[1], mixed[0], ""
     for width in range(len(run), 0, -1):
         words = [token.group(0) for token in run[-width:]]
         parsed = _parse_hebrew_number_run(words)
@@ -3336,6 +3343,79 @@ _HEBREW_STRUCTURAL_UNIT_NOUN_WORDS = (
     "יתומים",
     "אלמנות",
     "אלמנים",
+    "אגורה",
+    "נקודה",
+    "לירה",
+    "שנייה",
+    "משפחה",
+    "משק בית",
+    "עובד",
+    "עובדת",
+    "מבוטח",
+    "מבוטחת",
+    "תלמיד",
+    "תלמידה",
+    "תושב",
+    "תושבת",
+    "אדם",
+    "איש",
+    "אישה",
+    "הורה",
+    "זכאי",
+    "זכאית",
+    "נכה",
+    "גמלאי",
+    "גמלאית",
+    "עצמאי",
+    "עצמאית",
+    "שכיר",
+    "שכירה",
+    "מעסיק",
+    "מעביד",
+    "מקבל",
+    "מקבלת",
+    "רכב",
+    "דירה",
+    "חדר",
+    "קומה",
+    "מקום",
+    "פעם",
+    "מיטה",
+    "כיתה",
+    "מוסד",
+    "עסק",
+    "מפעל",
+    "יישוב",
+    "רשות",
+    "תאגיד",
+    "ספק",
+    "לקוח",
+    "לקוחה",
+    "חייל",
+    "חיילת",
+    "קשיש",
+    "קשישה",
+    "סטודנט",
+    "סטודנטית",
+    "מטופל",
+    "מטופלת",
+    "יתום",
+    "יתומה",
+    "אלמן",
+    "אלמנה",
+    "חולה",
+    "עיוור",
+    "עיוורת",
+    "מובטל",
+    "מובטלת",
+    "פנסיונר",
+    "פנסיונרית",
+    "בן",
+    "בת",
+    "אם",
+    "אב",
+    "זוג",
+    "יחיד",
 )
 
 
