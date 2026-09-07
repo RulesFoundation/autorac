@@ -17954,6 +17954,61 @@ def test_an_explicit_range_scales_a_thousand_plus_lower_endpoint():
     assert _hebrew_recall("סכום של 3 מיליון ו־20 אחוזים מההכנסה") == {3_000_000.0, 0.2}
 
 
+def test_a_printed_mixed_count_carries_the_tail_after_its_sign():
+    for text, expected in (
+        ("השיעור הוא 3 וחצי% וחצי", 0.04),
+        ("השיעור הוא 3 וחצי אחוזים וחצי", 0.04),
+        ("השיעור הוא -3 וחצי% וחצי", -0.04),
+        ("השיעור הוא 3 וחצי% ושלושה רבעים", 0.0425),
+    ):
+        recall = {round(v, 6) for v in _hebrew_recall(text)}
+        assert recall == {expected}, (text, recall)
+    assert {round(v, 6) for v in _hebrew_recall("השיעור הוא 3 וחצי% וחצי שקל")} == {
+        0.035,
+        0.5,
+    }
+
+
+def test_a_percentage_range_reads_printed_scale_endpoints():
+    for text, expected in (
+        ("השיעור הוא בין 3 אלפים ל־4 אלפים אחוזים", {30.0, 40.0}),
+        ("השיעור הוא בין שלושת אלפים לארבעת אלפים אחוזים", {30.0, 40.0}),
+        ("השיעור הוא בין 2 מיליון ל־3 מיליון אחוזים", {20_000.0, 30_000.0}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+        assert not (
+            {3_000.0, 4_000.0, 2_000_000.0} & extract_numbers_from_text(text)
+        ), text
+
+
+def test_spelled_components_follow_a_printed_remainder():
+    for text, expected in (
+        ("הסכום הוא 3 אלפים ו־100 ועשרים שקלים", 3_120.0),
+        ("הסכום הוא שלושת אלפים ו־100 ועשרים שקלים", 3_120.0),
+        ("הסכום הוא 3 אלפים ו־100 ועשרים ושלושה שקלים", 3_123.0),
+    ):
+        assert _hebrew_recall(text) == {expected}, (text, _hebrew_recall(text))
+        assert not ({3_100.0, 20.0} & extract_numbers_from_text(text)), text
+
+
+def test_the_printed_scale_pass_scans_mixed_scales_in_linear_time():
+    import time
+
+    from axiom_encode.harness.validator_pipeline import (
+        _iter_hebrew_printed_scale_matches,
+    )
+
+    # Each printed part once scanned every spelled candidate and every part
+    # span: 400, 800 and 1,600 pairs took 0.5, 3.9 and 30 seconds.
+    text = "הסכום הוא 3 מיליון; הסכום הוא 3 אלפים; " * 1600
+    started = time.perf_counter()
+    matches = _iter_hebrew_printed_scale_matches(text)
+    elapsed = time.perf_counter() - started
+    assert len(matches) == 3200
+    assert elapsed < 2.0, elapsed
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

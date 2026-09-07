@@ -15,6 +15,7 @@ Uses Claude Code CLI (subprocess) for reviewer agents - cheaper than direct API.
 """
 
 import ast
+import bisect
 import contextlib
 import copy
 import functools
@@ -3432,6 +3433,8 @@ _HEBREW_PRINTED_SCALE_PATTERN = re.compile(
 # The conjunction before a printed lower-scale remainder: "3 מיליון ו־200
 # אלף", "ו-200", "ו 200".
 _HEBREW_PRINTED_REMAINDER_JOIN_PATTERN = re.compile("\\s+\u05d5[\u05be-]?\\s*")
+# The most characters a join between a spelled amount and a printed part spans.
+_HEBREW_PRINTED_JOIN_WIDTH = 12
 _HEBREW_PRINTED_REMAINDER_JOIN_BEFORE_PATTERN = re.compile("\\s+\u05d5[\u05be-]?\\s*$")
 
 
@@ -3973,22 +3976,29 @@ def _iter_hebrew_printed_scale_matches(
     matches: list[tuple[tuple[int, int], float, bool]] = []
     # A spelled amount inside a printed part ("מיליון" of "3 מיליון") is
     # that part's scale word, not a leading amount of its own.
-    part_spans = [(part[0], part[1]) for part in parts]
+    # Parts arrive in text order and never overlap one another, so whether a
+    # spelled span overlaps any part is one bisection, and the spelled amount
+    # a join binds to a part ends within the join's width before it.
+    part_starts = [part[0] for part in parts]
+
+    def overlaps_a_part(span_start: int, span_end: int) -> bool:
+        index = bisect.bisect_right(part_starts, span_end - 1)
+        return index > 0 and parts[index - 1][1] > span_start
+
     merged_spelled: set[int] = set()
     index = 0
     while index < len(parts):
         start, end, value, floor, negative = parts[index]
         money_context = _hebrew_money_context_before(text, start)
         if not negative:
-            for spelled_end, (
-                spelled_start,
-                spelled_value,
-                spelled_floor,
-            ) in spelled_before.items():
+            for spelled_end in range(max(0, start - _HEBREW_PRINTED_JOIN_WIDTH), start):
+                entry = spelled_before.get(spelled_end)
+                if entry is None:
+                    continue
+                spelled_start, spelled_value, spelled_floor = entry
                 if (
-                    spelled_end < start
-                    and floor < spelled_floor
-                    and not _span_overlaps((spelled_start, spelled_end), part_spans)
+                    floor < spelled_floor
+                    and not overlaps_a_part(spelled_start, spelled_end)
                     and _HEBREW_PRINTED_REMAINDER_JOIN_PATTERN.fullmatch(
                         text, spelled_end, start
                     )
@@ -4067,6 +4077,14 @@ def _iter_hebrew_printed_scale_matches(
             if plain_value is not None and 0 < plain_value < floor:
                 value += plain_value
                 end = plain.end()
+                # Descending spelled components after a printed remainder:
+                # "3 אלפים ו־100 ועשרים" is 3,120.
+                after = _hebrew_spelled_remainder_after(
+                    text, end, _hebrew_scale_floor(plain_value), money_context
+                )
+                if after is not None:
+                    end, after_value = after
+                    value += after_value
         unit = _hebrew_percent_unit_after(text, end)
         if unit is not None:
             unit_end, unit_tail = unit
@@ -4085,7 +4103,7 @@ def _iter_hebrew_printed_scale_matches(
         if (
             spelled_end in merged_spelled
             or spelled_floor <= 1
-            or _span_overlaps((spelled_start, spelled_end), part_spans)
+            or overlaps_a_part(spelled_start, spelled_end)
         ):
             continue
         spelled_money = _hebrew_money_context_before(text, spelled_start)
@@ -4100,14 +4118,21 @@ def _iter_hebrew_printed_scale_matches(
         plain_value = _hebrew_printed_plain_remainder_value(plain)
         if plain_value is not None and 0 < plain_value < spelled_floor:
             total = spelled_value + plain_value
-            unit = _hebrew_percent_unit_after(text, plain.end())
+            end = plain.end()
+            after = _hebrew_spelled_remainder_after(
+                text, end, _hebrew_scale_floor(plain_value), spelled_money
+            )
+            if after is not None:
+                end, after_value = after
+                total += after_value
+            unit = _hebrew_percent_unit_after(text, end)
             if unit is not None:
                 unit_end, unit_tail = unit
                 matches.append(
                     ((spelled_start, unit_end), (total + unit_tail) / 100, True)
                 )
             else:
-                matches.append(((spelled_start, plain.end()), total, False))
+                matches.append(((spelled_start, end), total, False))
     matches.sort()
     return matches
 
@@ -4156,12 +4181,29 @@ def _iter_hebrew_printed_mixed_number_matches(
                 _HEBREW_FRACTION_COUNT_VALUES[match.group("tail_count")]
                 * _HEBREW_COUNTED_FRACTION_VALUES[match.group("tail_fraction")]
             )
-        if match.group("sign"):
-            value = -value
         marker = _PERCENT_MARKER_AFTER_NUMBER_PATTERN.match(text, match.end())
         if marker is not None:
-            matches.append(((match.start(), marker.end()), value, True))
+            # The tail after the marker is the rate's too, unless a unit of
+            # its own follows: "3 וחצי% וחצי" is four percent.
+            end = marker.end()
+            tail = _HEBREW_PERCENT_TAIL_AFTER_PATTERN.match(text, end)
+            if tail is not None and not _HEBREW_UNIT_AFTER_PATTERN.match(
+                text, tail.end()
+            ):
+                if tail.group("tail"):
+                    value += _HEBREW_MIXED_FRACTION_VALUES[tail.group("tail")]
+                else:
+                    value += (
+                        _HEBREW_FRACTION_COUNT_VALUES[tail.group("tail_count")]
+                        * _HEBREW_COUNTED_FRACTION_VALUES[tail.group("tail_fraction")]
+                    )
+                end = tail.end()
+            if match.group("sign"):
+                value = -value
+            matches.append(((match.start(), end), value, True))
         else:
+            if match.group("sign"):
+                value = -value
             matches.append((match.span(), value, False))
     return matches
 
@@ -4179,6 +4221,14 @@ _HEBREW_PERCENT_NOUN_ANYWHERE_PATTERN = re.compile(
 # A printed endpoint flush before a position: a signed number, or a signed
 # fraction with an optional whole ("-2", "1/2", "16 1⁄2"). A number after a
 # slash is a denominator, never an endpoint of its own.
+# A printed multiplier with a scale word, flush before a position: "3 אלפים"
+# in "בין 3 אלפים ל־4 אלפים אחוזים".
+_HEBREW_PRINTED_SCALE_BEFORE_PATTERN = re.compile(
+    "(?<![\\d.,/\u2044])(?:(?<![\u05d0-\u05ea])(?P<sign>[-\u2212]))?"
+    "(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)\\s+(?P<scale>"
+    + _HEBREW_PRINTED_SCALE_WORDS
+    + ")\\s*$"
+)
 _HEBREW_DIGITS_BEFORE_PATTERN = re.compile(
     "(?<![\\d.,/\u2044])(?:(?<![\u05d0-\u05ea])(?P<sign>[-\u2212]))?"
     "(?:(?:(?P<whole>\\d+)\\s+)?(?P<numerator>\\d+)\\s*[/\u2044]\\s*(?P<denominator>\\d+)"
@@ -4271,10 +4321,16 @@ def _iter_hebrew_percent_range_lower_matches(
     for noun in _HEBREW_PERCENT_NOUN_ANYWHERE_PATTERN.finditer(text):
         if tokens is None:
             tokens = _HebrewWordTokens(text)
-        # The upper endpoint, printed or spelled, right before the noun.
+        # The upper endpoint, printed or spelled, right before the noun -- a
+        # printed multiplier with its scale word ("4 אלפים") is one endpoint.
         upper_first: str | None = None
+        printed_scale = _search_before(
+            _HEBREW_PRINTED_SCALE_BEFORE_PATTERN, text, noun.start(), 40
+        )
         digits = _search_before(_HEBREW_DIGITS_BEFORE_PATTERN, text, noun.start(), 32)
-        if digits is not None:
+        if printed_scale is not None:
+            upper_start = printed_scale.start()
+        elif digits is not None:
             upper_start = digits.start()
         else:
             spelled = _hebrew_number_run_ending_at(text, noun.start(), tokens, True)
@@ -4309,7 +4365,30 @@ def _iter_hebrew_percent_range_lower_matches(
         lower_digits = _search_before(
             _HEBREW_DIGITS_BEFORE_PATTERN, text, lower_end, 32
         )
-        if lower_digits is not None:
+        lower_scale = _search_before(
+            _HEBREW_PRINTED_SCALE_BEFORE_PATTERN, text, lower_end, 40
+        )
+        if printed_scale is not None and lower_scale is None:
+            # The upper endpoint's scale word is shared with a scale-less
+            # lower endpoint ("2 עד 3 אלפים אחוזים"); the shared-scale pass
+            # reads that pair. Here both endpoints carry a scale of their
+            # own.
+            if (
+                _search_before(_HEBREW_SCALE_WORD_BEFORE_PATTERN, text, lower_end, 24)
+                is None
+            ):
+                continue
+        if lower_scale is not None:
+            # "בין 3 אלפים ל־4 אלפים אחוזים": the lower endpoint is 3,000.
+            lower_value = (
+                float(lower_scale.group("number").replace(",", ""))
+                * (_HEBREW_PRINTED_SCALE_VALUES[lower_scale.group("scale")])
+            )
+            if lower_scale.group("sign"):
+                lower_value = -lower_value
+            lower_span = (lower_scale.start(), len(text[:lower_end].rstrip()))
+            lower_first = None
+        elif lower_digits is not None:
             lower_value = _hebrew_printed_endpoint_value(lower_digits)
             if lower_value is None:
                 continue
