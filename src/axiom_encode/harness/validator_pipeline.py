@@ -3110,6 +3110,15 @@ _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN = re.compile(
     "(?![\\d.,/\u2044%])(?!\\s*%)(?!\\s+(?:"
     + _HEBREW_PRINTED_SCALE_WORDS
     + "|אחוז)[\u0590-\u05ff]*)"
+    # Nor the whole part of a mixed rate: "ו־3 וחצי אחוזים", "ו־3 ושלושה
+    # רבעים%" count three and a half, three and three quarters percent.
+    "(?!\\s+\u05d5(?:(?:"
+    + _HEBREW_PRINTED_SCALE_FRACTIONS
+    + ")|(?:"
+    + _HEBREW_PRINTED_SCALE_COUNTS
+    + ")\\s+(?:"
+    + _HEBREW_PRINTED_SCALE_COUNTED
+    + "))(?![\u0590-\u05ff])(?:\\s*%|\\s+\u05d4?אחוז))"
 )
 # A range whose endpoints share one trailing scale word: "בין 3 ל־5 מיליון"
 # runs from three million to five million, "שלושה עד חמישה מיליון" too, and
@@ -3255,7 +3264,20 @@ def _iter_hebrew_shared_scale_range_matches(
             _search_before(_HEBREW_RANGE_LOWER_BOUND_PATTERN, text, lower_span[0], 16)
             is None
         ):
-            continue
+            # A מ prefix attached to a spelled lower endpoint is the bound:
+            # "משלושה לחמישה מיליון", "מחצי לשלושה מיליון".
+            lower_word = _HEBREW_WORD_TOKEN_PATTERN.match(text, lower_span[0])
+            if (
+                printed_lower is not None
+                or lower_word is None
+                or not lower_word.group(0).startswith("\u05de")
+                or _strip_hebrew_number_prefix(
+                    lower_word.group(0)[1:].lstrip("\u05be"),
+                    _HEBREW_RUN_START_VOCABULARY,
+                )
+                is None
+            ):
+                continue
         if (
             _span_overlaps(lower_span, structural_spans)
             or _search_before(
