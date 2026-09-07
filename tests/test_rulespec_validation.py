@@ -17481,6 +17481,45 @@ def test_a_separate_quantity_after_a_scaled_amount_is_no_remainder():
     assert _hebrew_recall("סכום של 3 מיליון ו־200 דולר") == {3_000_200.0}
 
 
+def test_a_trailing_unit_describes_a_whole_compound_outside_a_money_context():
+    for text, expected in (
+        ("מרחק של שלושה אלפים ומאתיים מטרים", {3_200.0}),
+        ("מרחק של 3 אלפים ו־200 מטרים", {3_200.0}),
+        ("יישוב שמספר תושביו עולה על עשרת אלפים וחמש מאות תושבים", {10_500.0}),
+        ("יישוב שמספר תושביו עולה על 10 אלפים ו־500 תושבים", {10_500.0}),
+        ("תקופה של שלושה אלפים ומאתיים ימים", {3_200.0}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+        grounded = extract_numbers_from_text(text)
+        assert expected <= grounded and not (
+            {3_000.0, 200.0, 10_000.0, 500.0} & grounded
+        ), (
+            text,
+            grounded,
+        )
+
+
+def test_a_fractional_or_scaled_separate_quantity_after_a_money_amount():
+    for text, expected in (
+        ("קנס של שלושה מיליון ושלוש וחצי שנות מאסר", {3_000_000.0, 3.5}),
+        ("קנס של 3 מיליון ושלוש וחצי שנות מאסר", {3_000_000.0, 3.5}),
+        ("קנס של 3 מיליון וחצי שנת מאסר", {3_000_000.0, 0.5}),
+        ("קנס של שלושה מיליון וחצי שנת מאסר", {3_000_000.0, 0.5}),
+        ("מחזור שנתי של 3 מיליון ו־2 אלף עובדים", {3_000_000.0, 2_000.0}),
+        ("מחזור שנתי של שלושה מיליון ושני אלפים עובדים", {3_000_000.0, 2_000.0}),
+        ("קנס של 3 מיליון ו־3 וחצי שנות מאסר", {3_000_000.0, 3.5}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+        grounded = extract_numbers_from_text(text)
+        assert expected <= grounded, (text, grounded)
+        assert not ({3_000_003.5, 3_500_000.0, 3_002_000.0} & grounded), (
+            text,
+            grounded,
+        )
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

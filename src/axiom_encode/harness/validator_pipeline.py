@@ -2117,6 +2117,7 @@ _HEBREW_TEEN_ONLY_WORDS = frozenset(
 def _parse_hebrew_number_run(
     words: "Sequence[str]",
     start: int = 0,
+    money_context: bool | None = None,
 ) -> tuple[int, float, set[str]] | None:
     """Parse the longest number a run of Hebrew words spells from its start.
 
@@ -2229,6 +2230,24 @@ def _parse_hebrew_number_run(
     kinds: set[str] = set()
     cursor = start
     scaled_tail = False
+    separate_after = False
+    if money_context is None:
+        # Callers with the text pass the context in; a bare run reads it
+        # from the words before its start.
+        money_context = (
+            _HEBREW_MONEY_CONTEXT_PATTERN.search(
+                " ".join(words[max(0, start - 6) : start])
+            )
+            is not None
+        )
+
+    def separate_quantity_at(position: int) -> bool:
+        """Whether the word at ``position`` names a quantity apart from a money amount."""
+        return (
+            money_context
+            and position < len(words)
+            and words[position] in _HEBREW_SEPARATE_QUANTITY_WORD_FORMS
+        )
 
     def fraction_names_own_operand(position: int) -> bool:
         """Whether the word at ``position`` gives the fraction before it its own operand.
@@ -2361,6 +2380,7 @@ def _parse_hebrew_number_run(
             and has_vav(following)
             and words[following][1:] in _HEBREW_MIXED_FRACTION_VALUES
             and not fraction_names_own_operand(following + 1)
+            and not separate_quantity_at(following + 1)
         ):
             amount += _HEBREW_MIXED_FRACTION_VALUES[words[following][1:]] * scale
             following += 1
@@ -2371,6 +2391,7 @@ def _parse_hebrew_number_run(
             and words[following][1:] in _HEBREW_FRACTION_COUNT_VALUES
             and words[following + 1] in _HEBREW_COUNTED_FRACTION_VALUES
             and not fraction_names_own_operand(following + 2)
+            and not separate_quantity_at(following + 2)
         ):
             # A counted fractional tail scales with the scale word too:
             # "מיליון ושני שלישים" is 1,666,666.67.
@@ -2389,36 +2410,51 @@ def _parse_hebrew_number_run(
         part = parse_scale_part(cursor, scale_words, bare_values)
         if part is None:
             continue
+        if kinds & _HEBREW_SCALE_KINDS and separate_quantity_at(part[0]):
+            # "שלושה מיליון ושני אלפים עובדים": the two thousand count
+            # workers, a separate quantity, not the million's lower scale;
+            # the number ends here.
+            separate_after = True
+            break
         cursor, amount, tail = part
         value += amount
         kinds.add(kind)
         if tail:
             kinds.add("fraction")
             scaled_tail = True
-    rest = None if scaled_tail else parse_below_thousand(cursor)
-    if (
-        rest is not None
-        and kinds & _HEBREW_SCALE_KINDS
-        and (
-            rate_count_follows(rest[0])
-            or (
-                rest[0] < len(words)
-                and words[rest[0]] in _HEBREW_SEPARATE_QUANTITY_WORD_FORMS
-            )
-        )
-    ):
-        # "שלושה מיליון ועשרים אחוזים", "שלושה מיליון ושלושה וחצי אחוזים":
-        # the count belongs to the rate; "שלושה מיליון ושלושים ימי מאסר": the
-        # thirty counts days, a separate quantity. Neither is the million's
-        # remainder.
-        rest = None
+    rest = None if scaled_tail or separate_after else parse_below_thousand(cursor)
+    if rest is not None and kinds & _HEBREW_SCALE_KINDS:
+        # The whole candidate remainder, fractional tail included, and the
+        # word after it.
+        candidate_end = rest[0]
+        if candidate_end < len(words) and has_vav(candidate_end):
+            after_tail = words[candidate_end][1:]
+            if after_tail in _HEBREW_MIXED_FRACTION_VALUES:
+                candidate_end += 1
+            elif (
+                after_tail in _HEBREW_FRACTION_COUNT_VALUES
+                and candidate_end + 1 < len(words)
+                and words[candidate_end + 1] in _HEBREW_COUNTED_FRACTION_VALUES
+            ):
+                candidate_end += 2
+        if rate_count_follows(rest[0]) or separate_quantity_at(candidate_end):
+            # "שלושה מיליון ועשרים אחוזים", "שלושה מיליון ושלושה וחצי
+            # אחוזים": the count belongs to the rate; "קנס של שלושה מיליון
+            # ושלוש וחצי שנות מאסר": the three and a half count years, a
+            # separate quantity. Neither is the million's remainder.
+            rest = None
     if rest is not None:
         cursor, amount, rest_kinds = rest
         value += amount
         kinds |= rest_kinds
     # A vav-bound fractional tail: "וחצי", or a counted fraction "ושני
     # שלישים", "ושלושה רבעים".
-    if not scaled_tail and start < cursor < len(words) and has_vav(cursor):
+    if (
+        not scaled_tail
+        and not separate_after
+        and start < cursor < len(words)
+        and has_vav(cursor)
+    ):
         tail = words[cursor][1:]
         tail_value: float | None = None
         tail_end = cursor
@@ -2439,7 +2475,7 @@ def _parse_hebrew_number_run(
         # word after the whole fraction, counted or not -- is no tail.
         if tail_value is not None and not (
             kinds & {"thousand", "million", "billion"}
-            and fraction_names_own_operand(tail_end)
+            and (fraction_names_own_operand(tail_end) or separate_quantity_at(tail_end))
         ):
             value += tail_value
             kinds.add("fraction")
@@ -2470,14 +2506,37 @@ _HEBREW_FRACTION_COPULA_PATTERN = re.compile(
 # whatever precedes -- "המעביד ישלם חמישית משכרו" and "על המעביד לשלם
 # חמישית השכר" pay a fifth -- while "לידה שלישית מזכה" keeps its ordinal,
 # because "זכה" names no amount.
-_HEBREW_FRACTION_BASE_AMOUNT_PATTERN = re.compile(
-    "\\s+(?:\u05de\u05d4?|\u05d4)(?:"
+_HEBREW_AMOUNT_NOUN_STEMS = (
     "שכר|משכורת|הכנס|קצב|גמל|גימל|סכום|תשלום|שווי|ערך|מחיר|רווח|הון|תמור|מענק|"
     "עלות|פיצוי|פנסי|הפרש|קרן|ריבית|דמי|נכס|מס|"
     "תקציב|הוצא|מחזור|חוב|הלווא|השקע|נזק|תרומ|עמל|דיבידנד|תגמול|אגר|קנס|"
     "היטל|ארנונ|פרמי|מלג|תמיכ|סיוע|סובסידי|כספ"
-    ")[\u0590-\u05ff]{0,6}(?![\u0590-\u05ff])"
 )
+_HEBREW_FRACTION_BASE_AMOUNT_PATTERN = re.compile(
+    "\\s+(?:\u05de\u05d4?|\u05d4)(?:"
+    + _HEBREW_AMOUNT_NOUN_STEMS
+    + ")[\u0590-\u05ff]{0,6}(?![\u0590-\u05ff])"
+)
+# A money context: an amount noun ("קנס", "סכום", "מחזור", "שכר") shortly
+# before a scaled number says the number is money, so a unit or count noun
+# after its remainder names a separate quantity ("קנס של 3 מיליון ו־30 ימי
+# מאסר"). Without one, a trailing unit describes the whole compound ("מרחק
+# של שלושה אלפים ומאתיים מטרים" is 3,200 metres).
+# The two-letter stem "מס" (tax) takes only its own inflections here, or it
+# would read "מספר" (number) as money.
+_HEBREW_MONEY_CONTEXT_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9\u05d4]{0,2}(?:(?:"
+    + _HEBREW_AMOUNT_NOUN_STEMS.replace("|מס|", "|")
+    + ")[\u0590-\u05ff]{0,6}|מס(?:ים|י)?)(?![\u0590-\u05ff])"
+)
+
+
+def _hebrew_money_context_before(text: str, position: int, window: int = 60) -> bool:
+    """Whether an amount noun stands within ``window`` characters before ``position``."""
+    return (
+        _HEBREW_MONEY_CONTEXT_PATTERN.search(text, max(0, position - window), position)
+        is not None
+    )
 
 
 # What follows a fraction word and gives it its own operand, so that the
@@ -2545,7 +2604,11 @@ def _iter_hebrew_compound_number_matches(
             ):
                 index += 1
                 continue
-            parsed = _parse_hebrew_number_run(words, index)
+            parsed = _parse_hebrew_number_run(
+                words,
+                index,
+                _hebrew_money_context_before(text, tokens[start + index][0]),
+            )
             if parsed is not None and parsed[2] & _HEBREW_SCALE_KINDS:
                 marked = next(
                     (
@@ -2570,7 +2633,11 @@ def _iter_hebrew_compound_number_matches(
                         ) or _hebrew_fractional_count(rate_words) is not None:
                             cut = offset
                             break
-                    parsed = _parse_hebrew_number_run(words[:cut], index)
+                    parsed = _parse_hebrew_number_run(
+                        words[:cut],
+                        index,
+                        _hebrew_money_context_before(text, tokens[start + index][0]),
+                    )
             if parsed is not None:
                 consumed, value, kinds = parsed
                 if consumed >= 2 or kinds & {
@@ -3350,7 +3417,7 @@ _HEBREW_PRINTED_SCALE_VALUES = {
 
 
 def _hebrew_spelled_remainder_after(
-    text: str, end: int, scale: float
+    text: str, end: int, scale: float, money_context: bool = False
 ) -> tuple[int, float] | None:
     """A vav-bound spelled amount below ``scale`` right after ``end``.
 
@@ -3390,8 +3457,11 @@ def _hebrew_spelled_remainder_after(
     if _HEBREW_PERCENT_SIGN_AFTER_PATTERN.match(text, tokens[consumed - 1][1]):
         # "ועשרים%" likewise.
         return None
-    if _HEBREW_SEPARATE_QUANTITY_AFTER_PATTERN.match(text, tokens[consumed - 1][1]):
-        # "ושלושים ימי מאסר": a separate quantity, not a remainder.
+    if money_context and _HEBREW_SEPARATE_QUANTITY_AFTER_PATTERN.match(
+        text, tokens[consumed - 1][1]
+    ):
+        # "קנס של 3 מיליון ושלושים ימי מאסר": a separate quantity, not a
+        # remainder of the fine.
         return None
     return tokens[consumed - 1][1], value
 
@@ -3436,7 +3506,16 @@ def _iter_hebrew_printed_scale_matches(
         value *= scale
         end = match.end()
         floor = scale
-        if match.group("after_tail"):
+        money_context = _hebrew_money_context_before(text, match.start())
+        if (
+            (match.group("after_tail") or match.group("after_count"))
+            and money_context
+            and _HEBREW_SEPARATE_QUANTITY_AFTER_PATTERN.match(text, end)
+        ):
+            # "קנס של 3 מיליון וחצי שנת מאסר": the half counts a year, a
+            # separate quantity; the amount ends at its scale word.
+            end = match.end("scale")
+        elif match.group("after_tail"):
             value += _HEBREW_MIXED_FRACTION_VALUES[match.group("after_tail")] * scale
         elif match.group("after_count"):
             value += (
@@ -3445,7 +3524,7 @@ def _iter_hebrew_printed_scale_matches(
                 * scale
             )
         else:
-            remainder = _hebrew_spelled_remainder_after(text, end, scale)
+            remainder = _hebrew_spelled_remainder_after(text, end, scale, money_context)
             if remainder is not None:
                 end, remainder_value = remainder
                 value += remainder_value
@@ -3459,10 +3538,14 @@ def _iter_hebrew_printed_scale_matches(
         if value > 0
     }
     matches: list[tuple[tuple[int, int], float]] = []
+    # A spelled amount inside a printed part ("מיליון" of "3 מיליון") is
+    # that part's scale word, not a leading amount of its own.
+    part_spans = [(part[0], part[1]) for part in parts]
     merged_spelled: set[int] = set()
     index = 0
     while index < len(parts):
         start, end, value, floor, negative = parts[index]
+        money_context = _hebrew_money_context_before(text, start)
         if not negative:
             for spelled_end, (
                 spelled_start,
@@ -3472,6 +3555,7 @@ def _iter_hebrew_printed_scale_matches(
                 if (
                     spelled_end < start
                     and floor < spelled_floor
+                    and not _span_overlaps((spelled_start, spelled_end), part_spans)
                     and _HEBREW_PRINTED_REMAINDER_JOIN_PATTERN.fullmatch(
                         text, spelled_end, start
                     )
@@ -3479,6 +3563,7 @@ def _iter_hebrew_printed_scale_matches(
                 ):
                     start, value = spelled_start, spelled_value + value
                     merged_spelled.add(spelled_end)
+                    money_context = _hebrew_money_context_before(text, start)
                     break
         while index + 1 < len(parts):
             next_start, next_end, next_value, next_floor, next_negative = parts[
@@ -3491,16 +3576,26 @@ def _iter_hebrew_printed_scale_matches(
                     text, end, next_start
                 )
                 is None
+                # "מחזור של 3 מיליון ו־2 אלף עובדים": the two thousand count
+                # workers, a separate quantity.
+                or (
+                    money_context
+                    and _HEBREW_SEPARATE_QUANTITY_AFTER_PATTERN.match(text, next_end)
+                    is not None
+                )
             ):
                 break
             value += next_value
             end, floor = next_end, next_floor
             index += 1
         plain = _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN.match(text, end)
-        if plain is not None and _HEBREW_SEPARATE_QUANTITY_AFTER_PATTERN.match(
-            text, plain.end()
+        if (
+            plain is not None
+            and money_context
+            and _HEBREW_SEPARATE_QUANTITY_AFTER_PATTERN.match(text, plain.end())
         ):
-            # "ו־30 ימי מאסר": a separate quantity, not a remainder.
+            # "קנס של 3 מיליון ו־30 ימי מאסר": a separate quantity, not a
+            # remainder of the fine.
             plain = None
         if plain is not None:
             plain_value = _hebrew_printed_plain_remainder_value(plain)
@@ -3516,11 +3611,16 @@ def _iter_hebrew_printed_scale_matches(
         spelled_value,
         spelled_floor,
     ) in spelled_before.items():
-        if spelled_end in merged_spelled or spelled_floor <= 1:
+        if (
+            spelled_end in merged_spelled
+            or spelled_floor <= 1
+            or _span_overlaps((spelled_start, spelled_end), part_spans)
+        ):
             continue
         plain = _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN.match(text, spelled_end)
-        if plain is None or _HEBREW_SEPARATE_QUANTITY_AFTER_PATTERN.match(
-            text, plain.end()
+        if plain is None or (
+            _hebrew_money_context_before(text, spelled_start)
+            and _HEBREW_SEPARATE_QUANTITY_AFTER_PATTERN.match(text, plain.end())
         ):
             continue
         plain_value = _hebrew_printed_plain_remainder_value(plain)
@@ -4435,6 +4535,8 @@ _HEBREW_SEPARATE_QUANTITY_WORDS = (
         set(_HEBREW_MEASURE_UNIT_WORDS)
         | set(_HEBREW_COUNT_NOUN_WORDS)
         | set(_HEBREW_TIME_UNIT_WORDS)
+        # Construct singulars the unit lists lack: "שנת מאסר", "יום עבודה".
+        | {"שנת", "שבוע", "יום"}
     )
     - _HEBREW_CURRENCY_WORDS
     - {"%", "אחוז", "אחוזים"}
