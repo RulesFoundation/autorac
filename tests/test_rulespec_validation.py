@@ -18248,6 +18248,50 @@ def test_a_unary_sign_on_a_spelled_count_signs_the_rate():
     assert 0.005 not in extract_numbers_from_text("הריבית היא −חצי אחוז")
 
 
+def test_an_ungrouped_complete_lower_bound_is_not_scaled_again():
+    for text, expected in (
+        ("הסכום הוא בין 1500 ל־3 מיליון שקלים", {1_500.0, 3_000_000.0}),
+        ("הסכום הוא בין 1,500 ל־3 מיליון שקלים", {1_500.0, 3_000_000.0}),
+        ("השיעור הוא בין 1500 ל־3 מיליון אחוזים", {15.0, 30_000.0}),
+        ("הסכום הוא בין 2 ל־3 מיליון שקלים", {2_000_000.0, 3_000_000.0}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+    assert 1_500_000_000.0 not in extract_numbers_from_text(
+        "הסכום הוא בין 1500 ל־3 מיליון שקלים"
+    )
+
+
+def test_a_unary_sign_before_a_spelled_count_and_a_percent_sign():
+    for text, expected in (
+        ("הריבית היא −שלושה%", {-0.03}),
+        ("הריבית היא −חצי%", {-0.005}),
+        ("הריבית היא −שלושה% וחצי", {-0.035}),
+        ("הריבית היא -שלושה וחצי%", {-0.035}),
+        ("הריבית היא שלושה%", {0.03}),
+    ):
+        recall = {round(v, 6) for v in _hebrew_recall(text)}
+        assert recall == expected, (text, recall)
+    assert not (
+        {0.03, 0.005} & extract_numbers_from_text("הריבית היא −שלושה% או −חצי%")
+    )
+
+
+def test_signed_spelled_range_endpoints_keep_their_sign():
+    for text, expected in (
+        ("הריבית היא −שלושה עד שלושה אחוזים", {-0.03, 0.03}),
+        ("הריבית היא בין −חצי ל־3 אחוזים", {-0.005, 0.03}),
+        ("הריבית היא בין −חצי לשלושה אחוזים", {-0.005, 0.03}),
+        ("הריבית היא −שלושה או −חצי אחוז", {-0.03, -0.005}),
+    ):
+        recall = {round(v, 6) for v in _hebrew_recall(text)}
+        assert recall == expected, (text, recall)
+        assert not (
+            {0.5, 3.0, 0.005 if -0.005 in expected else -1.0}
+            & extract_numbers_from_text(text)
+        ), text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

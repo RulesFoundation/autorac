@@ -3832,9 +3832,11 @@ def _iter_hebrew_shared_scale_range_matches(
             lower_value = _hebrew_printed_endpoint_value(printed_lower)
             if lower_value is None:
                 continue
-            if "," in printed_lower.group(0) or abs(lower_value) >= scale:
-                # "בין 2,000 ל־3 אלפים": a grouped or scale-sized number is
-                # a complete amount, not a multiplier that omits its scale.
+            if "," in printed_lower.group(0) or abs(lower_value) >= 1000:
+                # "בין 2,000 ל־3 אלפים", "בין 1500 ל־3 מיליון": a grouped or
+                # thousand-plus number is a complete amount, not a
+                # multiplier that omits its scale; only a small bare number
+                # does, as the percent-range pass counts it.
                 continue
             lower_span = (printed_lower.start(), lower_end)
         else:
@@ -3843,6 +3845,11 @@ def _iter_hebrew_shared_scale_range_matches(
                 continue
             lower_span = (spelled_lower[0], lower_end)
             lower_value = spelled_lower[1]
+            if _hebrew_unary_sign_at(text, lower_span[0] - 1):
+                # "בין −חצי ל־3 מיליון": the sign is the endpoint's, span
+                # and value alike.
+                lower_value = -lower_value
+                lower_span = (lower_span[0] - 1, lower_end)
         if _hebrew_endpoint_continues_an_amount(text, lower_span[0]):
             continue
         if needs_bound and (
@@ -4570,6 +4577,10 @@ def _iter_hebrew_percent_range_lower_matches(
             upper_scaled = _hebrew_spelled_span_carries_a_scale(
                 text, upper_start, noun.start()
             )
+        # A unary sign on the upper endpoint ("−שלושה או −חצי אחוז") is the
+        # endpoint's; the join stands before the sign.
+        if _hebrew_unary_sign_at(text, upper_start - 1):
+            upper_start -= 1
         # The join before it.
         join = _search_before(_HEBREW_RANGE_JOIN_BEFORE_PATTERN, text, upper_start, 12)
         if join is not None:
@@ -4653,6 +4664,12 @@ def _iter_hebrew_percent_range_lower_matches(
             lower_span = (spelled_lower[0], lower_flush)
             lower_value = spelled_lower[1]
             lower_first = spelled_lower[2]
+            if _hebrew_unary_sign_at(text, lower_span[0] - 1):
+                # "−שלושה עד שלושה אחוזים", "בין −חצי ל־3 אחוזים": the sign
+                # is the endpoint's, span and value alike, and the bound is
+                # read before it.
+                lower_value = -lower_value
+                lower_span = (lower_span[0] - 1, lower_flush)
         if (
             needs_bound
             and not (
@@ -4733,6 +4750,9 @@ def _iter_hebrew_percent_range_lower_matches(
                     break
                 earlier_span = (earlier[0], len(text[:earlier_end].rstrip()))
                 earlier_value = earlier[1]
+                if _hebrew_unary_sign_at(text, earlier_span[0] - 1):
+                    earlier_value = -earlier_value
+                    earlier_span = (earlier_span[0] - 1, earlier_span[1])
             if _span_overlaps(earlier_span, structural_spans) or (
                 _search_before(
                     _HEBREW_RANGE_WALK_STOP_PATTERN, text, earlier_span[0], 24
@@ -13260,6 +13280,9 @@ def _tokenize_numeric_occurrences_from_text(
                 or _PERCENT_MARKER_AFTER_NUMBER_PATTERN.match(cleaned, span[1])
             )
         )
+        # "−שלושה%", "−חצי%": the sign before a spelled count signs the
+        # rate, tail included, as it signs a printed one.
+        negative = percent is not None and _hebrew_unary_sign_at(cleaned, span[0] - 1)
         noun_before = None
         if (
             percent is None
@@ -13287,6 +13310,9 @@ def _tokenize_numeric_occurrences_from_text(
                     value += unit[1]
                 else:
                     span = (span[0], percent.end())
+                if negative:
+                    value = -value
+                    span = (span[0] - 1, span[1])
             else:
                 span = (noun_before.start(), span[1])
             if not _span_overlaps(span, grounding_spans):
