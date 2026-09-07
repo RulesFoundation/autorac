@@ -18465,6 +18465,25 @@ def test_tens_do_not_consume_a_separate_coordinated_amount():
     )
 
 
+def test_a_comma_alone_is_no_list_of_rates():
+    for text, expected in (
+        ("על הכנסה עד 500, 10% מס.", {500.0, 0.1}),
+        ("לילד שגילו 5, 3% מההכנסה.", {5.0, 0.03}),
+        ("על הכנסה עד 500, 3 מיליון שקלים", {500.0, 3_000_000.0}),
+        ("השיעורים הם 1, 2, 3 אחוזים", {0.01, 0.02, 0.03}),
+        ("השיעורים הם 2, 3 אחוזים, בהתאמה", {0.02, 0.03}),
+        ("הסכומים הם 2, 3 מיליון שקלים, בהתאמה", {2_000_000.0, 3_000_000.0}),
+        ("הסכומים הם 1, 2, 3 מיליון שקלים", {1_000_000.0, 2_000_000.0, 3_000_000.0}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+    assert 5.0 not in extract_numbers_from_text("על הכנסה עד 500, 10% מס.")
+    assert 0.05 not in extract_numbers_from_text("לילד שגילו 5, 3% מההכנסה.")
+    assert 500_000_000.0 not in extract_numbers_from_text(
+        "על הכנסה עד 500, 3 מיליון שקלים"
+    )
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

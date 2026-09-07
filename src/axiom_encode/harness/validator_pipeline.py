@@ -3888,10 +3888,16 @@ def _iter_hebrew_shared_scale_range_matches(
             if (
                 join is not None
                 and join.group("comma") is not None
-                and not _hebrew_word_stands_before(text, lower_span[0])
+                and (
+                    not _hebrew_word_stands_before(text, lower_span[0])
+                    or not _hebrew_comma_list_has_evidence(
+                        text, lower_span[0], scale_match.end(), tokens
+                    )
+                )
             ):
                 # A printed operand a comma joins shares the scale only in
-                # Hebrew text ("$500, 3 מיליון" shares nothing).
+                # Hebrew text ("$500, 3 מיליון" shares nothing) and only in
+                # a list ("על הכנסה עד 500, 3 מיליון" keeps its threshold).
                 continue
         else:
             spelled_lower = _hebrew_spelled_endpoint_before(text, lower_end, tokens)
@@ -4632,6 +4638,40 @@ _HEBREW_WORD_BEFORE_LIST_PATTERN = re.compile(
 )
 
 
+def _hebrew_comma_list_has_evidence(
+    text: str, lower_start: int, unit_end: int, tokens: "_HebrewWordTokens"
+) -> bool:
+    """Positive evidence that a comma before the upper endpoint joins a list of quantities.
+
+    An earlier item before the lower endpoint -- another comma or a
+    conjunction with a number before it, or a vav on the endpoint itself --
+    or "בהתאמה" within reach after the unit. A lone comma separates
+    clauses: "על הכנסה עד 500, 10% מס" keeps its threshold, "לילד שגילו 5,
+    3%" its age.
+    """
+    tail = text[unit_end : unit_end + 32]
+    if "בהתאמה" in tail and not any(
+        stop in tail[: tail.index("בהתאמה")] for stop in ".;\n"
+    ):
+        return True
+    earlier_join = _search_before(
+        _HEBREW_RANGE_WALK_JOIN_PATTERN, text, lower_start, 12
+    )
+    if earlier_join is None:
+        return (
+            lower_start > 0
+            and text[lower_start] == "\u05d5"
+            and text[lower_start - 1].isspace()
+        )
+    earlier_flush = len(text[: earlier_join.start()].rstrip())
+    if (
+        _search_before(_HEBREW_DIGITS_BEFORE_PATTERN, text, earlier_flush, 32)
+        is not None
+    ):
+        return True
+    return _hebrew_number_run_ending_at(text, earlier_flush, tokens, True) is not None
+
+
 def _hebrew_word_stands_before(text: str, start: int) -> bool:
     """Whether a Hebrew word anchors the comma list a printed number at ``start`` belongs to.
 
@@ -4832,10 +4872,15 @@ def _iter_hebrew_percent_range_lower_matches(
                     lower_first is None
                     and not _hebrew_word_stands_before(text, lower_span[0])
                 )
+                or not _hebrew_comma_list_has_evidence(
+                    text, lower_span[0], noun.end(), tokens
+                )
             )
         ):
             # "לפי סעיף קטן 5, 3 אחוזים", "לילד עד גיל 5, 3 אחוזים": the
             # number before the comma is a reference or a label's, no rate.
+            # "על הכנסה עד 500, 10% מס", "לילד שגילו 5, 3%": a lone comma
+            # separates clauses; a list shows an earlier item or "בהתאמה".
             # "For income up to $500, 10% applies", "under age 5, 3%": a
             # printed operand a comma joins shares the unit only in Hebrew
             # text, a Hebrew word before it; a currency sign or a Latin
