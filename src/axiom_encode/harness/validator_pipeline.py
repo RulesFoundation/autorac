@@ -2326,9 +2326,11 @@ def _parse_hebrew_number_run(
         """
         word = word_at(position)
         if word in bare_values:
+            # A bare scale word's tail scales by the tier's unit: "אלפיים
+            # וחצי" is 2,500, as "שני אלפים וחצי" is, not 3,000.
             amount, scale, following = (
                 bare_values[word],
-                scale_words.get(word, bare_values[word]),
+                min(scale_words.values()),
                 position + 1,
             )
         elif (
@@ -2615,7 +2617,8 @@ _HEBREW_MONEY_PRINTED_TAIL = (
 # it includes is a count of its own ("הסיוע כולל 3 אלפים ו־200 מיטות",
 # "התקציב הכולל לפחות 3 אלפים ו־200 עובדים").
 _HEBREW_MONEY_TOTAL_ADJECTIVE = (
-    "\u05d4?כולל(?:ת)?(?=\\s+(?:של|שלא|שאינו|שאינה|לא|יהיה|יהא|תהיה|תהא|הוא|היא|הם|הן|"
+    "\u05d4?כולל(?:ת)?(?=\\s+(?:של|(?:שלא|לא)\\s+(?:יעלה|תעלה|יפחת|תפחת)|שאינו|שאינה|"
+    "יהיה|יהא|תהיה|תהא|הוא|היא|הם|הן|"
     "\u05d4(?:שנתי|שנתית|חודשי|חודשית|בסיסי|בסיסית|מרבי|מרבית|מזערי|מזערית|"
     "מינימלי|מינימלית|מקסימלי|מקסימלית|ממוצע|ממוצעת))(?![\u0590-\u05ff]))"
 )

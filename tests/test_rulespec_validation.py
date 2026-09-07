@@ -17719,6 +17719,42 @@ def test_the_verb_includes_introduces_a_count_of_its_own():
     }
 
 
+def test_a_bare_dual_scales_its_tail_by_the_thousand():
+    for text, expected in (
+        ("סכום של אלפיים וחצי שקלים", 2_500.0),
+        ("סכום של אלפיים ורבע שקלים", 2_250.0),
+        ("סכום של אלפיים ושלושה רבעים שקלים", 2_750.0),
+        ("סכום של שני אלפים וחצי שקלים", 2_500.0),
+        ("סכום של אלף וחצי שקלים", 1_500.0),
+    ):
+        assert _hebrew_recall(text) == {expected}, (text, _hebrew_recall(text))
+        grounded = extract_numbers_from_text(text)
+        assert expected in grounded and not ({3_000.0, 3_500.0} & grounded), (
+            text,
+            grounded,
+        )
+
+
+def test_includes_no_fewer_than_introduces_a_count_of_its_own():
+    for text in (
+        "הסיוע כולל לא פחות מ־3 אלפים ו־200 מיטות",
+        "הסיוע כולל לא פחות משלושה אלפים ומאתיים מיטות",
+        "המענק כולל לא יותר מ־3 אלפים ו־200 מלגות",
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == {3_200.0}, (text, recall)
+        assert not ({3_000.0, 200.0} & extract_numbers_from_text(text)), text
+    # The adjective before a threshold predicate still binds.
+    assert _hebrew_recall("התקציב הכולל לא יעלה על 3 מיליון ו־20 עובדים") == {
+        3_000_000.0,
+        20.0,
+    }
+    assert _hebrew_recall("המחזור הכולל שלא יפחת מ־3 מיליון ו־20 עובדים") == {
+        3_000_000.0,
+        20.0,
+    }
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
