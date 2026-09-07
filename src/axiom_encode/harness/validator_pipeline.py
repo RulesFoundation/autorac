@@ -2019,8 +2019,10 @@ _HEBREW_PERCENT_NOUN_BEFORE_PATTERN = re.compile(
 # A printed number followed by the percent word: "23 אחוזים" is 0.23 the way
 # "23%" is. The lookbehind keeps a fraction's denominator ("16 1⁄2 אחוזים")
 # for the fraction pass, which reads the percent word itself.
+# A hyphen after a Hebrew letter joins a prefix to the number ("ל-3", "ב-5")
+# and is no sign; only a sign that no Hebrew letter precedes negates.
 _HEBREW_DIGIT_PERCENT_PATTERN = re.compile(
-    "(?<![\\d.,\u2044/])(?P<sign>[-\u2212])?"
+    "(?<![\\d.,\u2044/])(?:(?<![\u0590-\u05ff])(?P<sign>[-\u2212]))?"
     "(?:(?P<whole>\\d+)\\s+(?=\\d+\\s*/))?"
     "(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
     "(?:\\s*/\\s*(?P<denominator>\\d+))?"
@@ -2579,6 +2581,54 @@ def _hebrew_definite_ordinal(word: str, bare: str) -> bool:
     return word[: len(word) - len(bare)].rstrip("\u05be").endswith("\u05d4")
 
 
+def _hebrew_unary_sign_at(text: str, index: int) -> bool:
+    """Whether ``text[index]`` is a minus sign, not a prefix's hyphen ("ל-3")."""
+    if index < 0 or text[index] not in "-\u2212":
+        return False
+    return index == 0 or not ("\u0590" <= text[index - 1] <= "\u05ff")
+
+
+def _hebrew_vav_fraction_tail(words: "Sequence[str]") -> float | None:
+    """The value of a vav-bound fractional tail: "וחצי", "ושלושה רבעים"."""
+    if not words or not words[0].startswith("\u05d5"):
+        return None
+    head = words[0][1:]
+    if len(words) == 1 and head in _HEBREW_MIXED_FRACTION_VALUES:
+        return _HEBREW_MIXED_FRACTION_VALUES[head]
+    if (
+        len(words) == 2
+        and head in _HEBREW_FRACTION_COUNT_VALUES
+        and words[1] in _HEBREW_COUNTED_FRACTION_VALUES
+    ):
+        return (
+            _HEBREW_FRACTION_COUNT_VALUES[head]
+            * _HEBREW_COUNTED_FRACTION_VALUES[words[1]]
+        )
+    return None
+
+
+def _hebrew_printed_mixed_count(
+    text: str, run: "Sequence[re.Match[str]]"
+) -> tuple[float, int] | None:
+    """A printed whole and a spelled fractional tail before the percent noun.
+
+    "3 וחצי אחוזים" is three and a half percent: the run before the noun is
+    the tail alone, and the whole is the printed number flush before it.
+    Returns (count, start of the count) or None.
+    """
+    tail = _hebrew_vav_fraction_tail([token.group(0) for token in run])
+    if tail is None:
+        return None
+    printed = _search_before(_HEBREW_DIGITS_BEFORE_PATTERN, text, run[0].start(), 32)
+    if printed is None:
+        return None
+    whole = _hebrew_printed_endpoint_value(printed)
+    if whole is None:
+        return None
+    magnitude = abs(whole) + tail
+    return (-magnitude if printed.group("sign") else magnitude), printed.start()
+
+
 def _hebrew_fractional_count(words: "Sequence[str]") -> float | None:
     """A count of the percent noun that is itself a fraction, or None.
 
@@ -2619,6 +2669,11 @@ def _iter_hebrew_percent_phrase_matches(
     for match in _HEBREW_PERCENT_PHRASE_PATTERN.finditer(text):
         tail = match.group("tail")
         tail_count = match.group("tail_count")
+        end = match.end()
+        if (tail or tail_count) and _HEBREW_UNIT_AFTER_PATTERN.match(text, end):
+            # "שני אחוזים וחצי שקל": the half is the shekel's, not the rate's.
+            tail = tail_count = None
+            end = match.end("noun")
         count_value: float | None = None
         count_start = match.start()
         negative = False
@@ -2635,7 +2690,7 @@ def _iter_hebrew_percent_phrase_matches(
                 match.group("whole") or 0
             )
             count_start = match.start("whole" if match.group("whole") else "numerator")
-            if count_start > 0 and text[count_start - 1] in "-\u2212":
+            if _hebrew_unary_sign_at(text, count_start - 1):
                 negative = True
                 count_start -= 1
         elif match.group("digits"):
@@ -2647,7 +2702,7 @@ def _iter_hebrew_percent_phrase_matches(
                 continue
             count_value = float(match.group("digits").replace(",", ""))
             digits_start = match.start("digits")
-            if digits_start > 0 and text[digits_start - 1] in "-\u2212":
+            if _hebrew_unary_sign_at(text, digits_start - 1):
                 negative = True
                 count_start = digits_start - 1
         else:
@@ -2659,7 +2714,10 @@ def _iter_hebrew_percent_phrase_matches(
             if tokens is None:
                 tokens = _HebrewWordTokens(text)
             run = _hebrew_word_run_before(text, match.start(), tokens=tokens)
-            for width in range(len(run), 0, -1):
+            mixed = _hebrew_printed_mixed_count(text, run)
+            if mixed is not None:
+                count_value, count_start = mixed
+            for width in range(len(run) if mixed is None else 0, 0, -1):
                 words = [token.group(0) for token in run[-width:]]
                 parsed = _parse_hebrew_number_run(words)
                 if parsed is not None and parsed[0] == len(words):
@@ -2694,7 +2752,7 @@ def _iter_hebrew_percent_phrase_matches(
         # The sign belongs to the whole mixed quantity, tail included.
         if negative:
             value = -value
-        matches.append(((count_start, match.end()), value / 100))
+        matches.append(((count_start, end), value / 100))
     return matches
 
 
@@ -2709,7 +2767,7 @@ _HEBREW_PERCENT_NOUN_ANYWHERE_PATTERN = re.compile(
 # fraction with an optional whole ("-2", "1/2", "16 1⁄2"). A number after a
 # slash is a denominator, never an endpoint of its own.
 _HEBREW_DIGITS_BEFORE_PATTERN = re.compile(
-    "(?<![\\d.,/\u2044])(?P<sign>[-\u2212])?"
+    "(?<![\\d.,/\u2044])(?:(?<![\u0590-\u05ff])(?P<sign>[-\u2212]))?"
     "(?:(?:(?P<whole>\\d+)\\s+)?(?P<numerator>\\d+)\\s*[/\u2044]\\s*(?P<denominator>\\d+)"
     "|(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?))\\s+$"
 )
@@ -2735,7 +2793,7 @@ def _hebrew_printed_endpoint_value(match: "re.Match[str]") -> float | None:
 # The cleaner detaches a maqaf into a space, so "ל־3" arrives here as "ל 3".
 _HEBREW_RANGE_JOIN_BEFORE_PATTERN = re.compile(
     "(?:(?<![\u0590-\u05ff])(?P<free>עד|ועד|לבין|או)\\s+"
-    "|(?<![\u0590-\u05ff])(?P<bound>[\u05dc\u05d5])(?:\u05be|\\s)\\s*"
+    "|(?<![\u0590-\u05ff])(?P<bound>[\u05dc\u05d5])(?:\u05be|[-\u2013]|\\s)\\s*"
     "|\\s(?P<dash>[-\u2013\u2014])\\s)$"
 )
 _HEBREW_RANGE_LOWER_BOUND_PATTERN = re.compile(
@@ -3245,19 +3303,67 @@ _HEBREW_STRUCTURAL_UNIT_NOUN_WORDS = (
     "מקבלים",
     "מקבלות",
     "נהנים",
+    "נכים",
+    "נכות",
+    "עיוורים",
+    "עיוורות",
+    "חולים",
+    "חולות",
+    "גמלאים",
+    "גמלאיות",
+    "פנסיונרים",
+    "מובטלים",
+    "מובטלות",
+    "עצמאים",
+    "עצמאיות",
+    "שכירים",
+    "שכירות",
+    "מעסיקים",
+    "מעבידים",
+    "ספקים",
+    "לקוחות",
+    "תאגידים",
+    "עסקים",
+    "מפעלים",
+    "יישובים",
+    "רשויות",
+    "מוסדות",
+    "בתי ספר",
+    "כיתות",
+    "מיטות",
+    "מטופלים",
+    "מטופלות",
+    "יתומים",
+    "אלמנות",
+    "אלמנים",
 )
 
 
 def _hebrew_unit_alternation(units: "Iterable[str]") -> str:
-    """The units as a regex alternation; an abbreviation's quote is ASCII or gershayim."""
+    """The units as a regex alternation.
+
+    An abbreviation's quote is ASCII or gershayim, and a masculine plural
+    brings its construct form ("מקבלים" and "מקבלי קצבאות", "עובדים" and
+    "עובדי המפעל").
+    """
+    forms: set[str] = set()
+    for unit in units:
+        forms.add(unit)
+        if unit.endswith("ים") and len(unit) > 3:
+            forms.add(unit[:-2] + "י")
     return "|".join(
         re.escape(unit).replace('"', '["\u05f4]')
-        for unit in sorted(units, key=len, reverse=True)
+        for unit in sorted(forms, key=len, reverse=True)
     )
 
 
 _HEBREW_STRUCTURAL_UNIT_NOUNS = _hebrew_unit_alternation(
     _HEBREW_STRUCTURAL_UNIT_NOUN_WORDS
+)
+# A unit right after a position: the fractional tail before it belongs to
+# the unit's quantity, not to a rate before the tail.
+_HEBREW_UNIT_AFTER_PATTERN = re.compile(
+    "\\s+(?:" + _HEBREW_STRUCTURAL_UNIT_NOUNS + ")(?![\u0590-\u05ff])"
 )
 # A quantity, not a further reference: a number followed by a unit noun.
 _HEBREW_STRUCTURAL_NOT_A_QUANTITY = "(?!\\s*(?:" + _HEBREW_STRUCTURAL_UNIT_NOUNS + "))"
@@ -10520,10 +10626,21 @@ def _tokenize_numeric_occurrences_from_text(
             else _HEBREW_PERCENT_WORD_PATTERN.match(cleaned, span[1])
         )
         noun_before = None
-        if percent is None and not definite_ordinal:
+        if (
+            percent is None
+            and not definite_ordinal
+            and not raw_word.startswith("\u05d5")
+        ):
+            # "אחוז אחד" is one percent; "שלושה אחוזים וחמישה שקלים" is three
+            # percent and five shekels: a vav-bound count is a new quantity,
+            # and a noun a phrase already read owns no further count.
             noun_before = _search_before(
                 _HEBREW_PERCENT_NOUN_BEFORE_PATTERN, cleaned, span[0]
             )
+            if noun_before is not None and _span_overlaps(
+                noun_before.span(), inventory_spans
+            ):
+                noun_before = None
         if percent is not None or noun_before is not None:
             span = (
                 (span[0], percent.end())

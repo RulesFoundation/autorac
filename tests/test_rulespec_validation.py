@@ -15961,6 +15961,66 @@ def test_a_malformed_teen_never_raises():
         _hebrew_recall(text)
 
 
+def test_a_vav_bound_count_after_a_percentage_is_a_new_quantity():
+    text = "ישולם מס של שלושה אחוזים וחמישה שקלים"
+    grounded = extract_numbers_from_text(text)
+    assert {0.03, 5.0} <= grounded, grounded
+    assert 0.05 not in grounded
+    assert _hebrew_recall(text) == {0.03, 5.0}
+    assert _hebrew_recall("בשיעור של אחוז אחד מההכנסה") == {0.01}
+    assert _hebrew_recall("ישולם מס של אחוז אחד ושני שקלים") == {0.01, 2.0}
+
+
+def test_a_fractional_tail_with_its_own_unit_is_not_the_rate():
+    text = "ישולם מס של שני אחוזים וחצי שקל"
+    grounded = extract_numbers_from_text(text)
+    assert {0.02, 0.5} <= grounded, grounded
+    assert 0.025 not in grounded
+    assert _hebrew_recall(text) == {0.02, 0.5}
+    assert _hebrew_recall("ישולם מס של שני אחוזים וחצי מהשכר") == {0.025}
+    assert _hebrew_recall("ישולם מס של 2 אחוזים ושלושה רבעים שקל") == {0.02, 0.75}
+
+
+def test_a_printed_whole_with_a_spelled_fractional_tail_is_one_count():
+    for text, expected in (
+        ("ישולם מס של 3 וחצי אחוזים", 0.035),
+        ("ישולם מס של -3 וחצי אחוזים", -0.035),
+        ("ישולם מס של 2 ושלושה רבעים אחוזים", 0.0275),
+        ("ישולם מס של 3 אחוזים וחצי", 0.035),
+        ("ישולם מס של שלושה וחצי אחוזים", 0.035),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert any(abs(v - expected) < 1e-12 for v in grounded), (text, grounded)
+        assert not ({3.0, 0.005, 0.03, 2.0} & _hebrew_recall(text)), (
+            text,
+            _hebrew_recall(text),
+        )
+        assert {round(v, 12) for v in _hebrew_recall(text)} == {expected}, text
+
+
+def test_a_hyphen_after_a_prefix_is_no_sign():
+    for text, expected in (
+        ("שיעור המס יהיה בין 2 ל-3 אחוזים", {0.02, 0.03}),
+        ("שיעור המס יהיה בין 2 ל־3 אחוזים", {0.02, 0.03}),
+        ("שיעור המס יהיה ל-3 אחוזים", {0.03}),
+        ("שיעור המס יהיה -3 אחוזים", {-0.03}),
+        ("שיעור המס יהיה בין -2 ל-3 אחוזים", {-0.02, 0.03}),
+        ("התשלום יוגדל ב-2 אחוזים וחצי", {0.025}),
+    ):
+        assert {round(v, 12) for v in _hebrew_recall(text)} == expected, (
+            text,
+            _hebrew_recall(text),
+        )
+
+
+def test_a_people_count_in_any_form_marks_a_quantity():
+    assert _hebrew_recall("לפי סעיפים 1, 2, 4, 100 נכים זכאים למענק") == {100.0}
+    assert _hebrew_recall("לפי סעיפים 1, 2, 4, 100 מקבלי קצבאות זכאים למענק") == {100.0}
+    assert _hebrew_recall("לפי סעיפים 1, 2, 4, 100 עובדי המפעל זכאים למענק") == {100.0}
+    assert _hebrew_recall("לפי סעיפים 1 ו־2, 20 גמלאים") == {20.0}
+    assert _hebrew_recall("לפי סעיפים 1, 2 או 3, 15 עצמאיות") == {15.0}
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
