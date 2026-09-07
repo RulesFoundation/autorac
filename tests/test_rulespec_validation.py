@@ -18292,6 +18292,50 @@ def test_signed_spelled_range_endpoints_keep_their_sign():
         ), text
 
 
+def test_a_unary_sign_before_a_spelled_quantity_signs_it():
+    for text, expected in (
+        ("הסכום הוא −שלושה מיליון שקלים", {-3_000_000.0}),
+        ("הסכום הוא −חצי שקל", {-0.5}),
+        ("הסכום הוא -שלושה שקלים", {-3.0}),
+        ("הסכום הוא שלושה שקלים", {3.0}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+    assert not (
+        {3_000_000.0, 0.5}
+        & extract_numbers_from_text("הסכום הוא −שלושה מיליון שקלים ו־−חצי שקל")
+    )
+
+
+def test_a_signed_spelled_upper_endpoint_keeps_the_shared_scale():
+    for text, expected in (
+        ("הריבית היא −שלושה עד −שניים אלפים אחוזים", {-30.0, -20.0}),
+        ("הריבית היא −3 עד −2 אלפים אחוזים", {-30.0, -20.0}),
+        ("הסכום הוא −שלושה עד −שניים מיליון שקלים", {-3_000_000.0, -2_000_000.0}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+        assert not ({3.0, 2.0, 0.2} & extract_numbers_from_text(text)), text
+
+
+def test_shared_scales_reach_every_earlier_alternative():
+    for text, expected in (
+        ("הסכום הוא 1, 2 או 3 מיליון שקלים", {1_000_000.0, 2_000_000.0, 3_000_000.0}),
+        (
+            "הסכום הוא אחד, שניים או שלושה מיליון שקלים",
+            {1_000_000.0, 2_000_000.0, 3_000_000.0},
+        ),
+        ("השיעור הוא 1, 2 או 3 אלפים אחוזים", {10.0, 20.0, 30.0}),
+        ("הסכום הוא 1 או 2 או 3 מיליון שקלים", {1_000_000.0, 2_000_000.0, 3_000_000.0}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+        assert not ({1.0, 2.0} & extract_numbers_from_text(text)), text
+    assert 5_000_000.0 not in extract_numbers_from_text(
+        "לפי סעיף קטן 5, 2 או 3 מיליון שקלים"
+    )
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

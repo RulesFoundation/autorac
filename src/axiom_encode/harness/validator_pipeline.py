@@ -3798,6 +3798,10 @@ def _iter_hebrew_shared_scale_range_matches(
             if spelled_upper is None:
                 continue
             upper_start = spelled_upper[0]
+        if _hebrew_unary_sign_at(text, upper_start - 1):
+            # "−שלושה עד −שניים אלפים": the upper endpoint's sign is its
+            # own; the join stands before it.
+            upper_start -= 1
         join = _search_before(
             _HEBREW_SHARED_SCALE_JOIN_BEFORE_PATTERN, text, upper_start, 12
         )
@@ -3896,6 +3900,61 @@ def _iter_hebrew_shared_scale_range_matches(
                 is_rate,
             )
         )
+        # Earlier alternatives share the scale too: "1, 2 או 3 מיליון",
+        # "אחד, שניים או שלושה מיליון". The walk back stops at a reference,
+        # a label noun, a complete amount and a bare start.
+        cursor = lower_span[0]
+        for _ in range(16):
+            earlier_join = _search_before(
+                _HEBREW_RANGE_WALK_JOIN_PATTERN, text, cursor, 12
+            )
+            if earlier_join is None:
+                break
+            earlier_flush = len(text[: earlier_join.start()].rstrip())
+            earlier_printed = _search_before(
+                _HEBREW_DIGITS_BEFORE_PATTERN, text, earlier_flush, 32
+            )
+            if earlier_printed is not None:
+                earlier_value = _hebrew_printed_endpoint_value(earlier_printed)
+                if (
+                    earlier_value is None
+                    or "," in earlier_printed.group(0)
+                    or abs(earlier_value) >= 1000
+                ):
+                    break
+                earlier_span = (earlier_printed.start(), earlier_flush)
+            else:
+                earlier_spelled = _hebrew_spelled_endpoint_before(
+                    text, earlier_flush, tokens
+                )
+                if earlier_spelled is None:
+                    break
+                earlier_span = (earlier_spelled[0], earlier_flush)
+                earlier_value = earlier_spelled[1]
+                if _hebrew_unary_sign_at(text, earlier_span[0] - 1):
+                    earlier_value = -earlier_value
+                    earlier_span = (earlier_span[0] - 1, earlier_flush)
+            if (
+                _span_overlaps(earlier_span, structural_spans)
+                or _hebrew_endpoint_continues_an_amount(text, earlier_span[0])
+                or _search_before(
+                    _HEBREW_SHARED_SCALE_LABEL_BEFORE_PATTERN, text, earlier_span[0], 24
+                )
+                is not None
+                or _search_before(
+                    _HEBREW_RANGE_WALK_STOP_PATTERN, text, earlier_span[0], 24
+                )
+                is not None
+            ):
+                break
+            matches.append(
+                (
+                    earlier_span,
+                    earlier_value * scale / 100 if is_rate else earlier_value * scale,
+                    is_rate,
+                )
+            )
+            cursor = earlier_span[0]
     return matches
 
 
@@ -13280,9 +13339,9 @@ def _tokenize_numeric_occurrences_from_text(
                 or _PERCENT_MARKER_AFTER_NUMBER_PATTERN.match(cleaned, span[1])
             )
         )
-        # "−שלושה%", "−חצי%": the sign before a spelled count signs the
-        # rate, tail included, as it signs a printed one.
-        negative = percent is not None and _hebrew_unary_sign_at(cleaned, span[0] - 1)
+        # "−שלושה%", "−חצי%", "−שלושה מיליון שקלים": the sign before a
+        # spelled number signs it, tail included, as it signs a printed one.
+        negative = _hebrew_unary_sign_at(cleaned, span[0] - 1)
         noun_before = None
         if (
             percent is None
@@ -13336,6 +13395,9 @@ def _tokenize_numeric_occurrences_from_text(
                 )
                 inventory_spans.append(span)
             continue
+        if negative:
+            value = -value
+            span = (span[0] - 1, span[1])
         if not _span_overlaps(span, grounding_spans):
             collector.add_grounding(cleaned_view, span, value)
             grounding_spans.append(span)
