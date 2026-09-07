@@ -3542,12 +3542,12 @@ _HEBREW_UNIT_AFTER_PATTERN = re.compile(
 # ... and not one that opens a temporal phrase: "לידה חמישית שנה לאחר
 # הלידה הקודמת" is a fifth birth a year after the previous one, not a fifth
 # of a year.
+# A bound after the unit ("עשירית שקל לפחות") is no such phrase.
 _HEBREW_FRACTION_UNIT_AFTER_PATTERN = re.compile(
     "\\s+(?:"
     + _hebrew_unit_alternation(_HEBREW_MEASURE_UNIT_WORDS)
     + ")(?![\u0590-\u05ff])"
-    "(?!\\s+(?:לאחר|אחרי|לפני|מיום|ממועד|מתום|מאז|קודם|לפחות|לכל היותר|ויותר|"
-    "לפחות)(?![\u0590-\u05ff]))"
+    "(?!\\s+(?:לאחר|אחרי|לפני|מיום|ממועד|מתום|מאז|קודם)(?![\u0590-\u05ff]))"
 )
 # Every word the numeric grammar reads, for the guards below.
 _HEBREW_STRUCTURAL_NUMBER_WORD_ANY = _hebrew_alternation(
@@ -3586,22 +3586,51 @@ _HEBREW_STRUCTURAL_RANGE_JOIN = "(?:עד|[-\u2013\u2014])"
 # printed number with an optional printed fraction ("3 1⁄2") or spelled tail
 # ("3 וחצי"), or a run of up to sixteen number words ("שלושים ואחד אלף
 # מאתיים ושלושים וחמישה"), before the unit.
-_HEBREW_STRUCTURAL_COORDINATED_QUANTITY = (
-    "\\s*(?:"
-    + _HEBREW_STRUCTURAL_LIST_JOIN
-    + "|"
-    + _HEBREW_STRUCTURAL_RANGE_JOIN
-    + ")\\s*(?:"
+_HEBREW_STRUCTURAL_COORDINATED_ENDPOINT = (
+    "(?:"
     "(?:(?<![\u05d0-\u05ea])[-\u2212])?"
     "(?:(?:\\d+\\s+)?\\d+\\s*[/\u2044]\\s*\\d+"
     "|(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:[.,]\\d+)?)"
     "(?:\\s+\u05d5?(?:" + _HEBREW_STRUCTURAL_NUMBER_WORD_ANY + ")){0,4}"
     "|\u05d5?(?:" + _HEBREW_STRUCTURAL_NUMBER_WORD_ANY + ")"
     "(?:\\s+\u05d5?(?:" + _HEBREW_STRUCTURAL_NUMBER_WORD_ANY + ")){0,15}"
-    ")\\s*(?:" + _HEBREW_STRUCTURAL_UNIT_NOUNS + ")(?![\u0590-\u05ff])"
+    ")"
+)
+_HEBREW_STRUCTURAL_COORDINATING_JOIN = (
+    "(?:" + _HEBREW_STRUCTURAL_LIST_JOIN + "|" + _HEBREW_STRUCTURAL_RANGE_JOIN + ")"
+)
+# One or more endpoints joined by a conjunction or a range word ("1 או 2 או 3
+# שקלים"), then the unit. A comma is no join here: after a closed reference
+# list the sentence goes on ("סעיפים 1 ו־2, 100 דולר").
+_HEBREW_STRUCTURAL_COORDINATED_QUANTITY = (
+    "(?:\\s*"
+    + _HEBREW_STRUCTURAL_COORDINATING_JOIN
+    + "\\s*"
+    + _HEBREW_STRUCTURAL_COORDINATED_ENDPOINT
+    + ")+\\s*(?:"
+    + _HEBREW_STRUCTURAL_UNIT_NOUNS
+    + ")(?![\u0590-\u05ff])"
 )
 _HEBREW_STRUCTURAL_NOT_A_COORDINATED_QUANTITY = (
     "(?!" + _HEBREW_STRUCTURAL_COORDINATED_QUANTITY + ")"
+)
+# After a singular noun a comma may open a list of amounts ("תוספת 1, 2 או 3
+# שקלים") as long as a conjunction or range word closes it before the unit.
+_HEBREW_STRUCTURAL_LIST_OF_AMOUNTS = (
+    "(?:\\s*(?:,|"
+    + _HEBREW_STRUCTURAL_COORDINATING_JOIN
+    + ")\\s*"
+    + _HEBREW_STRUCTURAL_COORDINATED_ENDPOINT
+    + ")*\\s*"
+    + _HEBREW_STRUCTURAL_COORDINATING_JOIN
+    + "\\s*"
+    + _HEBREW_STRUCTURAL_COORDINATED_ENDPOINT
+    + "\\s*(?:"
+    + _HEBREW_STRUCTURAL_UNIT_NOUNS
+    + ")(?![\u0590-\u05ff])"
+)
+_HEBREW_STRUCTURAL_NOT_A_LIST_OF_AMOUNTS = (
+    "(?!" + _HEBREW_STRUCTURAL_LIST_OF_AMOUNTS + ")"
 )
 _HEBREW_COORDINATED_UNIT_AFTER_PATTERN = re.compile(
     _HEBREW_STRUCTURAL_COORDINATED_QUANTITY
@@ -3668,7 +3697,7 @@ _HEBREW_STRUCTURAL_REFERENCE_PATTERN = re.compile(
     "(?:"
     + _HEBREW_STRUCTURAL_DIGIT_ITEM
     + _HEBREW_STRUCTURAL_NOT_A_QUANTITY_TAILED
-    + _HEBREW_STRUCTURAL_NOT_A_COORDINATED_QUANTITY
+    + _HEBREW_STRUCTURAL_NOT_A_LIST_OF_AMOUNTS
     + "(?:\\s*"
     + _HEBREW_STRUCTURAL_LIST_JOIN
     + "\\s*"
@@ -3681,7 +3710,7 @@ _HEBREW_STRUCTURAL_REFERENCE_PATTERN = re.compile(
     + "|"
     + _HEBREW_STRUCTURAL_NUMBER_WORD_BODY
     + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
-    + _HEBREW_STRUCTURAL_NOT_A_COORDINATED_QUANTITY
+    + _HEBREW_STRUCTURAL_NOT_A_LIST_OF_AMOUNTS
     + ")"
     ")"
     "(?![\u0590-\u05ff\\d])"

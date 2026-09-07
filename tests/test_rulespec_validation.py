@@ -16377,6 +16377,34 @@ def test_a_temporal_phrase_after_an_ordinal_is_no_fraction():
     assert _hebrew_recall("ישולם סכום של עשירית שקל") == {0.1}
 
 
+def test_a_bound_after_a_fraction_of_a_unit_keeps_the_fraction():
+    for text, expected in (
+        ("ישולם סכום של עשירית שקל לפחות", {0.1}),
+        ("תקופה של חמישית שנה לפחות", {0.2}),
+        ("ישולם סכום של עשירית שקל לכל היותר", {0.1}),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert not ({10.0, 5.0} & grounded), (text, grounded)
+        assert {round(v, 12) for v in _hebrew_recall(text)} == expected, (
+            text,
+            _hebrew_recall(text),
+        )
+    assert _hebrew_recall(
+        "אישה שילדה לידה חמישית שנה לאחר הלידה הקודמת זכאית למענק של 100 שקלים"
+    ) == {5.0, 100.0}
+
+
+def test_a_coordinated_list_of_amounts_keeps_every_amount():
+    for text, expected in (
+        ("תוספת 1 או 2 או 3 שקלים", {1.0, 2.0, 3.0}),
+        ("תוספת 1, 2 או 3 שקלים", {1.0, 2.0, 3.0}),
+        ("תוספת 1, 2, 3 או 4 נקודות זיכוי", {1.0, 2.0, 3.0, 4.0}),
+    ):
+        assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+    assert _hebrew_recall("לפי סעיפים 1, 2 או 3 ישולם סכום של 100 שקלים") == {100.0}
+    assert _hebrew_recall("לפי סעיף 1 או 2 ישולם סכום של 100 שקלים") == {100.0}
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
