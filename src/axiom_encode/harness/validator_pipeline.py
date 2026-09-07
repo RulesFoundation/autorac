@@ -2068,15 +2068,6 @@ _HEBREW_PERCENT_NOUN_BEFORE_PATTERN = re.compile(
 # A hyphen after a Hebrew letter joins a prefix to the number ("ל-3", "ב-5")
 # and is no sign; only a sign that no Hebrew letter precedes negates, and a
 # maqaf is no letter ("ב־−2" is minus two under the prefix).
-_HEBREW_DIGIT_PERCENT_PATTERN = re.compile(
-    "(?<![\\d.,\u2044/])(?:(?<![\u05d0-\u05ea])(?P<sign>[-\u2212]))?"
-    "(?:(?P<whole>\\d+)\\s+(?=\\d+\\s*/))?"
-    "(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
-    "(?:\\s*/\\s*(?P<denominator>\\d+))?"
-    # The percent noun, or the sign after a fraction ("1/2%", "3 1 / 2%")
-    # -- a bare number before the sign is the general digit pass's.
-    "(?:\\s+אחוז(?:ים|י)?(?![\u0590-\u05ff])|(?(denominator)\\s*%|(?!)))"
-)
 _ASCII_SLASH_BEFORE_NUMBER_PATTERN = re.compile("/\\s*$")
 _SLASH_BEFORE_NUMBER_PATTERN = re.compile("[/\u2044]\\s*$")
 
@@ -2870,6 +2861,34 @@ _HEBREW_FRACTION_COUNT_VALUES = {
     "תשע": 9.0,
     "תשעת": 9.0,
 }
+
+# Defined after the fraction vocabularies its tail lookahead names.
+_HEBREW_DIGIT_PERCENT_PATTERN = re.compile(
+    "(?<![\\d.,\u2044/])(?:(?<![\u05d0-\u05ea])(?P<sign>[-\u2212]))?"
+    "(?:(?P<whole>\\d+)\\s+(?=\\d+\\s*/))?"
+    "(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
+    "(?:\\s*/\\s*(?P<denominator>\\d+))?"
+    # The percent noun; the sign after a fraction ("1/2%", "3 1 / 2%"); or
+    # the sign before a Hebrew fractional tail ("3% וחצי" is three and a
+    # half percent). A bare number before a bare sign is the general digit
+    # pass's.
+    "(?:\\s+אחוז(?:ים|י)?(?![\u0590-\u05ff])|(?(denominator)\\s*%|\\s*%(?=\\s+\u05d5(?:"
+    + "|".join(
+        re.escape(w)
+        for w in sorted(_HEBREW_MIXED_FRACTION_VALUES, key=len, reverse=True)
+    )
+    + "|(?:"
+    + "|".join(
+        re.escape(w)
+        for w in sorted(_HEBREW_FRACTION_COUNT_VALUES, key=len, reverse=True)
+    )
+    + ")\\s+(?:"
+    + "|".join(
+        re.escape(w)
+        for w in sorted(_HEBREW_COUNTED_FRACTION_VALUES, key=len, reverse=True)
+    )
+    + "))(?![\u0590-\u05ff]))))"
+)
 # Construct plurals ("רבעי השכר", "שלישי ההכנסה") are fractions only after a
 # count, because "שלישי" alone is the ordinal "third".
 _HEBREW_FRACTION_CONSTRUCT_VALUES = {
@@ -3014,7 +3033,13 @@ def _iter_hebrew_fraction_word_matches(
         if count:
             value *= _HEBREW_FRACTION_COUNT_VALUES[count]
         matches.append(((match.start(), match.end("fraction")), value))
-    return matches
+    # A vav-bound fraction word that is the tail of a rate before it ("שלושה%
+    # וחצי") is read with the rate by the percent passes.
+    return [
+        (span, value)
+        for span, value in matches
+        if not _hebrew_fraction_word_is_percent_tail(text, span)
+    ]
 
 
 # A percentage phrase: an optional count, the percent noun, an optional
@@ -3254,6 +3279,11 @@ def _iter_hebrew_percent_phrase_matches(
             mixed = _hebrew_printed_mixed_count(text, run)
             if mixed is not None:
                 count_value, count_start = mixed
+                if count_value < 0:
+                    # "-3 וחצי אחוזים וחצי" is minus four percent: the sign
+                    # belongs to the whole, tail after the noun included.
+                    negative = True
+                    count_value = -count_value
             # A scaled count is the rate's own ("שלושת אלפים אחוזים" is
             # 3,000 percent) unless a money amount governs the run: "סכום
             # של 3 מיליון ועשרים אחוזים" and "סכום של שלושה מיליון ועשרים
@@ -3540,8 +3570,13 @@ _HEBREW_SHARED_SCALE_LABEL_BEFORE_PATTERN = re.compile(
 
 
 def _hebrew_scale_floor(value: float) -> float:
-    """The largest scale (a billion, a million, a thousand) that divides ``value``."""
-    for scale in (1_000_000_000.0, 1_000_000.0, 1000.0):
+    """The largest place (a billion down to a ten) that divides ``value``.
+
+    A remainder must lie below the place the amount so far ends at: after
+    "3 אלפים ומאה" (3,100) a printed "ו־20" is a remainder, after "3 אלפים
+    ומאה ועשרים" (3,120) only units are.
+    """
+    for scale in (1_000_000_000.0, 1_000_000.0, 1000.0, 100.0, 10.0):
         if value >= scale and value % scale == 0:
             return scale
     return 1.0
@@ -3779,6 +3814,28 @@ _HEBREW_PERCENT_TAIL_AFTER_PATTERN = re.compile(
     )
     + "))(?![\u0590-\u05ff])"
 )
+
+
+_HEBREW_PERCENT_MARKER_BEFORE_TAIL_PATTERN = re.compile(
+    "(?:%|(?<![\u0590-\u05ff])\u05d4?אחוז(?:ים|י)?)\\s+$"
+)
+
+
+def _hebrew_fraction_word_is_percent_tail(text: str, span: tuple[int, int]) -> bool:
+    """Whether a vav-bound fraction word is the tail of a rate before it.
+
+    "שלושה% וחצי", "3% ושלושה רבעים": the percent passes read the tail
+    with the rate. A unit of its own after the word ("אחוזים וחצי שקל")
+    keeps the word a quantity of that unit.
+    """
+    return (
+        text[span[0] : span[0] + 1] == "\u05d5"
+        and _search_before(
+            _HEBREW_PERCENT_MARKER_BEFORE_TAIL_PATTERN, text, span[0], 12
+        )
+        is not None
+        and _HEBREW_UNIT_AFTER_PATTERN.match(text, span[1]) is None
+    )
 
 
 def _hebrew_percent_unit_after(text: str, end: int) -> tuple[int, float] | None:
@@ -4169,7 +4226,10 @@ _HEBREW_RANGE_LOWER_BOUND_PATTERN = re.compile(
 
 
 def _hebrew_number_run_ending_at(
-    text: str, end: int, tokens: "_HebrewWordTokens"
+    text: str,
+    end: int,
+    tokens: "_HebrewWordTokens",
+    allow_scale: bool = False,
 ) -> tuple[int, float, str] | None:
     """The longest spelled number ending flush at ``end``: (start, value, first word)."""
     run = _hebrew_word_run_before(text, end, tokens=tokens)
@@ -4184,7 +4244,7 @@ def _hebrew_number_run_ending_at(
         if (
             parsed is not None
             and parsed[0] == len(words)
-            and not parsed[2] & _HEBREW_SCALE_KINDS
+            and (allow_scale or not parsed[2] & _HEBREW_SCALE_KINDS)
         ):
             return run[-width].start(), parsed[1], words[0]
         # A fraction word is an endpoint too: "בין חצי לשלושה אחוזים", "רבע
@@ -4217,7 +4277,7 @@ def _iter_hebrew_percent_range_lower_matches(
         if digits is not None:
             upper_start = digits.start()
         else:
-            spelled = _hebrew_number_run_ending_at(text, noun.start(), tokens)
+            spelled = _hebrew_number_run_ending_at(text, noun.start(), tokens, True)
             if spelled is None:
                 continue
             upper_start, _value, upper_first = spelled
@@ -4256,7 +4316,7 @@ def _iter_hebrew_percent_range_lower_matches(
             lower_span = (lower_digits.start(), len(text[:lower_end].rstrip()))
             lower_first = None
         else:
-            spelled = _hebrew_number_run_ending_at(text, lower_end, tokens)
+            spelled = _hebrew_number_run_ending_at(text, lower_end, tokens, True)
             if spelled is None:
                 continue
             lower_span = (spelled[0], len(text[:lower_end].rstrip()))
@@ -4282,10 +4342,28 @@ def _iter_hebrew_percent_range_lower_matches(
             )
         ):
             continue
-        if lower_value >= 1000:
-            # A scale word or a thousand-plus amount before the join is an
-            # amount of its own, not a rate: "3 מיליון ו־20 אחוזים" is three
-            # million, and twenty percent.
+        # An explicit range -- "עד", "ועד", "לבין", "או", or "בין"/"מ־" before
+        # the lower endpoint -- scales a thousand-plus endpoint as a rate:
+        # "בין 1,000 ל־2,000 אחוזים" runs from ten. Without one, a scale
+        # word or a thousand-plus amount before the join is an amount of
+        # its own: "3 מיליון ו־20 אחוזים" is three million, and twenty
+        # percent.
+        explicit_range = (
+            (join is not None and join.group("free") is not None)
+            or _search_before(
+                _HEBREW_RANGE_LOWER_BOUND_PATTERN, text, lower_span[0], 16
+            )
+            is not None
+            or (
+                lower_first is not None
+                and lower_first.startswith("\u05de")
+                and _strip_hebrew_number_prefix(
+                    lower_first[1:].lstrip("\u05be"), _HEBREW_RUN_START_VOCABULARY
+                )
+                is not None
+            )
+        )
+        if lower_value >= 1000 and not explicit_range:
             continue
         matches.append((lower_span, lower_value / 100))
         # Earlier alternatives share the noun too: "1 או 2 או 3 אחוזים", "1, 2
@@ -4314,7 +4392,7 @@ def _iter_hebrew_percent_range_lower_matches(
                     len(text[:earlier_end].rstrip()),
                 )
             else:
-                earlier = _hebrew_number_run_ending_at(text, earlier_end, tokens)
+                earlier = _hebrew_number_run_ending_at(text, earlier_end, tokens, True)
                 if earlier is None:
                     break
                 earlier_span = (earlier[0], len(text[:earlier_end].rstrip()))
@@ -4326,7 +4404,7 @@ def _iter_hebrew_percent_range_lower_matches(
                 is not None
             ):
                 break
-            if earlier_value >= 1000:
+            if earlier_value >= 1000 and not explicit_range:
                 break
             matches.append((earlier_span, earlier_value / 100))
             cursor = earlier_span[0]
@@ -8391,6 +8469,11 @@ def _iter_direct_percentage_rate_matches(
         # is 3,200 percent).
         if _search_before(_SLASH_BEFORE_NUMBER_PATTERN, text, match.start("number"), 8):
             continue
+        # A Hebrew fractional tail after the sign belongs to the rate ("3%
+        # וחצי" is 3.5 percent): the Hebrew digit pass reads it whole.
+        tail = _HEBREW_PERCENT_TAIL_AFTER_PATTERN.match(text, match.end())
+        if tail is not None and not _HEBREW_UNIT_AFTER_PATTERN.match(text, tail.end()):
+            continue
         if _HEBREW_PRINTED_REMAINDER_JOIN_BEFORE_PATTERN.search(
             text, max(0, match.start("number") - 6), match.start("number")
         ):
@@ -9802,7 +9885,9 @@ def _extract_legacy_inventory_values(text: str) -> list[float]:
         spans.append(span)
 
     for span, value in _iter_standalone_fraction_word_matches(cleaned):
-        if _span_overlaps(span, spans):
+        if _span_overlaps(span, spans) or _hebrew_fraction_word_is_percent_tail(
+            cleaned, span
+        ):
             continue
         occurrences.append(value)
         spans.append(span)
@@ -10471,6 +10556,8 @@ def _legacy_surface_numeric_occurrences(text: str) -> list[NumericOccurrence]:
             )
         )
     for span, value in _iter_standalone_fraction_word_matches(cleaned):
+        if _hebrew_fraction_word_is_percent_tail(cleaned, span):
+            continue
         occurrences.append(
             _numeric_occurrence_from_parsed_span(text, cleaned, span, value)
         )
@@ -12505,18 +12592,34 @@ def _tokenize_numeric_occurrences_from_text(
                 value = value / float(match.group("denominator"))
                 if match.group("whole"):
                     value += float(match.group("whole"))
+            # A fractional tail after the marker is the rate's, unless a
+            # unit of its own follows ("3% וחצי" is 3.5 percent; "3 אחוזים
+            # וחצי שקל" is three percent, and half a shekel).
+            span = match.span()
+            tail = _HEBREW_PERCENT_TAIL_AFTER_PATTERN.match(cleaned, match.end())
+            if tail is not None and not _HEBREW_UNIT_AFTER_PATTERN.match(
+                cleaned, tail.end()
+            ):
+                if tail.group("tail"):
+                    value += _HEBREW_MIXED_FRACTION_VALUES[tail.group("tail")]
+                else:
+                    value += (
+                        _HEBREW_FRACTION_COUNT_VALUES[tail.group("tail_count")]
+                        * _HEBREW_COUNTED_FRACTION_VALUES[tail.group("tail_fraction")]
+                    )
+                span = (match.start(), tail.end())
             if match.group("sign"):
                 value = -value
             add_both(
                 cleaned_view,
-                match.span(),
+                span,
                 value / 100,
                 source_value=value,
                 force_rate_context=True,
                 requires_rate_context=True,
             )
-            grounding_spans.append(match.span())
-            inventory_spans.append(match.span())
+            grounding_spans.append(span)
+            inventory_spans.append(span)
 
     for match in _FRACTION_SLASH_PATTERN.finditer(cleaned):
         with contextlib.suppress(ValueError, ZeroDivisionError):

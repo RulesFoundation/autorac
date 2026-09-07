@@ -17900,6 +17900,60 @@ def test_the_scaled_percentage_continuation_scans_in_linear_time():
     assert elapsed < 2.0, elapsed
 
 
+def test_a_percent_sign_carries_its_fractional_tail_on_plain_counts():
+    for text, expected in (
+        ("השיעור הוא שלושה% וחצי", {0.035}),
+        ("השיעור הוא 3% וחצי", {0.035}),
+        ("השיעור הוא 3% ושלושה רבעים", {0.0375}),
+        ("השיעור הוא שלושה% ושלושה רבעים", {0.0375}),
+        ("השיעור הוא שלושה אחוזים וחצי", {0.035}),
+        ("השיעור הוא 3 אחוזים וחצי", {0.035}),
+        ("השיעור הוא 3% וחצי שקל", {0.03, 0.5}),
+        ("השיעור הוא שלושה אחוזים וחצי שקל", {0.03, 0.5}),
+    ):
+        recall = {round(v, 6) for v in _hebrew_recall(text)}
+        assert recall == expected, (text, recall)
+
+
+def test_a_hundreds_remainder_leaves_room_for_a_printed_remainder():
+    for text, expected in (
+        ("הסכום הוא 3 אלפים ומאה ו־20 שקלים", 3_120.0),
+        ("הסכום הוא שלושת אלפים ומאה ו־20 שקלים", 3_120.0),
+        ("הסכום הוא 3 אלפים ומאה ועשרים שקלים", 3_120.0),
+        ("הסכום הוא 3 אלפים ומאה ועשרים ו־5 שקלים", 3_125.0),
+    ):
+        assert _hebrew_recall(text) == {expected}, (text, _hebrew_recall(text))
+        grounded = extract_numbers_from_text(text)
+        assert not (
+            {3_100.0, 20.0, 3_120.0 if expected != 3_120.0 else -1.0} & grounded
+        ), (
+            text,
+            grounded,
+        )
+
+
+def test_a_negative_mixed_count_signs_the_whole_rate():
+    for text in ("השיעור הוא -3 וחצי אחוזים וחצי", "השיעור הוא -3.5 אחוזים וחצי"):
+        recall = {round(v, 6) for v in _hebrew_recall(text)}
+        assert recall == {-0.04}, (text, recall)
+    assert {round(v, 6) for v in _hebrew_recall("השיעור הוא -3 וחצי אחוזים")} == {
+        -0.035
+    }
+
+
+def test_an_explicit_range_scales_a_thousand_plus_lower_endpoint():
+    for text, expected in (
+        ("השיעור הוא בין 1,000 ל־2,000 אחוזים", {10.0, 20.0}),
+        ("השיעור הוא בין אלף לאלפיים אחוזים", {10.0, 20.0}),
+        ("השיעור הוא 1,000 עד 2,000 אחוזים", {10.0, 20.0}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+        assert not ({1_000.0, 2_000.0} & extract_numbers_from_text(text)), text
+    # Without an explicit range a scaled amount before the join stays an amount.
+    assert _hebrew_recall("סכום של 3 מיליון ו־20 אחוזים מההכנסה") == {3_000_000.0, 0.2}
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
