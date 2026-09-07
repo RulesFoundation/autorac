@@ -18009,6 +18009,63 @@ def test_the_printed_scale_pass_scans_mixed_scales_in_linear_time():
     assert elapsed < 2.0, elapsed
 
 
+def test_a_shared_scale_lower_endpoint_with_a_remainder_is_complete():
+    for text, expected in (
+        ("הסכום הוא בין 3 אלפים ומאה ל־4 אלפים שקלים", {3_100.0, 4_000.0}),
+        ("הסכום הוא בין 3 אלפים ו־100 ל־4 אלפים שקלים", {3_100.0, 4_000.0}),
+        ("הסכום הוא בין שלושת אלפים ומאה לארבעת אלפים שקלים", {3_100.0, 4_000.0}),
+        ("השיעור הוא בין 3 אלפים ומאה ל־4 אלפים אחוזים", {31.0, 40.0}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+        assert not ({100_000.0, 3.0, 100.0} & extract_numbers_from_text(text)), text
+    assert _hebrew_recall("הסכום הוא בין 3 ל־4 אלפים שקלים") == {3_000.0, 4_000.0}
+
+
+def test_a_separate_quantity_is_judged_after_its_whole_continuation():
+    for text, expected in (
+        ("קנס של 3 אלפים ו־100 ועשרים ימי מאסר", {3_000.0, 120.0}),
+        ("קנס של שלושת אלפים ו־100 ועשרים ימי מאסר", {3_000.0, 120.0}),
+        ("קנס של 3 אלפים ומאה ו־20 ימי מאסר", {3_000.0, 120.0}),
+        ("קנס של 3 אלפים ומאה ועשרים ימי מאסר", {3_000.0, 120.0}),
+        ("מחזור של 3 מיליון ו־2 אלף ו־500 ועשרים עובדים", {3_000_000.0, 2_520.0}),
+        ("סכום של 3 אלפים ו־100 ועשרים אחוזים", {3_000.0, 1.0, 0.2}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+        assert not ({3_100.0, 20.0, 3_002_500.0} & extract_numbers_from_text(text)), (
+            text
+        )
+
+
+def test_a_percentage_range_reads_mixed_printed_scale_endpoints():
+    for text, expected in (
+        ("השיעור הוא בין 3 וחצי אלפים ל־4 אלפים אחוזים", {35.0, 40.0}),
+        ("השיעור הוא בין 3.5 אלפים ל־4 וחצי אלפים אחוזים", {35.0, 45.0}),
+        ("השיעור הוא בין 3 ורבע מיליון ל־4 מיליון אחוזים", {32_500.0, 40_000.0}),
+        ("השיעור הוא 2 אלפים, 3 וחצי אלפים או 4 אלפים אחוזים", {20.0, 35.0, 40.0}),
+        ("השיעור הוא 4 וחצי אלפים אחוזים", {45.0}),
+        ("השיעור הוא -4 וחצי אלפים אחוזים", {-45.0}),
+        ("השיעור הוא 4 ושלושה רבעים אלפים אחוזים", {47.5}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+        assert not (
+            {3_500.0, 3_250_000.0, 2_000.0, 4.0, 5.0} & extract_numbers_from_text(text)
+        ), text
+
+
+def test_descending_components_continue_until_the_amount_ends():
+    for text, expected in (
+        ("הסכום הוא 3 אלפים ו־100 ועשרים ו־3 שקלים", 3_123.0),
+        ("הסכום הוא שלושת אלפים ו־100 ועשרים ו־3 שקלים", 3_123.0),
+        ("הסכום הוא 3 מיליון ו־200 אלף ו־100 ועשרים ו־3 שקלים", 3_200_123.0),
+        ("הסכום הוא 3 אלפים ו־100 ועשרים ו־3 וחצי שקלים", 3_123.5),
+    ):
+        assert _hebrew_recall(text) == {expected}, (text, _hebrew_recall(text))
+        assert not ({3_120.0, 3.0, 3_200_120.0} & extract_numbers_from_text(text)), text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
