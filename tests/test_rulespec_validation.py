@@ -17435,6 +17435,28 @@ def test_a_printed_remainder_is_read_whole_before_its_marker():
         assert not ({3_000_003.0, 1_000_000.0} & grounded), (text, grounded)
 
 
+def test_a_bare_printed_fraction_after_a_scaled_amount_is_read_whole():
+    for text, expected in (
+        ("סכום של 3 מיליון ו־1 / 2 אחוזים מההכנסה", {3_000_000.0, 0.005}),
+        ("סכום של 3 מיליון ו־1 ⁄ 2 אחוזים מההכנסה", {3_000_000.0, 0.005}),
+        ("סכום של 3 מיליון ו־1 / 2% מההכנסה", {3_000_000.0, 0.005}),
+        ("סכום של 3 מיליון ו־1/2 אחוזים מההכנסה", {3_000_000.0, 0.005}),
+        ("סכום של שלושה מיליון ו־1 / 2 אחוזים מההכנסה", {3_000_000.0, 0.005}),
+        ("סכום של 3 מיליון ו־3 1 / 2 אחוזים מההכנסה", {3_000_000.0, 0.035}),
+        ("סכום של 3 מיליון ו־1 / 2 שקלים", {3_000_000.5}),
+        ("סכום של 3 מיליון ו־1/2 שקלים", {3_000_000.5}),
+        ("סכום של שלושה מיליון ו־1 ⁄ 2 שקלים", {3_000_000.5}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+        grounded = extract_numbers_from_text(text)
+        assert expected <= grounded, (text, grounded)
+        assert not ({3_000_001.0, 3_000_003.0, 1_000_000.0} & grounded), (
+            text,
+            grounded,
+        )
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

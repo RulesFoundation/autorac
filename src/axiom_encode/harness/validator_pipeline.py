@@ -2073,7 +2073,9 @@ _HEBREW_DIGIT_PERCENT_PATTERN = re.compile(
     "(?:(?P<whole>\\d+)\\s+(?=\\d+\\s*/))?"
     "(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
     "(?:\\s*/\\s*(?P<denominator>\\d+))?"
-    "\\s+אחוז(?:ים|י)?(?![\u0590-\u05ff])"
+    # The percent noun, or the sign after a fraction ("1/2%", "3 1 / 2%")
+    # -- a bare number before the sign is the general digit pass's.
+    "(?:\\s+אחוז(?:ים|י)?(?![\u0590-\u05ff])|(?(denominator)\\s*%|(?!)))"
 )
 _ASCII_SLASH_BEFORE_NUMBER_PATTERN = re.compile("/\\s*$")
 _SLASH_BEFORE_NUMBER_PATTERN = re.compile("[/\u2044]\\s*$")
@@ -3106,10 +3108,13 @@ _HEBREW_PRINTED_REMAINDER_JOIN_PATTERN = re.compile("\\s+\u05d5[\u05be-]?\\s*")
 # A printed remainder below every scale: "3 מיליון ו־200 שקלים" is
 # 3,000,200. Not a rate ("ו־20 אחוזים", "ו־20%"), not another multiplier.
 _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN = re.compile(
-    "\\s+\u05d5[\u05be-]?\\s*(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
+    # A number, or a bare fraction with any spacing around its slash ("1/2",
+    # "1 / 2", "1 ⁄ 2"), read atomically.
+    "\\s+\u05d5[\u05be-]?\\s*(?>(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
+    "(?:\\s*[/\u2044]\\s*(?P<bare_denominator>\\d+))?)"
     # The whole mixed number, read atomically so a tail once read is never
-    # given back: a printed fraction ("3 1/2", "3 1⁄2") or a spelled tail
-    # ("3 וחצי", "3 ושלושה רבעים").
+    # given back: a printed fraction ("3 1/2", "3 1⁄2", "3 1 / 2") or a
+    # spelled tail ("3 וחצי", "3 ושלושה רבעים").
     "(?>(?:\\s+(?P<numerator>\\d+)\\s*[/\u2044]\\s*(?P<denominator>\\d+))?)"
     "(?>(?:\\s+\u05d5(?:(?P<tail>"
     + _HEBREW_PRINTED_SCALE_FRACTIONS
@@ -3120,7 +3125,7 @@ _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN = re.compile(
     + "))(?![\u0590-\u05ff]))?)"
     # Then neither a rate marker nor a scale word: "ו־3 1/2 אחוזים" and
     # "ו־3 וחצי%" count a rate, "ו־200 אלף" is a lower scale.
-    "(?![\\d.,/\u2044%])(?!\\s*%)(?!\\s+(?:"
+    "(?![\\d.,/\u2044%])(?!\\s*[/\u2044%])(?!\\s+(?:"
     + _HEBREW_PRINTED_SCALE_WORDS
     + "|אחוז)[\u0590-\u05ff]*)"
 )
@@ -3129,6 +3134,11 @@ _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN = re.compile(
 def _hebrew_printed_plain_remainder_value(match: "re.Match[str]") -> float | None:
     """The value a plain printed remainder states, fraction and tail included."""
     value = float(match.group("number").replace(",", ""))
+    if match.group("bare_denominator"):
+        denominator = float(match.group("bare_denominator"))
+        if denominator == 0:
+            return None
+        value /= denominator
     if match.group("numerator"):
         denominator = float(match.group("denominator"))
         if denominator == 0:
@@ -7775,6 +7785,10 @@ def _iter_direct_percentage_rate_matches(
 ) -> list[tuple[tuple[int, int], float]]:
     values: list[tuple[tuple[int, int], float]] = []
     for match in _DIRECT_PERCENTAGE_PATTERN.finditer(text):
+        # The denominator of a fraction before the sign ("1/2%", "1 ⁄ 2%")
+        # is no rate of its own; the fraction is read whole elsewhere.
+        if _search_before(_SLASH_BEFORE_NUMBER_PATTERN, text, match.start("number"), 8):
+            continue
         for value in _iter_percentage_numeric_phrase_values(match.group("number")):
             values.append((match.span("number"), value / 100))
     return values
