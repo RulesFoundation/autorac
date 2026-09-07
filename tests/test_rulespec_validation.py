@@ -17178,6 +17178,65 @@ def test_a_printed_lower_scale_remainder_composes():
     }
 
 
+def test_a_plural_possessive_amount_noun_is_a_fraction_operand():
+    for text, expected in (
+        ("סכום של 3 מיליון וחצי מהכנסותיהם", {3_000_000.0, 0.5}),
+        ("סכום של שלושה מיליון וחצי מהכנסותיהם", {3_000_000.0, 0.5}),
+        ("סכום של 3 מיליון וחצי מתקציביהן", {3_000_000.0, 0.5}),
+        ("סכום של 3 מיליון וחצי משכרותיהם", {3_000_000.0, 0.5}),
+    ):
+        assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+        assert expected <= extract_numbers_from_text(text), (
+            text,
+            extract_numbers_from_text(text),
+        )
+
+
+def test_spelled_leading_amounts_and_printed_plain_remainders_compose():
+    for text, expected in (
+        ("סכום של שלושה מיליון ו־200 אלף שקלים", 3_200_000.0),
+        ("סכום של שלושה מיליון ו-200 אלף שקלים", 3_200_000.0),
+        ("סכום של 3 מיליון ו־200 שקלים", 3_000_200.0),
+        ("סכום של שלושה מיליון ו־200 שקלים", 3_000_200.0),
+        ("סכום של 3 מיליון ומאתיים אלף ו־500 שקלים", 3_200_500.0),
+        ("סכום של 3 מיליון ו־200 אלף ו־500 שקלים", 3_200_500.0),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert grounded == {expected}, (text, grounded)
+        assert _hebrew_recall(text) == {expected}, (text, _hebrew_recall(text))
+    # A rate after the conjunction is a rate, and a larger amount is its own.
+    assert _hebrew_recall("סכום של 3 מיליון ו־20 אחוזים מההכנסה") == {
+        3_000_000.0,
+        0.2,
+    }
+    assert _hebrew_recall("סכום של 3 מיליון ו־4,000,000 שקלים") == {
+        3_000_000.0,
+        4_000_000.0,
+    }
+
+
+def test_range_endpoints_share_a_trailing_scale_word():
+    for text, expected in (
+        ("סכום שבין 3 ל־5 מיליון שקלים", {3_000_000.0, 5_000_000.0}),
+        ("בין 3 ל-5 מיליון שקלים", {3_000_000.0, 5_000_000.0}),
+        ("שלושה עד חמישה מיליון שקלים", {3_000_000.0, 5_000_000.0}),
+        ("בין 200 ל־500 אלף שקלים", {200_000.0, 500_000.0}),
+        ("3 או 4 מיליון שקלים", {3_000_000.0, 4_000_000.0}),
+        ("מאה ועד מאתיים אלף שקלים", {100_000.0, 200_000.0}),
+    ):
+        assert _hebrew_recall(text) == expected, (text, _hebrew_recall(text))
+        assert expected <= extract_numbers_from_text(text), (
+            text,
+            extract_numbers_from_text(text),
+        )
+    # A scale word on the upper endpoint alone is not shared.
+    assert _hebrew_recall("בין 3 למיליון שקלים") == {3.0, 1_000_000.0}
+    assert _hebrew_recall("בין 3 מיליון ל־5 מיליון שקלים") == {
+        3_000_000.0,
+        5_000_000.0,
+    }
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

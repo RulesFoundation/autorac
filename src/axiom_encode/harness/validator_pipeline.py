@@ -2417,7 +2417,7 @@ _HEBREW_FRACTION_BASE_AMOUNT_PATTERN = re.compile(
     "עלות|פיצוי|פנסי|הפרש|קרן|ריבית|דמי|נכס|מס|"
     "תקציב|הוצא|מחזור|חוב|הלווא|השקע|נזק|תרומ|עמל|דיבידנד|תגמול|אגר|קנס|"
     "היטל|ארנונ|פרמי|מלג|תמיכ|סיוע|סובסידי|כספ"
-    ")[\u0590-\u05ff]{0,4}(?![\u0590-\u05ff])"
+    ")[\u0590-\u05ff]{0,6}(?![\u0590-\u05ff])"
 )
 
 
@@ -3016,6 +3016,80 @@ _HEBREW_PRINTED_SCALE_PATTERN = re.compile(
 # The conjunction before a printed lower-scale remainder: "3 מיליון ו־200
 # אלף", "ו-200", "ו 200".
 _HEBREW_PRINTED_REMAINDER_JOIN_PATTERN = re.compile("\\s+\u05d5[\u05be-]?\\s*")
+# A printed remainder below every scale: "3 מיליון ו־200 שקלים" is
+# 3,000,200. Not a rate ("ו־20 אחוזים", "ו־20%"), not another multiplier.
+_HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN = re.compile(
+    "\\s+\u05d5[\u05be-]?\\s*(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
+    "(?![\\d.,/\u2044%])(?!\\s*%)(?!\\s+(?:"
+    + _HEBREW_PRINTED_SCALE_WORDS
+    + "|אחוז)[\u0590-\u05ff]*)"
+)
+# A range whose endpoints share one trailing scale word: "בין 3 ל־5 מיליון"
+# runs from three million to five million, "שלושה עד חמישה מיליון" too.
+# "בין 3 למיליון" has a scale word for its upper endpoint alone and stays
+# apart.
+_HEBREW_SHARED_SCALE_RANGE_PATTERN = re.compile(
+    "(?<![\\d.,/\u2044\u0590-\u05ff])"
+    "(?P<lower>\\d{1,3}(?:,\\d{3})+|\\d+(?:\\.\\d+)?|[\u0590-\u05ff]+)"
+    "\\s+(?P<join>לבין|ועד|עד|או|ל)(?:[\u05be-]\\s*|\\s+)"
+    "(?P<upper>\\d{1,3}(?:,\\d{3})+|\\d+(?:\\.\\d+)?|[\u0590-\u05ff]+)"
+    "\\s+(?P<scale>" + _HEBREW_PRINTED_SCALE_WORDS + ")(?![\u0590-\u05ff])"
+)
+
+
+def _hebrew_scale_floor(value: float) -> float:
+    """The largest scale (a billion, a million, a thousand) that divides ``value``."""
+    for scale in (1_000_000_000.0, 1_000_000.0, 1000.0):
+        if value >= scale and value % scale == 0:
+            return scale
+    return 1.0
+
+
+# Construct counts ("שלושת אלפים", "חמשת אלפים") bind to the noun after
+# them and read as one number; a range lower bound before one shares
+# nothing with it ("2 עד שלושת אלפים" runs from 2 to 3,000).
+_HEBREW_CONSTRUCT_COUNT_WORDS = frozenset(
+    {"שני", "שתי", "שלושת", "ארבעת", "חמשת", "ששת", "שבעת", "שמונת", "תשעת", "עשרת"}
+)
+
+
+def _hebrew_range_endpoint_value(token: str) -> float | None:
+    """A printed number or a one-word spelled absolute number, or None."""
+    if token[0].isdigit():
+        return float(token.replace(",", ""))
+    if token in _HEBREW_CONSTRUCT_COUNT_WORDS:
+        return None
+    parsed = _parse_hebrew_number_run([token], 0)
+    if parsed is None:
+        return None
+    consumed, value, kinds = parsed
+    if consumed != 1 or kinds & {"fraction", "thousand", "million", "billion"}:
+        return None
+    return value
+
+
+def _iter_hebrew_shared_scale_range_matches(
+    text: str,
+    structural_spans: "Sequence[tuple[int, int]]" = (),
+) -> list[tuple[tuple[int, int], float]]:
+    """The lower endpoint of a range whose scale word both endpoints share.
+
+    ``structural_spans`` are the reference spans the structural pass found:
+    "תוספת 2 עד שלושת אלפים" names a supplement, not a range's lower bound.
+    """
+    matches: list[tuple[tuple[int, int], float]] = []
+    for match in _HEBREW_SHARED_SCALE_RANGE_PATTERN.finditer(text):
+        if _span_overlaps(match.span("lower"), structural_spans):
+            continue
+        lower = _hebrew_range_endpoint_value(match.group("lower"))
+        upper = _hebrew_range_endpoint_value(match.group("upper"))
+        if lower is None or upper is None:
+            continue
+        scale = _HEBREW_PRINTED_SCALE_VALUES[match.group("scale")]
+        matches.append((match.span("lower"), lower * scale))
+    return matches
+
+
 # The whitespace before a vav-bound spelled remainder ("3 מיליון ומאתיים אלף").
 _HEBREW_SPELLED_REMAINDER_GAP_PATTERN = re.compile("\\s+(?=\u05d5[\u0590-\u05ff])")
 _HEBREW_PRINTED_SCALE_VALUES = {
@@ -3074,8 +3148,11 @@ def _iter_hebrew_printed_scale_matches(
     למיליון" runs between 3 and a million, and each endpoint stands on its
     own. A fractional tail after the scale word scales with it ("3 מיליון
     וחצי", "3 מיליון ושני שלישים") unless it names its own operand, and
-    descending scales after it compose, spelled ("3 מיליון ומאתיים אלף")
-    or printed ("3 מיליון ו־200 אלף", "3 מיליארד ו־200 מיליון ו־50 אלף").
+    descending amounts compose before any span is reserved: a spelled
+    remainder ("3 מיליון ומאתיים אלף"), printed lower scales ("3 מיליון
+    ו־200 אלף", "3 מיליארד ו־200 מיליון ו־50 אלף"), a printed remainder
+    below every scale ("3 מיליון ו־200 שקלים"), and a spelled leading
+    amount ("שלושה מיליון ו־200 אלף").
     """
     parts: list[tuple[int, int, float, float, bool]] = []
     for match in _HEBREW_PRINTED_SCALE_PATTERN.finditer(text):
@@ -3101,6 +3178,7 @@ def _iter_hebrew_printed_scale_matches(
             )
         value *= scale
         end = match.end()
+        floor = scale
         if match.group("after_tail"):
             value += _HEBREW_MIXED_FRACTION_VALUES[match.group("after_tail")] * scale
         elif match.group("after_count"):
@@ -3114,19 +3192,44 @@ def _iter_hebrew_printed_scale_matches(
             if remainder is not None:
                 end, remainder_value = remainder
                 value += remainder_value
-        parts.append((match.start(), end, value, scale, bool(match.group("sign"))))
+                floor = min(scale, _hebrew_scale_floor(remainder_value))
+        parts.append((match.start(), end, value, floor, bool(match.group("sign"))))
+    # A spelled leading amount before a printed part: "שלושה מיליון ו־200
+    # אלף". Keyed by where the spelled amount ends.
+    spelled_before = {
+        span[1]: (span[0], value, _hebrew_scale_floor(value))
+        for span, value in _iter_hebrew_compound_number_matches(text)
+        if value > 0
+    }
     matches: list[tuple[tuple[int, int], float]] = []
+    merged_spelled: set[int] = set()
     index = 0
     while index < len(parts):
-        start, end, value, scale, negative = parts[index]
-        floor = scale
+        start, end, value, floor, negative = parts[index]
+        if not negative:
+            for spelled_end, (
+                spelled_start,
+                spelled_value,
+                spelled_floor,
+            ) in spelled_before.items():
+                if (
+                    spelled_end < start
+                    and floor < spelled_floor
+                    and _HEBREW_PRINTED_REMAINDER_JOIN_PATTERN.fullmatch(
+                        text, spelled_end, start
+                    )
+                    is not None
+                ):
+                    start, value = spelled_start, spelled_value + value
+                    merged_spelled.add(spelled_end)
+                    break
         while index + 1 < len(parts):
-            next_start, next_end, next_value, next_scale, next_negative = parts[
+            next_start, next_end, next_value, next_floor, next_negative = parts[
                 index + 1
             ]
             if (
                 next_negative
-                or next_scale >= floor
+                or next_floor >= floor
                 or _HEBREW_PRINTED_REMAINDER_JOIN_PATTERN.fullmatch(
                     text, end, next_start
                 )
@@ -3134,10 +3237,32 @@ def _iter_hebrew_printed_scale_matches(
             ):
                 break
             value += next_value
-            end, floor = next_end, next_scale
+            end, floor = next_end, next_floor
             index += 1
+        plain = _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN.match(text, end)
+        if plain is not None:
+            plain_value = float(plain.group("number").replace(",", ""))
+            if 0 < plain_value < floor:
+                value += plain_value
+                end = plain.end()
         matches.append(((start, end), -value if negative else value))
         index += 1
+    # A spelled amount and a printed remainder below every scale, with no
+    # printed multiplier between them: "שלושה מיליון ו־200 שקלים".
+    for spelled_end, (
+        spelled_start,
+        spelled_value,
+        spelled_floor,
+    ) in spelled_before.items():
+        if spelled_end in merged_spelled or spelled_floor <= 1:
+            continue
+        plain = _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN.match(text, spelled_end)
+        if plain is None:
+            continue
+        plain_value = float(plain.group("number").replace(",", ""))
+        if 0 < plain_value < spelled_floor:
+            matches.append(((spelled_start, plain.end()), spelled_value + plain_value))
+    matches.sort()
     return matches
 
 
@@ -3364,6 +3489,11 @@ def _iter_hebrew_percent_range_lower_matches(
             )
         ):
             continue
+        if lower_value >= 1000:
+            # A scale word or a thousand-plus amount before the join is an
+            # amount of its own, not a rate: "3 מיליון ו־20 אחוזים" is three
+            # million, and twenty percent.
+            continue
         matches.append((lower_span, lower_value / 100))
         # Earlier alternatives share the noun too: "1 או 2 או 3 אחוזים", "1, 2
         # או 3 אחוזים". Walk back over free joins and commas.
@@ -3402,6 +3532,8 @@ def _iter_hebrew_percent_range_lower_matches(
                 )
                 is not None
             ):
+                break
+            if earlier_value >= 1000:
                 break
             matches.append((earlier_span, earlier_value / 100))
             cursor = earlier_span[0]
@@ -11433,6 +11565,17 @@ def _tokenize_numeric_occurrences_from_text(
             force_rate_context=True,
             requires_rate_context=True,
         )
+        grounding_spans.append(span)
+        inventory_spans.append(span)
+
+    for span, value in _iter_hebrew_shared_scale_range_matches(
+        cleaned, _structural_numeric_component_spans(cleaned)
+    ):
+        if _span_overlaps(span, grounding_spans) or _span_overlaps(
+            span, inventory_spans
+        ):
+            continue
+        add_both(cleaned_view, span, value)
         grounding_spans.append(span)
         inventory_spans.append(span)
 
