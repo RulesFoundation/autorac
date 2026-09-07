@@ -15919,6 +15919,48 @@ def test_a_spelled_fractional_endpoint_shares_the_range_percent_noun():
         )
 
 
+def test_a_feminine_count_noun_marks_a_quantity():
+    assert _hebrew_recall("לפי סעיפים 1, 2, 4, 100 עובדות זכאיות למענק") == {100.0}
+    assert _hebrew_recall("לפי סעיפים 1, 2, 4, 50 מבוטחות זכאיות לקצבה") == {50.0}
+    assert _hebrew_recall("לפי סעיפים 1 ו־2, 30 נשים") == {30.0}
+    assert _hebrew_recall("לפי סעיפים 1, 2 או 3, 12 משפחות") == {12.0}
+    assert _hebrew_recall("לפי סעיפים 1, 2, 4, 100 עובדים זכאים למענק") == {100.0}
+
+
+def test_a_range_of_rates_reads_a_printed_lower_and_a_prefixed_spelled_lower_endpoint():
+    for text, expected in (
+        ("שיעור המס יהיה בין 2 לשלושה אחוזים", {0.02, 0.03}),
+        ("שיעור המס יהיה משניים לשלושה אחוזים", {0.02, 0.03}),
+        ("שיעור המס יהיה מחצי לשלושה אחוזים", {0.005, 0.03}),
+        ("שיעור המס יהיה מ־2 לשלושה אחוזים", {0.02, 0.03}),
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert all(any(abs(v - e) < 1e-12 for v in grounded) for e in expected), (
+            text,
+            grounded,
+        )
+        assert {round(v, 12) for v in _hebrew_recall(text)} == expected, (
+            text,
+            _hebrew_recall(text),
+        )
+    # Without a bound, "ל" alone is no range: the count before it stays a count.
+    assert _hebrew_recall("ישולמו 2 שקלים לשלושה אחוזים מהעובדים") == {2.0, 0.03}
+
+
+def test_a_malformed_teen_never_raises():
+    for text in (
+        "בתום מאה ושני עשר ימים",
+        "בתום ושני עשר ימים",
+        "בתום עשרים ושתי עשרה שנים",
+        "מאה ושני",
+        "שני עשר",
+    ):
+        grounded = extract_numbers_from_text(text)
+        assert isinstance(grounded, set), text
+        assert 112.0 not in grounded and 12.0 not in grounded, (text, grounded)
+        _hebrew_recall(text)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

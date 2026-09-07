@@ -2134,6 +2134,10 @@ def _parse_hebrew_number_run(
         if word in units or (word in construct_units and position > start):
             following = word_at(position + 1)
             if following in _HEBREW_TEEN_TENS and not has_vav(position + 1):
+                if word not in units:
+                    # "שני עשר" is no teen ("שנים עשר" is); the run is not a
+                    # number here, and imperfect source text never raises.
+                    return None
                 return position + 2, 10.0 + units[word], "teen"
             if word in teen_only:
                 return None
@@ -2789,7 +2793,9 @@ def _iter_hebrew_percent_range_lower_matches(
             )
             is not None
         ):
-            lower_end = len(text[:upper_start].rstrip())
+            # The whitespace before the upper endpoint stays, so a printed
+            # lower endpoint ("בין 2 לשלושה אחוזים") ends flush before it.
+            lower_end = upper_start
             needs_bound = True
         else:
             continue
@@ -2802,15 +2808,32 @@ def _iter_hebrew_percent_range_lower_matches(
             if lower_value is None:
                 continue
             lower_span = (lower_digits.start(), len(text[:lower_end].rstrip()))
+            lower_first = None
         else:
             spelled = _hebrew_number_run_ending_at(text, lower_end, tokens)
             if spelled is None:
                 continue
             lower_span = (spelled[0], len(text[:lower_end].rstrip()))
             lower_value = spelled[1]
-        if needs_bound and (
-            _search_before(_HEBREW_RANGE_LOWER_BOUND_PATTERN, text, lower_span[0], 16)
-            is None
+            lower_first = spelled[2]
+        if (
+            needs_bound
+            and not (
+                _search_before(
+                    _HEBREW_RANGE_LOWER_BOUND_PATTERN, text, lower_span[0], 16
+                )
+                is not None
+                # "משניים לשלושה אחוזים": the bound is the מ prefix on the
+                # spelled lower endpoint itself.
+                or (
+                    lower_first is not None
+                    and lower_first.startswith("\u05de")
+                    and _strip_hebrew_number_prefix(
+                        lower_first[1:].lstrip("\u05be"), _HEBREW_RUN_START_VOCABULARY
+                    )
+                    is not None
+                )
+            )
         ):
             continue
         matches.append((lower_span, lower_value / 100))
@@ -3179,10 +3202,22 @@ _HEBREW_STRUCTURAL_UNIT_NOUN_WORDS = (
     "נפש",
     "בני אדם",
     "אנשים",
+    "נשים",
+    "גברים",
     "עובדים",
+    "עובדות",
     "מועסקים",
+    "מועסקות",
     "תלמידים",
+    "תלמידות",
+    "סטודנטים",
+    "סטודנטיות",
     "תושבים",
+    "תושבות",
+    "חיילים",
+    "חיילות",
+    "קשישים",
+    "קשישות",
     "מקומות",
     "חדרים",
     "קומות",
@@ -3190,10 +3225,26 @@ _HEBREW_STRUCTURAL_UNIT_NOUN_WORDS = (
     "רכבים",
     "כלי רכב",
     "ילדים",
+    "ילדות",
     "ילד",
+    "ילדה",
+    "בנים",
+    "בנות",
     "הורים",
+    "אימהות",
+    "אמהות",
+    "אבות",
+    "משפחות",
+    "משקי בית",
+    "יחידים",
+    "זוגות",
     "מבוטחים",
+    "מבוטחות",
     "זכאים",
+    "זכאיות",
+    "מקבלים",
+    "מקבלות",
+    "נהנים",
 )
 
 
