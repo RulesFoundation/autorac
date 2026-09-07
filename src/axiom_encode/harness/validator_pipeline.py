@@ -2396,9 +2396,21 @@ def _parse_hebrew_number_run(
             kinds.add("fraction")
             scaled_tail = True
     rest = None if scaled_tail else parse_below_thousand(cursor)
-    if rest is not None and kinds & _HEBREW_SCALE_KINDS and rate_count_follows(rest[0]):
+    if (
+        rest is not None
+        and kinds & _HEBREW_SCALE_KINDS
+        and (
+            rate_count_follows(rest[0])
+            or (
+                rest[0] < len(words)
+                and words[rest[0]] in _HEBREW_SEPARATE_QUANTITY_WORD_FORMS
+            )
+        )
+    ):
         # "שלושה מיליון ועשרים אחוזים", "שלושה מיליון ושלושה וחצי אחוזים":
-        # the count belongs to the rate, not to the million's remainder.
+        # the count belongs to the rate; "שלושה מיליון ושלושים ימי מאסר": the
+        # thirty counts days, a separate quantity. Neither is the million's
+        # remainder.
         rest = None
     if rest is not None:
         cursor, amount, rest_kinds = rest
@@ -3378,6 +3390,9 @@ def _hebrew_spelled_remainder_after(
     if _HEBREW_PERCENT_SIGN_AFTER_PATTERN.match(text, tokens[consumed - 1][1]):
         # "ועשרים%" likewise.
         return None
+    if _HEBREW_SEPARATE_QUANTITY_AFTER_PATTERN.match(text, tokens[consumed - 1][1]):
+        # "ושלושים ימי מאסר": a separate quantity, not a remainder.
+        return None
     return tokens[consumed - 1][1], value
 
 
@@ -3482,6 +3497,11 @@ def _iter_hebrew_printed_scale_matches(
             end, floor = next_end, next_floor
             index += 1
         plain = _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN.match(text, end)
+        if plain is not None and _HEBREW_SEPARATE_QUANTITY_AFTER_PATTERN.match(
+            text, plain.end()
+        ):
+            # "ו־30 ימי מאסר": a separate quantity, not a remainder.
+            plain = None
         if plain is not None:
             plain_value = _hebrew_printed_plain_remainder_value(plain)
             if plain_value is not None and 0 < plain_value < floor:
@@ -3499,7 +3519,9 @@ def _iter_hebrew_printed_scale_matches(
         if spelled_end in merged_spelled or spelled_floor <= 1:
             continue
         plain = _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN.match(text, spelled_end)
-        if plain is None:
+        if plain is None or _HEBREW_SEPARATE_QUANTITY_AFTER_PATTERN.match(
+            text, plain.end()
+        ):
             continue
         plain_value = _hebrew_printed_plain_remainder_value(plain)
         if plain_value is not None and 0 < plain_value < spelled_floor:
@@ -4386,6 +4408,56 @@ _HEBREW_TIME_UNIT_AFTER_PATTERN = re.compile(
     + _hebrew_unit_alternation(_HEBREW_TIME_UNIT_WORDS)
     + ")(?![\u0590-\u05ff])"
 )
+# The money units a scaled amount and its remainder share ("3 מיליון ו־200
+# שקלים"). Any other unit or count noun after a remainder names a separate
+# quantity: "3 מיליון ו־30 ימי מאסר" is a fine of three million, and thirty
+# days; "3 מיליון ו־20 עובדים" a turnover, and twenty workers.
+_HEBREW_CURRENCY_WORDS = frozenset(
+    {
+        "שקלים חדשים",
+        "שקלים",
+        "שקל",
+        'ש"ח',
+        "₪",
+        "דולר",
+        "דולרים",
+        "יורו",
+        "אירו",
+        'ליש"ט',
+        "לירות",
+        "לירה",
+        "אגורות",
+        "אגורה",
+    }
+)
+_HEBREW_SEPARATE_QUANTITY_WORDS = (
+    frozenset(
+        set(_HEBREW_MEASURE_UNIT_WORDS)
+        | set(_HEBREW_COUNT_NOUN_WORDS)
+        | set(_HEBREW_TIME_UNIT_WORDS)
+    )
+    - _HEBREW_CURRENCY_WORDS
+    - {"%", "אחוז", "אחוזים"}
+)
+_HEBREW_SEPARATE_QUANTITY_AFTER_PATTERN = re.compile(
+    "\\s+(?:"
+    + _hebrew_unit_alternation(_HEBREW_SEPARATE_QUANTITY_WORDS)
+    + ")(?![\u0590-\u05ff])"
+)
+
+
+def _hebrew_separate_quantity_word_forms() -> frozenset[str]:
+    """The first word of every separate-quantity unit, construct plurals included."""
+    forms: set[str] = set()
+    for unit in _HEBREW_SEPARATE_QUANTITY_WORDS:
+        head = unit.split()[0]
+        forms.add(head)
+        if head.endswith("ים") and len(head) > 3:
+            forms.add(head[:-2] + "\u05d9")
+    return frozenset(forms)
+
+
+_HEBREW_SEPARATE_QUANTITY_WORD_FORMS = _hebrew_separate_quantity_word_forms()
 # The feminine nouns a feminine ordinal modifies: the evidence that
 # "חמישית" after one of them is "fifth".
 _HEBREW_ORDINAL_CONTEXT_NOUN_PATTERN = re.compile(

@@ -17457,6 +17457,30 @@ def test_a_bare_printed_fraction_after_a_scaled_amount_is_read_whole():
         )
 
 
+def test_a_separate_quantity_after_a_scaled_amount_is_no_remainder():
+    for text, expected in (
+        ("קנס של 3 מיליון ו־30 ימי מאסר", {3_000_000.0, 30.0}),
+        ("קנס של שלושה מיליון ושלושים ימי מאסר", {3_000_000.0, 30.0}),
+        ("מחזור שנתי של 3 מיליון ו־20 עובדים", {3_000_000.0, 20.0}),
+        ("מחזור שנתי של שלושה מיליון ועשרים עובדים", {3_000_000.0, 20.0}),
+        ("סכום של 3 מיליון ו־20 עובדי המפעל", {3_000_000.0, 20.0}),
+        ("סכום של 3 מיליון ו־3 חודשים", {3_000_000.0, 3.0}),
+        ("סכום של שלושה מיליון ושלוש שנים", {3_000_000.0, 3.0}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+        grounded = extract_numbers_from_text(text)
+        assert expected <= grounded, (text, grounded)
+        assert not ({3_000_030.0, 3_000_020.0, 3_000_003.0} & grounded), (
+            text,
+            grounded,
+        )
+    # A money unit after the remainder is the amount's own.
+    assert _hebrew_recall("סכום של 3 מיליון ו־200 שקלים חדשים") == {3_000_200.0}
+    assert _hebrew_recall("סכום של שלושה מיליון ומאתיים שקלים") == {3_000_200.0}
+    assert _hebrew_recall("סכום של 3 מיליון ו־200 דולר") == {3_000_200.0}
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
