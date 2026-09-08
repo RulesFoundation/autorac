@@ -9981,7 +9981,10 @@ rules:
             for case in repaired_tests
         )
 
-    def test_test_input_assignment_ignores_formula_builtins(self):
+    @pytest.mark.parametrize(
+        "date_function", ["date_add_days", "date_add_months", "date_add_years"]
+    )
+    def test_test_input_assignment_ignores_formula_builtins(self, date_function):
         content = """format: rulespec/v1
 module:
   proof_validation:
@@ -10010,9 +10013,11 @@ rules:
       - effective_from: '2025-01-01'
         formula: days_between(period_start, period_end)
 """
+        content = content.replace("date_add_days", date_function)
         test_cases = [
             {
                 "name": "deadline case",
+                "period": "2026-01",
                 "input": {"#input.application_date": "2026-01-01"},
                 "output": {
                     "#deadline": "2026-01-08",
@@ -10022,6 +10027,10 @@ rules:
         ]
 
         assert find_test_input_assignment_issues(content, test_cases) == []
+        test_cases[0]["input"] = {"#input.unrelated_fact": True}
+        issues = find_test_input_assignment_issues(content, test_cases)
+        assert any("application_date" in str(issue) for issue in issues)
+        assert all(date_function not in str(issue) for issue in issues)
 
     def test_numeric_occurrence_check_uses_embedded_operating_excerpt(self, tmp_path):
         source_text = (

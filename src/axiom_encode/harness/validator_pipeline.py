@@ -26304,6 +26304,8 @@ _RULESPEC_FORMULA_BUILTINS = {
     "count",
     "count_where",
     "date_add_days",
+    "date_add_months",
+    "date_add_years",
     "days_between",
     "elif",
     "else",
