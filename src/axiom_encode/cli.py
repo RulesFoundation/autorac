@@ -57531,6 +57531,7 @@ def _failed_validation_issue_counts(
     for name, result in results.items():
         if getattr(result, "passed", False):
             continue
+
         def normalize(diagnostic: object) -> str:
             text = str(diagnostic)
             if normalization_root is None:
