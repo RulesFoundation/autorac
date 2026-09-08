@@ -1920,6 +1920,18 @@ _PARAGRAPH_GAP_FRAGMENT = (
     "(?:[\\u2028\\u2029\\x0b\\x0c\\x85]|\\r?\\n[^\\S\\r\\n]*\\r?\\n)"
 )
 _PARAGRAPH_GAP_PATTERN = re.compile(_PARAGRAPH_GAP_FRAGMENT)
+_HORIZONTAL_SPACE_FRAGMENT = "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]"
+# Whitespace a number may run across: spaces of any width and a single line
+# wrap, never a blank line or a paragraph separator ("10 וחצי מיליון" and
+# "10\nוחצי מיליון" are one amount; "10\n\nוחצי מיליון" is ten, then half a
+# million).
+_WRAP_SPACE_FRAGMENT = (
+    "(?:"
+    + _HORIZONTAL_SPACE_FRAGMENT
+    + "|\\r?\\n(?!"
+    + _HORIZONTAL_SPACE_FRAGMENT
+    + "*\\r?\\n))"
+)
 _HEBREW_TEEN_SEPARATOR_PATTERN = (
     "(?:(?!\\s*" + _PARAGRAPH_GAP_FRAGMENT + ")\\s+|\\s*[-\\u05be]\\s*)"
 )
@@ -3101,7 +3113,9 @@ _HEBREW_PERCENT_PHRASE_PATTERN = re.compile(
     "|(?:(?P<whole>\\d+)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]+)?(?P<numerator>\\d+)\\s*[/\u2044]\\s*(?P<denominator>\\d+)\\s+)?"
     "(?P<noun_prefix>[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2})"
     "(?P<noun>\u05d4?אחוז(?:ים)?)"
-    "(?:\\s+\u05d5(?:(?P<tail>"
+    "(?:"
+    + _WRAP_SPACE_FRAGMENT
+    + "+\u05d5(?:(?P<tail>"
     + "|".join(
         re.escape(w)
         for w in sorted(_HEBREW_MIXED_FRACTION_VALUES, key=len, reverse=True)
@@ -3111,7 +3125,9 @@ _HEBREW_PERCENT_PHRASE_PATTERN = re.compile(
         re.escape(w)
         for w in sorted(_HEBREW_FRACTION_COUNT_VALUES, key=len, reverse=True)
     )
-    + ")\\s+(?P<tail_fraction>"
+    + ")"
+    + _WRAP_SPACE_FRAGMENT
+    + "+(?P<tail_fraction>"
     + "|".join(
         re.escape(w)
         for w in sorted(_HEBREW_COUNTED_FRACTION_VALUES, key=len, reverse=True)
@@ -3529,22 +3545,30 @@ _HEBREW_PRINTED_SCALE_PATTERN = re.compile(
     "|(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?))"
     # A vav-bound fractional tail before the scale word: one fraction word
     # ("3 וחצי מיליון") or a counted fraction ("3 ושלושה רבעים מיליון").
-    "(?:\\s+\u05d5(?:(?P<tail>"
+    "(?:"
+    + _WRAP_SPACE_FRAGMENT
+    + "+\u05d5(?:(?P<tail>"
     + _HEBREW_PRINTED_SCALE_FRACTIONS
     + ")(?![\u0590-\u05ff])|(?P<tail_count>"
     + _HEBREW_PRINTED_SCALE_COUNTS
-    + ")\\s+(?P<tail_fraction>"
+    + ")"
+    + _WRAP_SPACE_FRAGMENT
+    + "+(?P<tail_fraction>"
     + _HEBREW_PRINTED_SCALE_COUNTED
     + ")(?![\u0590-\u05ff])))?"
     "\\s+(?P<scale>" + _HEBREW_PRINTED_SCALE_WORDS + ")(?![\u0590-\u05ff])"
     # A scaled tail after the scale word: a whole fraction word that does
     # not name its own operand (a lower scale word, a partitive, a
     # construct with an amount noun).
-    "(?:\\s+\u05d5(?:(?P<after_tail>"
+    "(?:"
+    + _WRAP_SPACE_FRAGMENT
+    + "+\u05d5(?:(?P<after_tail>"
     + _HEBREW_PRINTED_SCALE_FRACTIONS
     + ")(?![\u0590-\u05ff])|(?P<after_count>"
     + _HEBREW_PRINTED_SCALE_COUNTS
-    + ")\\s+(?P<after_fraction>"
+    + ")"
+    + _WRAP_SPACE_FRAGMENT
+    + "+(?P<after_fraction>"
     + _HEBREW_PRINTED_SCALE_COUNTED
     + ")(?![\u0590-\u05ff]))(?!"
     + _HEBREW_FRACTION_OPERAND_AFTER_PATTERN.pattern
@@ -3552,10 +3576,14 @@ _HEBREW_PRINTED_SCALE_PATTERN = re.compile(
 )
 # The conjunction before a printed lower-scale remainder: "3 מיליון ו־200
 # אלף", "ו-200", "ו 200".
-_HEBREW_PRINTED_REMAINDER_JOIN_PATTERN = re.compile("\\s+\u05d5[\u05be-]?\\s*")
+_HEBREW_PRINTED_REMAINDER_JOIN_PATTERN = re.compile(
+    "" + _WRAP_SPACE_FRAGMENT + "+\u05d5[\u05be-]?" + _WRAP_SPACE_FRAGMENT + "*"
+)
 # The most characters a join between a spelled amount and a printed part spans.
 _HEBREW_PRINTED_JOIN_WIDTH = 12
-_HEBREW_PRINTED_REMAINDER_JOIN_BEFORE_PATTERN = re.compile("\\s+\u05d5[\u05be-]?\\s*$")
+_HEBREW_PRINTED_REMAINDER_JOIN_BEFORE_PATTERN = re.compile(
+    "" + _WRAP_SPACE_FRAGMENT + "+\u05d5[\u05be-]?" + _WRAP_SPACE_FRAGMENT + "*$"
+)
 
 
 def _hebrew_digits_continue_printed_scale_amount(
@@ -3608,17 +3636,27 @@ _HEBREW_SCALE_WORD_BEFORE_PATTERN = re.compile(
 _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN = re.compile(
     # A number, or a bare fraction with any spacing around its slash ("1/2",
     # "1 / 2", "1 ⁄ 2"), read atomically.
-    "\\s+\u05d5[\u05be-]?\\s*(?>(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
+    ""
+    + _WRAP_SPACE_FRAGMENT
+    + "+\u05d5[\u05be-]?"
+    + _WRAP_SPACE_FRAGMENT
+    + "*(?>(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
     "(?:\\s*[/\u2044]\\s*(?P<bare_denominator>\\d+))?)"
     # The whole mixed number, read atomically so a tail once read is never
     # given back: a printed fraction ("3 1/2", "3 1⁄2", "3 1 / 2") or a
     # spelled tail ("3 וחצי", "3 ושלושה רבעים").
-    "(?>(?:\\s+(?P<numerator>\\d+)\\s*[/\u2044]\\s*(?P<denominator>\\d+))?)"
-    "(?>(?:\\s+\u05d5(?:(?P<tail>"
+    "(?>(?:"
+    + _HORIZONTAL_SPACE_FRAGMENT
+    + "+(?P<numerator>\\d+)\\s*[/\u2044]\\s*(?P<denominator>\\d+))?)"
+    "(?>(?:"
+    + _WRAP_SPACE_FRAGMENT
+    + "+\u05d5(?:(?P<tail>"
     + _HEBREW_PRINTED_SCALE_FRACTIONS
     + ")|(?P<tail_count>"
     + _HEBREW_PRINTED_SCALE_COUNTS
-    + ")\\s+(?P<tail_fraction>"
+    + ")"
+    + _WRAP_SPACE_FRAGMENT
+    + "+(?P<tail_fraction>"
     + _HEBREW_PRINTED_SCALE_COUNTED
     + "))(?![\u0590-\u05ff]))?)"
     # Then neither a rate marker nor a scale word: "ו־3 1/2 אחוזים" and
@@ -4169,7 +4207,9 @@ def _hebrew_spelled_remainder_after(
 
 
 _HEBREW_PERCENT_TAIL_AFTER_PATTERN = re.compile(
-    "\\s+\u05d5(?:(?P<tail>"
+    ""
+    + _WRAP_SPACE_FRAGMENT
+    + "+\u05d5(?:(?P<tail>"
     + "|".join(
         re.escape(w)
         for w in sorted(_HEBREW_MIXED_FRACTION_VALUES, key=len, reverse=True)
@@ -4179,7 +4219,9 @@ _HEBREW_PERCENT_TAIL_AFTER_PATTERN = re.compile(
         re.escape(w)
         for w in sorted(_HEBREW_FRACTION_COUNT_VALUES, key=len, reverse=True)
     )
-    + ")\\s+(?P<tail_fraction>"
+    + ")"
+    + _WRAP_SPACE_FRAGMENT
+    + "+(?P<tail_fraction>"
     + "|".join(
         re.escape(w)
         for w in sorted(_HEBREW_COUNTED_FRACTION_VALUES, key=len, reverse=True)
@@ -4558,7 +4600,9 @@ def _iter_hebrew_printed_scale_matches(
 _HEBREW_PRINTED_MIXED_NUMBER_PATTERN = re.compile(
     "(?<![\\d.,/\u2044])(?:(?<![\u05d0-\u05ea])(?P<sign>[-\u2212]))?"
     "(?P<whole>(?:\\d{1,3}(?:,\\d{3})+|\\d+))(?![.,]\\d)"
-    "\\s+\u05d5(?:(?P<tail>"
+    ""
+    + _WRAP_SPACE_FRAGMENT
+    + "+\u05d5(?:(?P<tail>"
     + "|".join(
         re.escape(w)
         for w in sorted(_HEBREW_MIXED_FRACTION_VALUES, key=len, reverse=True)
@@ -4568,7 +4612,9 @@ _HEBREW_PRINTED_MIXED_NUMBER_PATTERN = re.compile(
         re.escape(w)
         for w in sorted(_HEBREW_FRACTION_COUNT_VALUES, key=len, reverse=True)
     )
-    + ")\\s+(?P<tail_fraction>"
+    + ")"
+    + _WRAP_SPACE_FRAGMENT
+    + "+(?P<tail_fraction>"
     + "|".join(
         re.escape(w)
         for w in sorted(_HEBREW_COUNTED_FRACTION_VALUES, key=len, reverse=True)
@@ -4923,21 +4969,26 @@ def _hebrew_list_body_end(text: str, start: int) -> int:
 # Within a condition the comma before the consequent is the one after the
 # condition, so a headed list inside the condition is followed by that
 # comma, a clause separator or a list tail, with at most modifiers of the
-# unit between ("אחוזים מהכנסה נמוכה, תחול ההוראה", "שקלים מסוימים, ישולם
-# מענק", "שקלים משולמים, ישולם מענק"); a list the consequent swallowed runs
-# on to the sentence end with words between and no comma ("שקלים משולמים
-# כמענק.", "שקלים המעסיק ישלם מענק.") or meets the consequent's plural
-# future verb first ("שקלים ישולמו כמענק, והיתרה תוחזר"). This context,
-# not their letters, tells an adjective or a participle from the verb: a
-# plural future verb ends in ו, and a relative clause ("אשר נקבעו בצו")
-# carries its own verb.
+# unit between ("אחוזים מהכנסה נמוכה, תחול ההוראה", "אחוזים מההכנסה נטו,
+# תחול ההוראה", "שקלים מסוימים, ישולם מענק"); a list the consequent
+# swallowed runs on to the sentence end with words between and no comma
+# ("שקלים משולמים כמענק.") or begins the consequent with its verb right
+# after the unit ("שקלים ישולמו כמענק, והיתרה תוחזר", "שקלים ישלם המעסיק,
+# והיתרה תוחזר"). Only that one position is read for verb shape: an
+# adjective there agrees with the plural unit and ends in ים or ות
+# ("שקלים נוספים", "שקלים מסוימים"), a verb does not; a unit adverb or a
+# demonstrative (נטו, אלה) is neither. No word elsewhere is classified by
+# its letters, and a relative clause ("אשר נקבעו בצו") carries its own verb.
 _HEBREW_RELATIVE_MARKER_PATTERN = re.compile(
     "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?:אשר|(?!של(?![\u0590-\u05ff]))\u05e9[\u0590-\u05ff]{2,})"
     "(?![\u0590-\u05ff])"
 )
-_HEBREW_PLURAL_FUTURE_VERB_PATTERN = re.compile(
-    "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?!(?:אפילו|אילו|אלו|או|איפוא|אולי|יחדיו|עכשיו|אחריו|לפניו)"
-    "(?![\u0590-\u05ff]))\u05d5?[\u05d9\u05ea\u05e0\u05d0][\u0590-\u05ff]+\u05d5"
+_HEBREW_VERB_AFTER_UNIT_PATTERN = re.compile(
+    "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?!(?:נטו|ברוטו|נומינלי|נומינליים|אלו|אלה|אותם|אותן|אותו|אותה"
+    "|יחד|יחדיו|יותר|נוסף|אחר|אחרת|אחד|אחת|או|את|אם|אשר|אף|אך|אל|אפילו|אילו|איפוא"
+    "|אולי|תוך|תחת|נגד)(?![\u0590-\u05ff]))"
+    "\u05d5?[\u05d9\u05ea\u05e0\u05d0]"
+    "(?![\u0590-\u05ff]*(?:ים|ות|\u05ea)(?![\u0590-\u05ff]))[\u0590-\u05ff]{2,}"
     "(?![\u0590-\u05ff])"
 )
 _HEBREW_LIST_TAIL_WORD_PATTERN = re.compile(
@@ -4964,8 +5015,8 @@ def _hebrew_list_ends_within_clause(text: str, body_end: int) -> bool:
     A comma, a clause separator or a list tail after the unit, at most
     modifiers between, ends it there ("אחוזים מהכנסה נמוכה, תחול ההוראה");
     the sentence ending with words between and no comma ("שקלים משולמים
-    כמענק.") or a plural future verb ("שקלים ישולמו כמענק") is the clause
-    running on.
+    כמענק.") or a verb right after the unit ("שקלים ישולמו כמענק", "שקלים
+    ישלם המעסיק") is the clause running on.
     """
     position = body_end
     relative = False
@@ -4979,8 +5030,9 @@ def _hebrew_list_ends_within_clause(text: str, body_end: int) -> bool:
         if _HEBREW_RELATIVE_MARKER_PATTERN.match(text, position) is not None:
             relative = True
         elif (
-            not relative
-            and _HEBREW_PLURAL_FUTURE_VERB_PATTERN.match(text, position) is not None
+            position == body_end
+            and not relative
+            and _HEBREW_VERB_AFTER_UNIT_PATTERN.match(text, position) is not None
         ):
             return False
         modifier = _HEBREW_UNIT_MODIFIER_PATTERN.match(text, position)

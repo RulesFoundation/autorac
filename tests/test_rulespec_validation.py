@@ -19161,6 +19161,68 @@ def test_a_scaled_mixed_fraction_stays_on_its_line():
     assert 10_250_000.0 in extract_numbers_from_text(text)
 
 
+def test_a_verb_right_after_the_unit_is_the_consequent():
+    # Review round 112 on #1585: a verb of any number right after the unit
+    # begins the consequent even when a comma follows later; an adjective
+    # there agrees with the plural unit, and a unit adverb or a
+    # demonstrative is neither.
+    rates = {0.1, 0.2, 0.3}
+    amounts = {1_000_000.0, 2_000_000.0, 3_000_000.0}
+    split = {500.0, 2_000_000.0, 3_000_000.0}
+    for text, expected in (
+        ("אם התשלומים הם 500, 2 או 3 מיליון שקלים ישלם המעסיק, והיתרה תוחזר.", split),
+        (
+            "כאשר התשלומים הם 500, 2 או 3 מיליון שקלים ישולמו כמענק, והיתרה תוחזר.",
+            split,
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים ינוכו מהשכר, והיתרה תוחזר.",
+            {10.0, 20.0, 0.3},
+        ),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים נוספים, ישולם מענק.", amounts),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים אלה, ישולם מענק.", amounts),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים נטו, תחול ההוראה.", rates),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
+def test_no_word_after_a_noun_is_read_as_a_verb():
+    # Review round 112 on #1585: "נטו" and "ברוטו" after the income noun
+    # modify it; only the position right after the unit is read for verb
+    # shape.
+    rates = {0.1, 0.2, 0.3}
+    for text in (
+        "אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה נטו, תחול ההוראה.",
+        "אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה ברוטו, תחול ההוראה.",
+        "אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה נמוכה, תחול ההוראה.",
+    ):
+        assert _hebrew_recall(text) == rates, text
+        assert extract_numbers_from_text(text) == rates, text
+
+
+def test_a_printed_tail_ends_at_a_paragraph_boundary():
+    # Review round 112 on #1585: a spelled tail or a printed remainder
+    # joins its number across a space or a single line wrap, never a blank
+    # line or a paragraph separator.
+    for text, expected in (
+        ("הסף הוא 10\n\nוחצי מיליון שקלים ישולמו.", {10.0, 500_000.0}),
+        ("הסף הוא 10 וחצי מיליון שקלים ישולמו.", {10.0, 500_000.0}),
+        ("הסף הוא 10\n\nוחצי נקודת זיכוי תינתן.", {10.0, 0.5}),
+        ("הסף הוא 10 וחצי נקודת זיכוי תינתן.", {10.0, 0.5}),
+        ("הסף הוא 10\nוחצי מיליון שקלים ישולמו.", {10_500_000.0}),
+        ("הסף הוא 10 וחצי מיליון שקלים ישולמו.", {10_500_000.0}),
+        ("הסף הוא 10 וחצי נקודת זיכוי תינתן.", {10.5}),
+        ("הסכום הוא 3 מיליון ו־200 שקלים.", {3_000_200.0}),
+        ("הסכום הוא 3 מיליון\n\nו־200 שקלים.", {3_000_000.0, 200.0}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        grounded = extract_numbers_from_text(text)
+        assert expected <= grounded, text
+        if len(expected) == 2:
+            assert sum(expected) not in grounded, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
