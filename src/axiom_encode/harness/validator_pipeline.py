@@ -3954,15 +3954,18 @@ def _iter_hebrew_shared_scale_range_matches(
             continue
         # "2 עד 3 אלפים אחוזים": the shared scale word carries a percent unit
         # too, and both endpoints are rates.
-        headed = unit_word_after and _hebrew_vav_pair_is_coordinated(
-            text, lower_span[0], is_rate
-        )
+        headed = _hebrew_vav_pair_is_coordinated(text, lower_span[0], is_rate)
         list_coordinated = vav_join or comma_join
         if list_coordinated and not headed:
             # "הסכומים הם 2 ו־3 מיליון שקלים, בהתאמה" shares; "ההכנסה עומדת על
             # 500 ו־2 ו־3 מיליון ישולמו" joins clauses.
             continue
-        if join is not None and join.group("join") == "או" and not unit_word_after:
+        if (
+            join is not None
+            and join.group("join") == "או"
+            and not unit_word_after
+            and not headed
+        ):
             # "הקנס הוא 500 או 3 מיליון.", "סכום של 500 או 3 מיליון": a bare
             # scale word does not distribute; "2 או 3 מיליון שקלים" and "1
             # או 2 או 3 אלפים אחוזים" share.
@@ -4755,8 +4758,10 @@ _HEBREW_PLURAL_AMOUNT_HEADING_PATTERN = re.compile(
     + _HEBREW_LIST_COPULAS
     + ")(?![\u0590-\u05ff])"
 )
+# Matched at the clause start with ``match(text, pos)``, so no "^": that
+# anchor would hold only at the start of the whole text.
 _HEBREW_CONDITIONAL_CLAUSE_PATTERN = re.compile(
-    "^\\s*(?:אם|כאשר|כש|ככל\\s+ש|במקרה\\s+ש|אילו|לכשיהיה)"
+    "\\s*(?:אם|כאשר|כש|ככל\\s+ש|במקרה\\s+ש|אילו|לכשיהיה)"
 )
 _HEBREW_SENTENCE_STOP_CHARACTERS = frozenset(".;:\n")
 
@@ -4765,17 +4770,32 @@ _HEBREW_LIST_JOIN_WORDS = frozenset({"או", "עד", "ועד", "\u05d5"})
 _HEBREW_LIST_INTRODUCERS = ("כדלקמן", "הבאים", "הבאות")
 
 
+# The colon that introduces the list ("השיעורים הם: 10, 20 ו־30") is body too.
+_HEBREW_LIST_BODY_FILLER_PATTERN = re.compile(
+    "[\\s\\d.,:%/\u2044\u05be\\-\u2013\u2212$\u20ac\u00a3\u20aa\u20b9\u00a5"
+    "\u200e\u200f\u202a-\u202e\u2066-\u2069]*"
+)
+
+
 def _hebrew_list_body_only(text: str, start: int, end: int) -> bool:
     """Whether ``text[start:end]`` holds list items and joins alone.
 
     Numbers, number words, scale words, percent nouns, currency words,
     joins, commas and signs: "10, 20 ו־" is a list body, "10% ו־20%, הקנס
-    יהיה" is not.
+    יהיה" is not, and nor is prose in any other script.
     """
-    for match in _HEBREW_WORD_TOKEN_PATTERN.finditer(text, start, end):
-        word = match.group(0).rstrip("\u05be")
+    position = start
+    while position < end:
+        filler = _HEBREW_LIST_BODY_FILLER_PATTERN.match(text, position, end)
+        position = filler.end()
+        if position >= end:
+            return True
+        word_match = _HEBREW_WORD_TOKEN_PATTERN.match(text, position, end)
+        if word_match is None:
+            return False
+        word = word_match.group(0).rstrip("\u05be")
         bare = word[1:] if len(word) > 1 and word.startswith("\u05d5") else word
-        if (
+        if not (
             word in _HEBREW_LIST_JOIN_WORDS
             or _strip_hebrew_number_prefix(word, _HEBREW_RUN_START_VOCABULARY)
             is not None
@@ -4786,9 +4806,22 @@ def _hebrew_list_body_only(text: str, start: int, end: int) -> bool:
             or word in _HEBREW_CURRENCY_WORDS
             or bare in _HEBREW_CURRENCY_WORDS
         ):
-            continue
-        return False
+            return False
+        position = word_match.end()
     return True
+
+
+_HEBREW_LIST_COLON_WORDS = (
+    "כדלקמן",
+    "הבאים",
+    "הבאות",
+    "הם",
+    "הן",
+    "יהיו",
+    "תהיינה",
+    "הינם",
+    "הינן",
+)
 
 
 def _hebrew_list_heading_end(text: str, start: int, rate: bool) -> int | None:
@@ -4803,8 +4836,19 @@ def _hebrew_list_heading_end(text: str, start: int, rate: bool) -> int | None:
     while clause_start > 0 and start - clause_start < 160:
         character = text[clause_start - 1]
         if character in _HEBREW_SENTENCE_STOP_CHARACTERS:
+            if (
+                character == "."
+                and clause_start >= 2
+                and clause_start < len(text)
+                and text[clause_start - 2].isdigit()
+                and text[clause_start].isdigit()
+            ):
+                # A decimal point ("10.5, 20 ו־30") is no stop.
+                clause_start -= 1
+                continue
             before = text[: clause_start - 1].rstrip()
-            if character == ":" and before.endswith(_HEBREW_LIST_INTRODUCERS):
+            if character == ":" and before.endswith(_HEBREW_LIST_COLON_WORDS):
+                # The colon that introduces a list ("כדלקמן:", "הם:").
                 clause_start -= 1
                 continue
             break
@@ -5081,6 +5125,7 @@ def _iter_hebrew_percent_range_lower_matches(
         if (
             join is not None
             and join.group("free") == "או"
+            and not headed
             and (
                 "%" in noun.group(0)
                 or _hebrew_currency_heading_before(text, lower_span[0])
@@ -5145,7 +5190,7 @@ def _iter_hebrew_percent_range_lower_matches(
                 is not None
             )
         )
-        if lower_value >= 1000 and not explicit_range:
+        if lower_value >= 1000 and not explicit_range and not headed:
             continue
         matches.append((lower_span, lower_value / 100))
         # Earlier alternatives share the noun too: "1 או 2 או 3 אחוזים", "1, 2
@@ -5209,12 +5254,13 @@ def _iter_hebrew_percent_range_lower_matches(
                 is not None
             ):
                 break
-            if earlier_value >= 1000 and not explicit_range:
+            if earlier_value >= 1000 and not explicit_range and not headed:
                 break
             if _hebrew_operand_is_denominated(text, earlier_span[0], earlier_span[1]):
                 break
             if (
-                earlier_join is not None
+                not headed
+                and earlier_join is not None
                 and earlier_join.group(0).lstrip().startswith("או")
                 and (
                     "%" in noun.group(0)
