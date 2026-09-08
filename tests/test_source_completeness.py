@@ -42377,7 +42377,9 @@ def test_estg78_explicit_priority_dependency_accepts_exact_typed_blocker(source)
         "Abweichend von § 65 wird der Betrag bestimmt.",
     ],
 )
-def test_german_dependency_links_reject_negation_unrelated_clause_and_other_section(source):
+def test_german_dependency_links_reject_negation_unrelated_clause_and_other_section(
+    source,
+):
     assert not completeness_module._source_scope_identifies_blocker(
         source,
         "de:statutes/estg/64#recipient_priority",
