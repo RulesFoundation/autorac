@@ -3660,9 +3660,11 @@ _HEBREW_SHARED_SCALE_WORD_PATTERN = re.compile(
 # endpoint rules admit, so the two do not meet.
 # A comma joins a list too ("1, 2, 3 מיליון"); the reference, label and
 # complete-amount guards on the lower endpoint keep "סעיף 5, 3 מיליון" apart.
+# A comma never joins: it separates clauses as often as it lists ("על הכנסה
+# עד 500, 3 מיליון" states a threshold), and nothing in the text tells the
+# two apart. A list closed by a conjunction shares from the joined pair on.
 _HEBREW_SHARED_SCALE_JOIN_BEFORE_PATTERN = re.compile(
-    "(?:(?<![\u0590-\u05ff])(?P<join>לבין|ועד|עד|או|ל|\u05d5)(?:[\u05be-]\\s*|\\s+)"
-    "|(?P<comma>,\\s*))$"
+    "(?<![\u0590-\u05ff])(?P<join>לבין|ועד|עד|או|ל|\u05d5)(?:[\u05be-]\\s*|\\s+)$"
 )
 # A noun that numbers the lower endpoint rather than counting it: "תוספת 2
 # עד מאה ועשרים אלף" is supplement 2, up to 120,000, and shares nothing.
@@ -3845,9 +3847,7 @@ def _iter_hebrew_shared_scale_range_matches(
         needs_bound = False
         if join is not None:
             lower_end = len(text[: join.start()].rstrip())
-            if lower_end == join.start() and join.group("comma") is None:
-                # A word join stands after a gap; a comma sits flush
-                # against the number before it.
+            if lower_end == join.start():
                 continue
         else:
             # A ל prefix on a spelled upper endpoint joins under "בין" or
@@ -3897,16 +3897,6 @@ def _iter_hebrew_shared_scale_range_matches(
                 lower_value = -lower_value
                 lower_span = (lower_span[0] - 1, lower_end)
         if _hebrew_endpoint_continues_an_amount(text, lower_span[0]):
-            continue
-        if (
-            join is not None
-            and join.group("comma") is not None
-            and not _hebrew_list_item_anchored(text, lower_span[0], tokens)
-        ):
-            # An operand a comma joins, printed or spelled, shares the scale
-            # only as an item of a list a predicate introduces ("הסכומים הם
-            # 1, 2, 3 מיליון"): "על הכנסה עד 500, 3 מיליון", "עד חמש מאות, 3
-            # מיליון" and "$500, 3 מיליון" keep their thresholds.
             continue
         if needs_bound and (
             _search_before(_HEBREW_RANGE_LOWER_BOUND_PATTERN, text, lower_span[0], 16)
@@ -3976,13 +3966,6 @@ def _iter_hebrew_shared_scale_range_matches(
                     earlier_value is None
                     or "," in earlier_printed.group(0)
                     or abs(earlier_value) >= 1000
-                    or (
-                        earlier_join is not None
-                        and earlier_join.group(0).lstrip().startswith(",")
-                        and not _hebrew_list_item_anchored(
-                            text, earlier_printed.start(), tokens
-                        )
-                    )
                 ):
                     break
                 earlier_span = (earlier_printed.start(), earlier_flush)
@@ -4008,14 +3991,7 @@ def _iter_hebrew_shared_scale_range_matches(
                     _HEBREW_RANGE_WALK_STOP_PATTERN, text, earlier_span[0], 24
                 )
                 is not None
-                or (
-                    earlier_join is not None
-                    and earlier_join.group(0).lstrip().startswith(",")
-                    and not _hebrew_list_item_anchored(text, earlier_span[0], tokens)
-                )
             ):
-                # "על הכנסה עד 500, 2 או 3 מיליון": the threshold before the
-                # comma is a bound of its own, printed or spelled.
                 break
             matches.append(
                 (
@@ -4590,15 +4566,16 @@ def _hebrew_printed_endpoint_value(match: "re.Match[str]") -> float | None:
 # spaced dash is no join: in a tax schedule row ("על כל שקל חדש מ־84,120 –
 # 10%") it separates a threshold from its rate.
 # The cleaner detaches a maqaf into a space, so "ל־3" arrives here as "ל 3".
+# A comma never joins, here or in the walk back: it separates clauses as often
+# as it lists ("על הכנסה עד 500, 10% מס" states a threshold), and nothing in
+# the text tells the two apart. A list closed by a conjunction shares from the
+# joined pair on ("1, 2 או 3 אחוזים" shares the two and the three).
 _HEBREW_RANGE_JOIN_BEFORE_PATTERN = re.compile(
     "(?:(?<![\u0590-\u05ff])(?P<free>עד|ועד|לבין|או)\\s+"
-    "|(?<![\u0590-\u05ff])(?P<bound>[\u05dc\u05d5])(?:\u05be|[-\u2013]|\\s)\\s*"
-    # A comma joins a list of rates ("1, 2, 3 אחוזים"), no bound required;
-    # a reference or a label before the lower endpoint keeps it apart.
-    "|(?P<comma>,\\s*))$"
+    "|(?<![\u0590-\u05ff])(?P<bound>[\u05dc\u05d5])(?:\u05be|[-\u2013]|\\s)\\s*)$"
 )
 _HEBREW_RANGE_WALK_JOIN_PATTERN = re.compile(
-    "(?:(?<![\u0590-\u05ff])(?:עד|ועד|או)\\s+|,\\s*|(?<![\u0590-\u05ff])\u05d5(?:\u05be|-)?\\s*)$"
+    "(?:(?<![\u0590-\u05ff])(?:עד|ועד|או)\\s+|(?<![\u0590-\u05ff])\u05d5(?:\u05be|-)?\\s*)$"
 )
 # An earlier number the walk must not scale: an age, a year, a form number,
 # a grade ("לילד עד גיל 5, 2 או 3 אחוזים"). A reference ("לפי סעיף קטן 5, 2
@@ -4633,64 +4610,6 @@ def _hebrew_spelled_span_carries_a_scale(text: str, start: int, end: int) -> boo
         word in _HEBREW_PRINTED_SCALE_VALUES or word in _HEBREW_SCALE_VALUES
         for word in words
     )
-
-
-# A predicate that introduces a list of quantities, flush before its first
-# item: a plural copula ("השיעורים הם 1, 2 או 3 אחוזים", "שיעורי המס יהיו
-# 1, 2 או 3 אחוזים"), an explicit introducer ("כדלקמן: 1, 2, 3 אחוזים") or
-# a supplement noun. A singular copula introduces a value, not a list:
-# "אם ההכנסה היא 500, 2 או 3% ממנה" states a condition on 500.
-_HEBREW_LIST_PREDICATE_BEFORE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?:הם|הן|יהיו|תהיינה|הינם|הינן|בשיעורים|כדלקמן|הבאים|הבאות"
-    # A supplement's amounts share the noun ("תוספת 1, 2 או 3 אחוזים").
-    "|(?:ב?תוספת|הנחה)(?:\\s+של)?)\\s*:?\\s*$"
-)
-
-
-def _hebrew_list_item_anchored(
-    text: str, start: int, tokens: "_HebrewWordTokens"
-) -> bool:
-    """Whether the number at ``start`` is an item of a list a predicate introduces.
-
-    The walk back crosses commas and conjunctions over earlier items,
-    printed or spelled, to the list's first item and asks what stands
-    before it: a plural predicate ("הם", "יהיו") or an explicit introducer
-    ("כדלקמן:") anchors the list; a singular copula ("היא", "יהיה") states
-    one value and anchors nothing.
-    Anything else -- a threshold governor ("עד 500", "שאינה עולה על 500"),
-    a label, a reference, a bare start -- leaves the number a quantity of
-    its own, so a comma before it separates clauses. This is the only
-    evidence a comma is a list join; "בהתאמה" after the unit is none, as
-    it governs the rates alone ("עד 500, 2 או 3% מס ליחיד ולחברה,
-    בהתאמה").
-    """
-    position = start
-    for _ in range(16):
-        if _hebrew_unary_sign_at(text, position - 1):
-            position -= 1
-        if (
-            _search_before(_HEBREW_LIST_PREDICATE_BEFORE_PATTERN, text, position, 24)
-            is not None
-        ):
-            return True
-        join = _search_before(_HEBREW_RANGE_WALK_JOIN_PATTERN, text, position, 12)
-        if join is not None:
-            flush = len(text[: join.start()].rstrip())
-        elif (
-            position > 0 and text[position] == "\u05d5" and text[position - 1].isspace()
-        ):
-            flush = len(text[:position].rstrip())
-        else:
-            return False
-        digits = _search_before(_HEBREW_DIGITS_BEFORE_PATTERN, text, flush, 32)
-        if digits is not None:
-            position = digits.start()
-            continue
-        spelled = _hebrew_number_run_ending_at(text, flush, tokens, True)
-        if spelled is None:
-            return False
-        position = spelled[0]
-    return False
 
 
 def _hebrew_number_run_ending_at(
@@ -4785,11 +4704,9 @@ def _iter_hebrew_percent_range_lower_matches(
             lower_end = join.start()
             # "ל־" needs "בין" or "מ־" before the lower endpoint; "ו־" joins a
             # pair of rates on its own ("2 ו־3 אחוזים, בהתאמה").
-            needs_bound = (
-                join.group("free") is None
-                and join.group("comma") is None
-                and not join.group(0).lstrip().startswith("\u05d5")
-            )
+            needs_bound = join.group("free") is None and not join.group(
+                0
+            ).lstrip().startswith("\u05d5")
         elif (
             upper_first is not None
             and upper_first[:1] in ("\u05dc", "\u05d5")
@@ -4870,24 +4787,6 @@ def _iter_hebrew_percent_range_lower_matches(
                 # read before it.
                 lower_value = -lower_value
                 lower_span = (lower_span[0] - 1, lower_flush)
-        if (
-            join is not None
-            and join.group("comma") is not None
-            and (
-                _span_overlaps(lower_span, structural_spans)
-                or _search_before(
-                    _HEBREW_RANGE_WALK_STOP_PATTERN, text, lower_span[0], 24
-                )
-                is not None
-                or not _hebrew_list_item_anchored(text, lower_span[0], tokens)
-            )
-        ):
-            # A comma joins a rate list only to an item a predicate
-            # introduces ("השיעורים הם 1, 2, 3 אחוזים"): "לפי סעיף קטן 5, 3
-            # אחוזים", "לילד שגילו 5, 3%", "על הכנסה עד 500, 10% מס", "על
-            # הכנסה שאינה עולה על 500, 2 או 3%" and "For income up to $500,
-            # 10%" keep the number before the comma what it is.
-            continue
         if (
             needs_bound
             and not (
@@ -4977,14 +4876,7 @@ def _iter_hebrew_percent_range_lower_matches(
                     _HEBREW_RANGE_WALK_STOP_PATTERN, text, earlier_span[0], 24
                 )
                 is not None
-                or (
-                    earlier_join is not None
-                    and earlier_join.group(0).lstrip().startswith(",")
-                    and not _hebrew_list_item_anchored(text, earlier_span[0], tokens)
-                )
             ):
-                # "על הכנסה עד 500, 2 או 3% מס": the threshold before the
-                # comma is a bound of its own, printed or spelled.
                 break
             if earlier_value >= 1000 and not explicit_range:
                 break
