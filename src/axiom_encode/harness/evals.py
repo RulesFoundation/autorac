@@ -2181,11 +2181,8 @@ def _discover_amendment_documents(
         tuple[_corpus_resolver.ActiveCorpusBodyRow, Literal["structured", "name"]]
     ] = []
     for row in rows:
-        if (
-            row.row.version != version
-            or (row.row.source_path or row.row.citation_path) == target_document_key
-            or not _is_amendment_row(row)
-        ):
+        row_document_key = row.row.source_path or row.row.citation_path
+        if row_document_key == target_document_key or not _is_amendment_row(row):
             continue
         structured_match = _amendment_has_structured_document_target(
             row,
@@ -2193,7 +2190,13 @@ def _discover_amendment_documents(
         )
         if structured_match:
             marked_rows.append((row, "structured"))
-        elif _amendment_relates_to_target(row, target_identifiers):
+        # Rows already belong to the verified release. Explicit canonical
+        # targets can cross its capture scopes; scope versions are not legal
+        # applicability dates. Keep fuzzy name matching within the target's
+        # scope so this does not broaden heuristic discovery.
+        elif row.row.version == version and _amendment_relates_to_target(
+            row, target_identifiers
+        ):
             marked_rows.append((row, "name"))
 
     roots_by_document: dict[str, _corpus_resolver.ActiveCorpusBodyRow] = {}
