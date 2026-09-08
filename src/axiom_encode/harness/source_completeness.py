@@ -26571,9 +26571,9 @@ def _ordinary_semantic_identifier(identifier: str) -> bool:
 def _rule_implements_rounding(rule: dict[str, Any], direction: str) -> bool:
     formula_text = _rule_formula_text(rule)
     if direction == "nearest":
-        return bool(
-            re.search(r"\bfloor\s*\(", formula_text)
-            and re.search(r"\+\s*0?\.5\b", formula_text)
+        return any(
+            _rounding_demonstrated_operand(operand, direction=direction) is not None
+            for operand in _balanced_call_operands(formula_text, "floor")
         )
     function_name = "ceil" if direction == "upward" else "floor"
     return re.search(rf"\b{function_name}\s*\(", formula_text) is not None
@@ -26659,6 +26659,8 @@ def _fractional_rounding_case_witnesses(
                     effective_operand,
                     evaluation_environment=evaluation_environment,
                     operand_value=float(operand_value),
+                    rule=rule,
+                    execution=execution,
                     principal_rules=principal_rules,
                     formula_environment=formula_environment,
                     dependency_names=set(dependency_environment),
@@ -26702,9 +26704,9 @@ def _formula_execution_implements_rounding(
     direction: str,
 ) -> bool:
     if direction == "nearest":
-        return bool(
-            re.search(r"\bfloor\s*\(", execution.leaf)
-            and re.search(r"\+\s*0?\.5\b", execution.leaf)
+        return any(
+            _rounding_demonstrated_operand(operand, direction=direction) is not None
+            for operand in _balanced_call_operands(execution.leaf, "floor")
         )
     function_name = "ceil" if direction == "upward" else "floor"
     return (
@@ -26737,12 +26739,18 @@ def _rounding_call_operands(
                 and not expression.keywords
             ):
                 operand = ast.unparse(expression.args[0])
-                if functions != {"nearest"} or re.search(r"\+\s*0?\.5\b", operand):
+                if functions != {"nearest"} or _rounding_demonstrated_operand(
+                    operand,
+                    direction="nearest",
+                ) is not None:
                     return ((expression.func.id, operand),)
         return ()
     for function_name in function_names:
         for operand in _balanced_call_operands(formula_text, function_name):
-            if functions == {"nearest"} and not re.search(r"\+\s*0?\.5\b", operand):
+            if functions == {"nearest"} and _rounding_demonstrated_operand(
+                operand,
+                direction="nearest",
+            ) is None:
                 continue
             calls.append((function_name, operand))
     return tuple(calls)
@@ -26824,6 +26832,8 @@ def _fractional_input_materially_affects_operand(
     *,
     evaluation_environment: dict[str, Any],
     operand_value: float,
+    rule: dict[str, Any],
+    execution: _FormulaExecution,
     principal_rules: dict[str, dict[str, Any]],
     formula_environment: dict[str, Any],
     dependency_names: set[str],
@@ -26837,8 +26847,6 @@ def _fractional_input_materially_affects_operand(
         if _rulespec_runtime_decimal(value) is None:
             continue
         aliases = _input_key_names(key) & operand_names
-        if not aliases and not uses_derived_operand:
-            continue
         replacement: int | float
         if float(value).is_integer():
             replacement = int(value) + 1
@@ -26864,12 +26872,25 @@ def _fractional_input_materially_affects_operand(
         if changed_inputs is None:
             continue
         changed_environment.update(changed_inputs)
-        changed_value = _evaluate_formula_selector(
-            operand,
-            changed_environment,
+        if aliases or uses_derived_operand:
+            changed_value = _evaluate_formula_selector(
+                operand,
+                changed_environment,
+            )
+            if (
+                _rulespec_runtime_decimal(changed_value) is not None
+                and not math.isclose(float(changed_value), operand_value)
+            ):
+                return True
+        changed_execution = _case_formula_execution(
+            rule,
+            candidate_case,
+            formula_environment=formula_environment,
+            dependency_environment=candidate_dependencies,
         )
-        if _rulespec_runtime_decimal(changed_value) is not None and not math.isclose(
-            float(changed_value), operand_value
+        if changed_execution is not None and (
+            changed_execution.trace != execution.trace
+            or changed_execution.evaluated_value != execution.evaluated_value
         ):
             return True
     return False
