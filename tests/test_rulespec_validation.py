@@ -19352,6 +19352,58 @@ def test_the_definite_subject_tells_the_consequents_verb():
         assert extract_numbers_from_text(text) == expected, text
 
 
+def test_the_consequents_verb_is_known_by_word():
+    # Review round 116 on #1585: "ישלם" and "יחיד" share a shape, so the
+    # consequent's verb is a closed list of third-person future forms plus
+    # the plural that begins in י and ends in ו; a noun with a definite
+    # modifier, an indefinite subject after the verb and a relative clause
+    # on a suffixed preposition all read as they should.
+    rates = {0.1, 0.2, 0.3}
+    amounts = {1_000_000.0, 2_000_000.0, 3_000_000.0}
+    split = {500.0, 2_000_000.0, 3_000_000.0}
+    for text, expected in (
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסת יחיד החייב במס, תחול ההוראה.",
+            rates,
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מדמי אבטלה המשולמים לעובד, תחול ההוראה.",
+            rates,
+        ),
+        (
+            "אם התשלומים הם 500, 2 או 3 מיליון שקלים לעובד ישלם מעסיק, והיתרה תוחזר.",
+            split,
+        ),
+        (
+            "אם התשלומים הם 500, 2 או 3 מיליון שקלים לעובד תשלם רשות מקומית, והיתרה תוחזר.",
+            split,
+        ),
+        (
+            "אם התשלומים הם 500, 2 או 3 מיליון שקלים לעובד יוחזרו, והיתרה תוחזר.",
+            split,
+        ),
+        (
+            "אם התשלומים הם 500, 2 או 3 מיליון שקלים לעובד ישלם המעסיק, והיתרה תוחזר.",
+            split,
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה שעליה ישולם המס, תחול ההוראה.",
+            rates,
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה שבגינה ישלם המעסיק מס, תחול ההוראה.",
+            rates,
+        ),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים מהכנסת אביו, ישולם מענק.", amounts),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים מנכסיו, ישולם מענק.", amounts),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים לילדיו, ישולם מענק.", amounts),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מדמי אבטלה, תחול ההוראה.", rates),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה יומית, תחול ההוראה.", rates),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
