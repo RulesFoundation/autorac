@@ -2423,7 +2423,9 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
         in cascade_step["run"]
     )
     assert 'cascade_args+=("${dependent_citations[@]}")' in cascade_step["run"]
-    assert '"${cascade_args[@]}"' in cascade_step["run"]
+    assert "--allow-proof-import-subset" in cascade_step["run"]
+    assert 'cascade_mode="$("${cascade_args[@]}")"' in cascade_step["run"]
+    assert "DEPENDENT_CASCADE_MODE=%s" in cascade_step["run"]
 
     signed_import_step = next(
         step for step in steps if step.get("name") == "Verify existing signed imports"
@@ -2539,7 +2541,10 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert '--output "$RUNNER_TEMP/generated/$output_lane"' in command
     assert '"$SECOND_DEPENDENT_CITATION"' in command
     assert '"$SECOND_DEPENDENT_REVIEW_FINDING" false dependent-2 "" "" false' in command
-    assert '"$CITATION" "$REVIEW_FINDING" true target \\\n' in command
+    assert '"$CITATION" "$REVIEW_FINDING" "$primary_target_only" target \\\n' in command
+    assert 'local scheduled_dependent_paths_json="${11:-[]}"' in command
+    assert "--scheduled-dependent-rulespec-path" in command
+    assert 'DEPENDENT_CASCADE_MODE:-}" = "proof-import-subset"' in command
     assert '"$DEPENDENT_CITATION" "$DEPENDENT_REVIEW_FINDING" \\\n' in command
     assert '"$REPLACE_RULESPEC_PATH" "$REPLACE_LEGACY_RULESPEC_PATH"' in command
     assert '"$CITATION" "$REVIEW_FINDING" false \\\n' in command
@@ -4492,10 +4497,14 @@ if mutation_path and len(calls_path.read_text(encoding="utf-8").splitlines()) ==
     ]
 
 
-@pytest.mark.parametrize("dependent_count", [0, 1, 2])
+@pytest.mark.parametrize(
+    ("dependent_count", "cascade_mode"),
+    [(0, ""), (1, ""), (1, "proof-import-subset"), (2, "")],
+)
 def test_targeted_signed_reencode_orders_target_and_dependents(
     tmp_path: Path,
     dependent_count: int,
+    cascade_mode: str,
 ) -> None:
     workflow = yaml.safe_load(
         (ROOT / ".github/workflows/targeted-signed-reencode.yml").read_text()
@@ -4536,6 +4545,7 @@ with Path(os.environ["CALLS_PATH"]).open("a", encoding="utf-8") as stream:
         "CITATION": "us/regulation/42/435/555",
         "DEPENDENT_CITATION": "",
         "DEPENDENT_REVIEW_FINDING": "",
+        "DEPENDENT_CASCADE_MODE": cascade_mode,
         "GITHUB_WORKSPACE": str(tmp_path),
         "REVIEW_FINDING": "Preserve the target source.",
         "RULESPEC_CHECKOUT": str(tmp_path / "rulespec-us"),
@@ -4578,7 +4588,17 @@ with Path(os.environ["CALLS_PATH"]).open("a", encoding="utf-8") as stream:
         args.count("--require-complete-source-unit") == 1 for args in encode_args
     )
     assert encode_args[0][-1] == "us/regulation/42/435/555"
-    assert ("--apply-target-only" in encode_args[0]) is (dependent_count > 0)
+    assert ("--apply-target-only" in encode_args[0]) is (
+        dependent_count > 0 and cascade_mode != "proof-import-subset"
+    )
+    scheduled_option = "--scheduled-dependent-rulespec-path"
+    assert (scheduled_option in encode_args[0]) is (
+        cascade_mode == "proof-import-subset"
+    )
+    if cascade_mode == "proof-import-subset":
+        assert encode_args[0][encode_args[0].index(scheduled_option) + 1] == (
+            "us/regulations/42-cfr/435/559.yaml"
+        )
     assert (
         Path(encode_args[0][encode_args[0].index("--review-findings") + 1])
         .read_text(encoding="utf-8")

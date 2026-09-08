@@ -930,8 +930,20 @@ jobs:
           if [ -n "$cascade_target" ]; then
             cascade_args+=(--target-rulespec-path "$cascade_target")
           fi
+          if [ -n "$REPLACE_RULESPEC_PATH" ] && \
+             [ -z "$REPLACE_LEGACY_RULESPEC_PATH" ]; then
+            cascade_args+=(--allow-proof-import-subset)
+          fi
           cascade_args+=("${dependent_citations[@]}")
-          "${cascade_args[@]}"
+          cascade_mode="$("${cascade_args[@]}")"
+          case "$cascade_mode" in
+            all-direct|proof-import-subset) ;;
+            *)
+              echo "dependent cascade returned an invalid scheduling mode" >&2
+              exit 1
+              ;;
+          esac
+          printf 'DEPENDENT_CASCADE_MODE=%s\n' "$cascade_mode" >> "$GITHUB_ENV"
 
       - name: Verify existing signed imports
         env:
@@ -1159,6 +1171,7 @@ jobs:
             local deferred_output_contracts_json="${8:-[]}"
             local required_test_cases_json="${9:-[]}"
             local require_complete_source_unit="${10:-true}"
+            local scheduled_dependent_paths_json="${11:-[]}"
             local review_finding_path=""
             local review_contract_json=""
             local candidate_root=""
@@ -1194,6 +1207,13 @@ jobs:
             if [ "$target_only" = "true" ]; then
               args+=(--apply-target-only)
             fi
+            while IFS= read -r scheduled_dependent_path; do
+              args+=(--scheduled-dependent-rulespec-path \
+                "$scheduled_dependent_path")
+            done < <(
+              jq -er 'if type == "array" then .[] else error("not array") end' \
+                <<< "$scheduled_dependent_paths_json"
+            )
             if [ -n "$replacement_path" ]; then
               args+=(--replace-rulespec-path "$replacement_path")
             fi
@@ -1447,6 +1467,15 @@ jobs:
           if [ -n "$SECOND_DEPENDENT_CITATION" ]; then
             second_dependent_rulespec_path="$("$workflow_python" "$backfill_helper" \
               citation-rulespec-path "$SECOND_DEPENDENT_CITATION")"
+          fi
+          scheduled_dependent_paths_json="[]"
+          if [ "${DEPENDENT_CASCADE_MODE:-}" = "proof-import-subset" ]; then
+            scheduled_dependent_paths_json="$(
+              jq -cn \
+                --arg first "$dependent_rulespec_path" \
+                --arg second "$second_dependent_rulespec_path" \
+                '[$first, $second] | map(select(length > 0))'
+            )"
           fi
 
           atomic_source_payload="$(
@@ -1762,11 +1791,17 @@ jobs:
             done < "$RUNNER_TEMP/source-bundle-citations.txt"
 
             if [ -n "$DEPENDENT_CITATION" ]; then
+              primary_target_only=true
+              if [ "${DEPENDENT_CASCADE_MODE:-}" = "proof-import-subset" ]; then
+                primary_target_only=false
+              fi
               run_signed_encode \
-                "$CITATION" "$REVIEW_FINDING" true target \
+                "$CITATION" "$REVIEW_FINDING" "$primary_target_only" target \
                 "$REPLACE_RULESPEC_PATH" "$REPLACE_LEGACY_RULESPEC_PATH" \
                 "$required_imports_enabled" "[]" \
-                "$primary_required_test_cases_json"
+                "$primary_required_test_cases_json" \
+                "$target_require_complete_source_unit" \
+                "$scheduled_dependent_paths_json"
               dependent_target_only=false
               if [ -n "$SECOND_DEPENDENT_CITATION" ]; then
                 dependent_target_only=true

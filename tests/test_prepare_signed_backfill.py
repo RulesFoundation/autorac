@@ -3687,6 +3687,69 @@ def test_validate_dependent_cascade_rejects_incomplete_direct_dependents(
         )
 
 
+def test_validate_dependent_cascade_accepts_exact_proof_import_subset(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    _write_module(repo, "policies/usda/snap/maximum.yaml")
+    pinned = _write_module(
+        repo,
+        "statutes/7/2017/a.yaml",
+        imports=("us:policies/usda/snap/maximum",),
+    )
+    pinned.write_text(
+        pinned.read_text().replace(
+            "rules: []",
+            """rules:
+  - name: allotment
+    metadata:
+      proof:
+        atoms:
+          - kind: import
+            import:
+              target: us:policies/usda/snap/maximum#maximum
+              hash: sha256:deadbeef""",
+        )
+    )
+    _write_module(
+        repo,
+        "regulations/7-cfr/273/10.yaml",
+        imports=("us:policies/usda/snap/maximum",),
+    )
+
+    assert validate_dependent_cascade(
+        repo,
+        "us/policy/usda/snap/maximum",
+        "us/statute/7/2017/a",
+        allow_proof_import_subset=True,
+    ) == (pinned.relative_to(repo / "us"),)
+
+
+def test_validate_dependent_cascade_rejects_nonproof_subset_even_when_allowed(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    _write_module(repo, "policies/usda/snap/maximum.yaml")
+    _write_module(
+        repo,
+        "statutes/7/2017/a.yaml",
+        imports=("us:policies/usda/snap/maximum",),
+    )
+    _write_module(
+        repo,
+        "regulations/7-cfr/273/10.yaml",
+        imports=("us:policies/usda/snap/maximum",),
+    )
+
+    with pytest.raises(ValueError, match="does not exactly match"):
+        validate_dependent_cascade(
+            repo,
+            "us/policy/usda/snap/maximum",
+            "us/statute/7/2017/a",
+            allow_proof_import_subset=True,
+        )
+
+
 def test_validate_rulespec_base_accepts_main_ancestor(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     base = _add_origin_main(repo)
