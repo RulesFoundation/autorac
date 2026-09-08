@@ -3905,10 +3905,15 @@ def _iter_hebrew_shared_scale_range_matches(
         if (
             join is not None
             and join.group("join") == "או"
-            and _hebrew_alternatives_are_compared(text, scale_match.end())
+            and (
+                _hebrew_alternatives_are_compared(text, scale_match.end())
+                or _hebrew_singular_money_noun_governs(text, lower_span[0])
+            )
         ):
-            # "סכום של 500 או 3 מיליון, לפי הנמוך": two quantities compared
-            # share no scale.
+            # "סכום של 500 או 3 מיליון, לפי הנמוך", "סכום של 500 או 3
+            # מיליון": two quantities compared, or an amount a singular
+            # money noun governs, share no scale; "בסכומים של 1 או 2 מיליון"
+            # lists.
             continue
         if needs_bound and (
             _search_before(_HEBREW_RANGE_LOWER_BOUND_PATTERN, text, lower_span[0], 16)
@@ -4003,9 +4008,10 @@ def _iter_hebrew_shared_scale_range_matches(
                 break
             if _hebrew_operand_is_denominated(text, earlier_span[0], earlier_span[1]):
                 break
-            if earlier_join.group(0).lstrip().startswith(
-                "או"
-            ) and _hebrew_alternatives_are_compared(text, scale_match.end()):
+            if earlier_join.group(0).lstrip().startswith("או") and (
+                _hebrew_alternatives_are_compared(text, scale_match.end())
+                or _hebrew_singular_money_noun_governs(text, earlier_span[0])
+            ):
                 break
             matches.append(
                 (
@@ -4651,6 +4657,38 @@ _HEBREW_COMPARATIVE_AFTER_PATTERN = re.compile(
 )
 
 
+# A singular money noun governing the operand directly ("קנס של 50", "סכום
+# של 500", "בסך 500") states one amount; a plural ("בסכומים של 1 או 2
+# מיליון") introduces a list, and a rate word ("בשיעור של 125 או 150
+# אחוזים") a list of rates, so neither is matched here.
+_HEBREW_SINGULAR_MONEY_NOUN_GOVERNOR_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])[\u05d1\u05d4\u05d5\u05dc\u05e9\u05db]{0,2}"
+    "(?:קנס|סכום|תשלום|מענק|קצבה|פיצוי|עמלה|אגרה|שכר|משכורת|הכנסה|מחיר|עלות|"
+    "הוצאה|מחזור|חוב|היטל|פרמיה|מלגה|תמורה|רווח|שווי)"
+    # The construct connectors only: under a copula the subject's value is
+    # listed ("הסכום הוא 1 או 2 או 3 מיליון"), and the list shares.
+    "(?:\\s+(?:של|בסך|בסכום|בגובה))?\\s*$"
+)
+_HEBREW_RATE_WORD_BEFORE_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])(?:ב?שיעור|שיעורי|בשיעורי|בשיעורים|אחוז|אחוזים|ריבית|הריבית)"
+    "(?:\\s+של)?(?:\\s+[\u0590-\u05ff]+)?\\s*$"
+)
+
+
+def _hebrew_singular_money_noun_governs(text: str, start: int) -> bool:
+    """Whether a singular money noun governs the number at ``start`` and no rate word does.
+
+    "קנס של 50 או 2% מהמחזור": the fine is an amount beside a rate. "בשיעור
+    של 125 או 150 אחוזים": a rate list, whatever noun stands further back.
+    """
+    if _search_before(_HEBREW_RATE_WORD_BEFORE_PATTERN, text, start, 40) is not None:
+        return False
+    return (
+        _search_before(_HEBREW_SINGULAR_MONEY_NOUN_GOVERNOR_PATTERN, text, start, 32)
+        is not None
+    )
+
+
 def _hebrew_alternatives_are_compared(text: str, unit_end: int) -> bool:
     tail = text[unit_end : unit_end + 48]
     match = _HEBREW_COMPARATIVE_AFTER_PATTERN.search(tail)
@@ -4870,13 +4908,13 @@ def _iter_hebrew_percent_range_lower_matches(
             and join.group("free") == "או"
             and (
                 _hebrew_alternatives_are_compared(text, noun.end())
-                or (not lower_scaled and abs(lower_value) >= 100)
+                or _hebrew_singular_money_noun_governs(text, lower_span[0])
             )
         ):
             # "קנס של 500 או 2% מהמחזור, לפי הגבוה": two quantities compared
-            # share no unit; nor does a bare hundred-plus alternative, which
-            # is an amount beside a rate ("קנס של 500 או 2% מהמחזור"), a rate
-            # above a hundred percent carrying its own unit when it occurs.
+            # share no unit; nor does an amount a singular money noun
+            # governs ("קנס של 50 או 2% מהמחזור"). A rate list keeps its
+            # rates however large ("בשיעור של 125 או 150 אחוזים").
             continue
         if (
             needs_bound
@@ -4971,13 +5009,7 @@ def _iter_hebrew_percent_range_lower_matches(
                 break
             if earlier_join.group(0).lstrip().startswith("או") and (
                 _hebrew_alternatives_are_compared(text, noun.end())
-                or (
-                    earlier_amount is None
-                    and abs(earlier_value) >= 100
-                    and not _hebrew_spelled_span_carries_a_scale(
-                        text, earlier_span[0], earlier_span[1]
-                    )
-                )
+                or _hebrew_singular_money_noun_governs(text, earlier_span[0])
             ):
                 break
             matches.append((earlier_span, earlier_value / 100))
