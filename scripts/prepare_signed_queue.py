@@ -1508,8 +1508,13 @@ def verify_paused_transition(
     if toolchain_repin:
         if previous["state"] != "paused":
             raise ValueError("paused queue toolchain repin requires a paused base")
+        # A pristine toolchain repin may also move the queue to another
+        # approved base branch (validate_queue bounds the value): the
+        # rulespec_ref it carries must be that branch's exact tip, which the
+        # validate workflow checks live before regenerating the queue.
         unchanged_dispatch_fields = set(queue["dispatch"]) - {
             "corpus_ref",
+            "pr_base_branch",
             "rules_engine_ref",
             "rulespec_ref",
         }
@@ -2127,10 +2132,11 @@ def finalize_and_repin(
         reviewed_rulespec_refs = REVIEWED_RULESPEC_REFS
     country = payload["dispatch"]["country"]
     pr_base_branch = payload["dispatch"]["pr_base_branch"]
-    # A queue on ``main`` advances to main's protected tip: every commit
-    # there is a merged, reviewed pull request, and the exact-remote-tip
-    # check below is the gate, matching prepare_signed_backfill's
-    # main-ancestor admission. Any other base needs an allowlisted head.
+    # A queue on ``main`` advances to main's exact protected tip. This
+    # relies on rulespec-us branch protection (main only moves by merged,
+    # reviewed pull requests), the same assumption behind
+    # prepare_signed_backfill's main-ancestor admission; the exact-remote-tip
+    # check below is the gate. Any other base needs an allowlisted head.
     if pr_base_branch != "main" and (
         (country, new_rulespec_ref) not in reviewed_rulespec_refs
     ):

@@ -284,6 +284,7 @@ jobs:
             --corpus-ref "${{ steps.transition.outputs.corpus_ref }}" \
             --rulespec-ref "${{ steps.transition.outputs.rulespec_ref }}" \
             --rules-engine-ref "${{ steps.transition.outputs.rules_engine_ref }}" \
+            --pr-base-branch "${{ steps.transition.outputs.pr_base_branch }}" \
             --release-name "$RELEASE_NAME" \
             --release-content-sha256 "$RELEASE_SHA" \
             --release-object "$release_object" \
