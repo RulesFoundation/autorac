@@ -2,6 +2,10 @@
 
 All notable changes to Axiom Encode will be documented here.
 
+- Remove a generated `module.source_verification.values` mapping only after the
+  rules engine identifies that exact unknown field and its complete accepted
+  schema, preserving all other RuleSpec bytes and revalidating the overlay.
+
 - Create each targeted output lane before validating its durable rejected-
   candidate destination, so signed re-encodes reach generation while retaining
   the destination's fresh-directory safety contract.

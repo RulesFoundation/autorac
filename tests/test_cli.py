@@ -226,6 +226,7 @@ from axiom_encode.cli import (
     _try_repair_generated_import_target_prefix_typos_for_apply,
     _try_repair_generated_imported_output_test_mismatches_for_apply,
     _try_repair_generated_invalid_source_relation_types_for_apply,
+    _try_repair_generated_invalid_source_verification_values_for_apply,
     _try_repair_generated_judgment_conditionals_for_apply,
     _try_repair_generated_judgment_numeric_comparisons_for_apply,
     _try_repair_generated_judgment_positive_tests_for_apply,
@@ -20377,6 +20378,166 @@ rules:
         assert run.outcome["auto_repaired_nonnegative_floors"] == ["taxable_income"]
         assert run.outcome["overlay_validation_success"] is True
         assert run.outcome["status"] == "apply_applied"
+
+    def test_encode_apply_removes_rejected_source_verification_values(
+        self, capsys, tmp_path
+    ):
+        args = self._make_args(tmp_path, backend="codex", sync=False)
+        args.apply = True
+        result = self._make_eval_result(False)
+        issue = (
+            "policies/usda/snap/state-plan-composition.yaml: compile: Axiom rules "
+            "engine compile failed: yaml parse error: module.source_verification: "
+            "unknown field `values`, expected one of `corpus_citation_path`, "
+            "`source_sha256`, `upstream_source_check` at line 21 column 5"
+        )
+        result.metrics = SimpleNamespace(
+            compile_pass=False,
+            compile_issues=[issue],
+            ci_pass=False,
+            ci_issues=[],
+            grounded_numeric_count=0,
+            ungrounded_numeric_count=0,
+            embedded_source_present=True,
+            grounding=[],
+            numeric_occurrence_issues=[],
+            generalist_review_pass=None,
+            generalist_review_score=None,
+            generalist_review_issues=[],
+            policyengine_pass=None,
+            policyengine_score=None,
+            policyengine_issues=[],
+        )
+        result.error = "Generated RuleSpec failed compile validation"
+        output_file = (
+            tmp_path
+            / "out"
+            / "codex-test-model"
+            / "policies/usda/snap/state-plan-composition.yaml"
+        )
+        output_file.parent.mkdir(parents=True)
+        output_file.write_text(
+            """format: rulespec/v1
+module:
+  source_verification:
+    corpus_citation_path: us/guidance/usda/fns/snap-fy2026-cola/page-1
+    source_sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    values:
+      maximum_allotment_for_one_person: 298
+  summary: SNAP state plan composition.
+rules: []
+"""
+        )
+        result.output_file = str(output_file)
+        applied_file = (
+            args.policy_repo_path / "policies/usda/snap/state-plan-composition.yaml"
+        )
+
+        with (
+            patch("axiom_encode.cli.run_model_eval", return_value=[result]),
+            patch(
+                "axiom_encode.cli._validate_generated_encoding_in_policy_overlay",
+                return_value=(True, [], {}),
+            ) as mock_overlay,
+            patch(
+                "axiom_encode.cli._apply_generated_encoding_result",
+                return_value=[applied_file],
+            ) as mock_apply,
+            patch.dict(os.environ, TEST_APPLY_SIGNING_ENV, clear=True),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            cmd_encode(args)
+
+        assert exc_info.value.code == 0
+        output = capsys.readouterr().out
+        assert (
+            "apply=auto_repaired_invalid_source_verification_values:"
+            "module.source_verification.values" in output
+        )
+        repaired = yaml.safe_load(output_file.read_text())
+        assert repaired["module"]["source_verification"] == {
+            "corpus_citation_path": "us/guidance/usda/fns/snap-fy2026-cola/page-1",
+            "source_sha256": "a" * 64,
+        }
+        assert repaired["module"]["summary"] == "SNAP state plan composition."
+        assert mock_overlay.call_count == 1
+        mock_apply.assert_called_once()
+        run = EncodingDB(args.db).get_recent_runs(limit=1)[0]
+        assert run.outcome["auto_repaired_invalid_source_verification_values"] == [
+            "module.source_verification.values"
+        ]
+        assert run.outcome["overlay_validation_success"] is True
+        assert run.outcome["status"] == "apply_applied"
+
+    def test_source_verification_values_repair_requires_exact_engine_schema_error(
+        self, tmp_path
+    ):
+        output_root = tmp_path / "out"
+        rules_file = (
+            output_root
+            / "codex-test-model"
+            / "policies/usda/snap/state-plan-composition.yaml"
+        )
+        rules_file.parent.mkdir(parents=True)
+        original = """format: rulespec/v1
+module:
+  source_verification:
+    corpus_citation_path: us/guidance/usda/fns/snap-fy2026-cola/page-1
+    values:
+      maximum_allotment_for_one_person: 298
+rules: []
+"""
+        rules_file.write_text(original)
+        result = SimpleNamespace(
+            runner="codex-test-model",
+            output_file=str(rules_file),
+        )
+
+        repaired = _try_repair_generated_invalid_source_verification_values_for_apply(
+            result,
+            output_root=output_root,
+            issues=["module.source_verification.values failed validation"],
+        )
+
+        assert repaired == []
+        assert rules_file.read_text() == original
+
+    @pytest.mark.parametrize(
+        "values_yaml",
+        [
+            "    values: {maximum_allotment_for_one_person: 298}\n",
+            "    values:\n      maximum_allotment_for_one_person: 298\n",
+        ],
+        ids=["inline", "block-at-eof"],
+    )
+    def test_source_verification_values_repair_handles_terminal_mapping(
+        self, tmp_path, values_yaml
+    ):
+        output_root = tmp_path / "out"
+        rules_file = output_root / "codex-test-model" / "policies/example.yaml"
+        rules_file.parent.mkdir(parents=True)
+        prefix = """format: rulespec/v1
+module:
+  source_verification:
+    corpus_citation_path: us/guidance/usda/fns/snap-fy2026-cola/page-1
+"""
+        rules_file.write_text(prefix + values_yaml)
+        result = SimpleNamespace(
+            runner="codex-test-model",
+            output_file=str(rules_file),
+        )
+
+        repaired = _try_repair_generated_invalid_source_verification_values_for_apply(
+            result,
+            output_root=output_root,
+            issues=[
+                "module.source_verification: unknown field `values`, expected one of "
+                "`corpus_citation_path`, `source_sha256`, `upstream_source_check`"
+            ],
+        )
+
+        assert repaired == ["module.source_verification.values"]
+        assert rules_file.read_text() == prefix
 
     def test_encode_apply_removes_empty_deferred_source_values(self, capsys, tmp_path):
         args = self._make_args(tmp_path, backend="codex", sync=False)
@@ -47427,6 +47588,102 @@ rules:
             skip_reviewers=True,
         )
         assert overlay_pipeline.validate.call_count == 2
+
+    def test_dependent_regression_validation_normalizes_overlay_and_baseline_roots(
+        self, tmp_path
+    ):
+        from axiom_encode.cli import (
+            _DEPENDENT_BASELINE_DEBT_ATTR,
+            _DependentRegressionPipeline,
+        )
+
+        baseline_root = tmp_path / "baseline" / "rulespec-us" / "us"
+        overlay_root = tmp_path / "overlay" / "rulespec-us" / "us"
+        relative = Path("policies/usda/snap/state-plan-composition.yaml")
+        baseline_path = baseline_root / relative
+        overlay_path = overlay_root / relative
+        baseline_path.parent.mkdir(parents=True)
+        overlay_path.parent.mkdir(parents=True)
+        baseline_path.write_text("format: rulespec/v1\nrules: []\n")
+        overlay_path.write_text("format: rulespec/v1\nrules: []\n")
+
+        def failed(path):
+            issue = (
+                "Axiom rules engine compile failed: failed to load RuleSpec module "
+                f"`{path}`: atomic RuleSpec module must not declare module.kind"
+            )
+            return SimpleNamespace(
+                all_passed=False,
+                results={
+                    "compile": SimpleNamespace(
+                        passed=False,
+                        issues=[issue],
+                        error=issue,
+                    )
+                },
+            )
+
+        baseline_pipeline = MagicMock()
+        baseline_pipeline.validate.side_effect = lambda path, **_kwargs: failed(path)
+        overlay_pipeline = MagicMock()
+        overlay_pipeline.validate.side_effect = lambda path, **_kwargs: failed(path)
+        pipeline = _DependentRegressionPipeline(
+            overlay_pipeline=overlay_pipeline,
+            baseline_pipeline=baseline_pipeline,
+            overlay_root=overlay_root,
+            baseline_root=baseline_root,
+        )
+
+        result = pipeline.validate(overlay_path, skip_reviewers=True)
+
+        assert result.all_passed is True
+        assert getattr(result, _DEPENDENT_BASELINE_DEBT_ATTR, False) is True
+
+    def test_dependent_regression_validation_still_blocks_different_root_relative_issue(
+        self, tmp_path
+    ):
+        from axiom_encode.cli import _DependentRegressionPipeline
+
+        baseline_root = tmp_path / "baseline" / "rulespec-us" / "us"
+        overlay_root = tmp_path / "overlay" / "rulespec-us" / "us"
+        relative = Path("policies/usda/snap/state-plan-composition.yaml")
+        baseline_path = baseline_root / relative
+        overlay_path = overlay_root / relative
+        baseline_path.parent.mkdir(parents=True)
+        overlay_path.parent.mkdir(parents=True)
+        baseline_path.write_text("format: rulespec/v1\nrules: []\n")
+        overlay_path.write_text("format: rulespec/v1\nrules: []\n")
+
+        def failed(issue):
+            return SimpleNamespace(
+                all_passed=False,
+                results={
+                    "compile": SimpleNamespace(
+                        passed=False,
+                        issues=[issue],
+                        error=None,
+                    )
+                },
+            )
+
+        baseline_pipeline = MagicMock()
+        baseline_pipeline.validate.return_value = failed(
+            f"failed to load `{baseline_path}`: legacy failure"
+        )
+        overlay_pipeline = MagicMock()
+        overlay_pipeline.validate.return_value = failed(
+            f"failed to load `{overlay_root / 'policies/new.yaml'}`: new failure"
+        )
+        pipeline = _DependentRegressionPipeline(
+            overlay_pipeline=overlay_pipeline,
+            baseline_pipeline=baseline_pipeline,
+            overlay_root=overlay_root,
+            baseline_root=baseline_root,
+        )
+
+        result = pipeline.validate(overlay_path, skip_reviewers=True)
+
+        assert result.all_passed is False
 
     def test_dependent_regression_validation_fails_closed_without_issues(
         self, tmp_path

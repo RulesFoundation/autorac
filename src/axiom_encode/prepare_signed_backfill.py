@@ -331,6 +331,7 @@ def split_atomic_source_input(atomic_source_json: str) -> dict[str, object]:
         return {
             "canonical_refresh_bundle": [],
             "primary_required_test_cases": [],
+            "require_complete_source_unit": True,
             "source_bundle": payload,
         }
     if isinstance(payload, dict) and set(payload) == {"canonical_refresh_bundle"}:
@@ -340,23 +341,37 @@ def split_atomic_source_input(atomic_source_json: str) -> dict[str, object]:
         return {
             "canonical_refresh_bundle": refresh_bundle,
             "primary_required_test_cases": [],
+            "require_complete_source_unit": True,
             "source_bundle": [],
         }
-    v2_fields = {
+    transaction_fields = {
         "schema",
         "source_bundle",
         "canonical_refresh_bundle",
         "primary_required_test_cases",
     }
+    require_complete_source_unit = True
+    if (
+        isinstance(payload, dict)
+        and payload.get("schema") == "axiom-encode/atomic-source-transaction/v3"
+    ):
+        transaction_fields.add("require_complete_source_unit")
+        require_complete_source_unit = payload.get("require_complete_source_unit")
     if (
         not isinstance(payload, dict)
-        or set(payload) != v2_fields
-        or payload.get("schema") != "axiom-encode/atomic-source-transaction/v2"
+        or set(payload) != transaction_fields
+        or payload.get("schema")
+        not in {
+            "axiom-encode/atomic-source-transaction/v2",
+            "axiom-encode/atomic-source-transaction/v3",
+        }
     ):
         raise ValueError(
             "atomic source JSON must be a source citation array or an exact "
-            "canonical_refresh_bundle or atomic-source-transaction/v2 object"
+            "canonical_refresh_bundle or atomic-source-transaction/v2 or v3 object"
         )
+    if not isinstance(require_complete_source_unit, bool):
+        raise ValueError("require_complete_source_unit must be a boolean")
     refresh_bundle = payload["canonical_refresh_bundle"]
     source_bundle = payload["source_bundle"]
     primary_required_test_cases = payload["primary_required_test_cases"]
@@ -372,6 +387,7 @@ def split_atomic_source_input(atomic_source_json: str) -> dict[str, object]:
     return {
         "canonical_refresh_bundle": refresh_bundle,
         "primary_required_test_cases": primary_required_test_cases,
+        "require_complete_source_unit": require_complete_source_unit,
         "source_bundle": source_bundle,
     }
 

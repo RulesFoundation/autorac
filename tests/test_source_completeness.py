@@ -42323,3 +42323,65 @@ def test_louisiana_cycle70_accepts_plural_article_paragraph_labels():
         "Constitution, the amount is determined under R.S. 47:32.",
         corpus_citation_path="us-la/statute/47:295",
     )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "(5) 1Abweichend von § 64 Absatz 2 und 3 steht Berechtigten, die für "
+        "Dezember 1990 für ihre Kinder Kindergeld in dem in Artikel 3 des "
+        "Einigungsvertrages genannten Gebiet bezogen haben, das Kindergeld für "
+        "diese Kinder auch für die folgende Zeit zu, solange sie ihren Wohnsitz "
+        "oder gewöhnlichen Aufenthalt in diesem Gebiet beibehalten und die "
+        "Kinder die Voraussetzungen ihrer Berücksichtigung weiterhin erfüllen.",
+        "(5) 2§ 64 Absatz 2 und 3 ist insoweit erst für die Zeit vom Beginn des "
+        "Monats an anzuwenden, in dem ein hierauf gerichteter Antrag bei der "
+        "zuständigen Stelle eingegangen ist.",
+    ],
+)
+def test_estg78_explicit_priority_dependency_accepts_exact_typed_blocker(source):
+    # Verbatim operative clauses from de/statute/estg/78 in the pinned corpus.
+    # Test each independently: one accepted clause must not mask the other.
+    covered, issues = completeness_module._deferred_coverage(
+        {
+            "module": {
+                "deferred_outputs": [
+                    {
+                        "output": "de:statutes/estg/78/5#recipient_priority",
+                        "blocked_by": ["de:statutes/estg/64#recipient_priority"],
+                        "reason": "Cannot be computed until the recipient_priority "
+                        "rule cited in EStG § 64 is encoded.",
+                    }
+                ]
+            }
+        },
+        corpus_citation_path="de/statute/estg/78",
+        source_text=source,
+        branches=recognize_source_structure(source),
+    )
+    assert not issues
+    assert covered == {("5",)}
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "Nicht abweichend von § 64 Absatz 2 und 3 wird diese Frage behandelt.",
+        "Keinesfalls abweichend von § 64 Absatz 2 und 3 wird diese Frage behandelt.",
+        "§ 64 Absatz 2 und 3 ist nicht anzuwenden.",
+        "§ 64 Absatz 2 und 3 ist insoweit erst für die Zeit vom Beginn des "
+        "Monats an nicht anzuwenden.",
+        "§ 64 Absatz 2 und 3 wird erwähnt; eine andere Vorschrift ist anzuwenden.",
+        "§ 64 Absatz 2 und 3 wird erwähnt und eine andere Vorschrift ist anzuwenden.",
+        "§ 64 Absatz 2 und 3 bleibt unberührt.",
+        "Abweichend von § 65 wird der Betrag bestimmt.",
+    ],
+)
+def test_german_dependency_links_reject_negation_unrelated_clause_and_other_section(
+    source,
+):
+    assert not completeness_module._source_scope_identifies_blocker(
+        source,
+        "de:statutes/estg/64#recipient_priority",
+        corpus_citation_path="de/statute/estg/78",
+    )

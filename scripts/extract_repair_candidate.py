@@ -287,6 +287,7 @@ def _repair_lane_for_atomic_source(
     if expected != {
         "canonical_refresh_bundle": [],
         "primary_required_test_cases": [],
+        "require_complete_source_unit": True,
         "source_bundle": [],
     }:
         raise ValueError(
