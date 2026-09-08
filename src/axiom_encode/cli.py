@@ -58782,7 +58782,7 @@ def _expand_empty_inline_yaml_input_blocks(lines: list[str]) -> list[str]:
     expanded = list(lines)
     for index, line in enumerate(expanded):
         match = re.match(
-            r"^(?P<indent>\s*)input:(?P<anchor>\s*&\S+)?\s*\{\}\s*(?P<comment>#.*)?(?P<newline>\r?\n?)$",
+            r"^(?P<indent>[ \t]*)input:(?P<anchor>[ \t]*&\S+)?[ \t]*\{\}[ \t]*(?P<comment>#[^\r\n]*)?(?P<newline>\r?\n?)$",
             line,
         )
         if not match:
