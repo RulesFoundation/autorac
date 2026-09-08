@@ -2928,7 +2928,7 @@ def test_targeted_reencode_extracts_false_complete_source_scope() -> None:
     )
     assignment_start = command.index("target_require_complete_source_unit=")
     assignment_end = command.index(
-        '\n', command.index('<<< "$atomic_source_payload")', assignment_start)
+        "\n", command.index('<<< "$atomic_source_payload")', assignment_start)
     )
     assignment = command[assignment_start:assignment_end]
     payload = json.dumps(
