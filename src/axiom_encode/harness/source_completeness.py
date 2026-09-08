@@ -5640,7 +5640,8 @@ def _source_clause_links_dependency(
         r"\b(?:"
         r"nach|gemäß|laut|entsprechend|under|according\s+to|pursuant\s+to|"
         r"in\s+accordance\s+with(?:\s+the\s+provisions?\s+of)?|"
-        r"abhängig\s+von|depends?\s+on|setzt|requires?|benötigt"
+        r"abhängig\s+von|(?:[1-9]\d*)?abweichend\s+von|"
+        r"depends?\s+on|setzt|requires?|benötigt"
         r")\s*$",
         before,
         flags=re.IGNORECASE,
@@ -5658,7 +5659,17 @@ def _source_clause_links_dependency(
             is_in_accordance_link
             and _source_link_scope_has_unreset_negation(preceding_link)
         )
-        if not negated_in_accordance_link:
+        negated_german_deviation = bool(
+            re.fullmatch(
+                r"(?:[1-9]\d*)?abweichend\s+von",
+                dependency_link.group(0).strip(),
+                flags=re.IGNORECASE,
+            )
+            and re.search(
+                r"\b(?:nicht|keinesfalls)\s*$", preceding_link, flags=re.IGNORECASE
+            )
+        )
+        if not negated_in_accordance_link and not negated_german_deviation:
             return True
     if re.search(
         r"\b(?:voraussetzung\w*|bedingung\w*|conditions?)"
@@ -5670,6 +5681,19 @@ def _source_clause_links_dependency(
     if re.match(
         r"\s*(?:ist|sind|wird|werden|is|are)?\s*"
         r"(?:erforderlich|maßgeblich|vorausgesetzt|benötigt|required|needed)\b",
+        after,
+        flags=re.IGNORECASE,
+    ):
+        return True
+    # EStG § 78(5) expressly applies § 64(2)-(3) from the application
+    # month. Keep the intervening syntax bounded: a distant "anzuwenden"
+    # or a negated application must not authenticate the cited dependency.
+    if re.match(
+        r"\s*(?:(?:Absatz|Absätze)\s+\d+[a-z]?"
+        r"(?:\s+(?:und|oder)\s+\d+[a-z]?)*\s+)?"
+        r"(?:ist|sind)\s+(?:(?:insoweit|entsprechend|auch)\s+)*"
+        r"(?:erst\s+für\s+die\s+Zeit\s+)?"
+        r"(?:vom\s+Beginn\s+des\s+Monats\s+an\s+)?anzuwenden\b",
         after,
         flags=re.IGNORECASE,
     ):
