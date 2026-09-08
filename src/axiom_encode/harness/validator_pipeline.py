@@ -3898,6 +3898,9 @@ def _iter_hebrew_shared_scale_range_matches(
                 lower_span = (lower_span[0] - 1, lower_end)
         if _hebrew_endpoint_continues_an_amount(text, lower_span[0]):
             continue
+        if _hebrew_operand_is_denominated(text, lower_span[0], lower_span[1]):
+            # "בין ₪ 500 ל־3 מיליון": a denominated amount shares no scale.
+            continue
         if needs_bound and (
             _search_before(_HEBREW_RANGE_LOWER_BOUND_PATTERN, text, lower_span[0], 16)
             is None
@@ -3992,6 +3995,8 @@ def _iter_hebrew_shared_scale_range_matches(
                 )
                 is not None
             ):
+                break
+            if _hebrew_operand_is_denominated(text, earlier_span[0], earlier_span[1]):
                 break
             matches.append(
                 (
@@ -4612,6 +4617,27 @@ def _hebrew_spelled_span_carries_a_scale(text: str, start: int, end: int) -> boo
     )
 
 
+# A currency mark on an operand: a sign before it ("$500", "₪ 500") or a
+# currency word or sign after it ("500 ש"ח", "500 שקלים", "500 ₪").
+_HEBREW_CURRENCY_SIGN_BEFORE_PATTERN = re.compile("[$\u20ac\u00a3\u20aa]\\s*$")
+
+
+def _hebrew_operand_is_denominated(text: str, start: int, end: int) -> bool:
+    """Whether the operand in ``text[start:end]`` carries a currency mark of its own.
+
+    "$500 או 2% מהמחזור", "בין ₪ 500 ל־3 מיליון": a denominated amount is
+    an amount, whatever join or shared scale word follows it.
+    """
+    if _search_before(_HEBREW_CURRENCY_SIGN_BEFORE_PATTERN, text, start, 4) is not None:
+        return True
+    after_start = end + (len(text[end:]) - len(text[end:].lstrip()))
+    after = _HEBREW_WORD_TOKEN_PATTERN.match(text, after_start)
+    if after is not None and after.group(0) in _HEBREW_CURRENCY_WORDS:
+        return True
+    rest = text[end:].lstrip()
+    return rest[:1] in ("$", "\u20ac", "\u00a3", "\u20aa") if rest else False
+
+
 def _hebrew_number_run_ending_at(
     text: str,
     end: int,
@@ -4787,6 +4813,9 @@ def _iter_hebrew_percent_range_lower_matches(
                 # read before it.
                 lower_value = -lower_value
                 lower_span = (lower_span[0] - 1, lower_flush)
+        if _hebrew_operand_is_denominated(text, lower_span[0], lower_span[1]):
+            # "$500 או 2% מהמחזור": a denominated amount shares no unit.
+            continue
         if (
             needs_bound
             and not (
@@ -4879,6 +4908,8 @@ def _iter_hebrew_percent_range_lower_matches(
             ):
                 break
             if earlier_value >= 1000 and not explicit_range:
+                break
+            if _hebrew_operand_is_denominated(text, earlier_span[0], earlier_span[1]):
                 break
             matches.append((earlier_span, earlier_value / 100))
             cursor = earlier_span[0]
