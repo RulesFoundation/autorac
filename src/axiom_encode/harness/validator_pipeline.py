@@ -3964,10 +3964,16 @@ def _iter_hebrew_shared_scale_range_matches(
             )
             if earlier_join is not None:
                 earlier_flush = len(text[: earlier_join.start()].rstrip())
+                vav_crossing = earlier_join.group("vav") is not None
             elif cursor > 0 and text[cursor] == "\u05d5" and text[cursor - 1].isspace():
                 # A vav on the endpoint itself ("אחד ושניים ושלושה מיליון").
                 earlier_flush = len(text[:cursor].rstrip())
+                vav_crossing = True
             else:
+                break
+            if vav_crossing and not _hebrew_respectively_after(text, scale_match.end()):
+                # "ההכנסה היא 500 ו־2 או 3 מיליון": the vav joins clauses
+                # unless "בהתאמה" marks the list.
                 break
             earlier_printed = _search_before(
                 _HEBREW_DIGITS_BEFORE_PATTERN, text, earlier_flush, 32
@@ -4589,7 +4595,8 @@ _HEBREW_RANGE_JOIN_BEFORE_PATTERN = re.compile(
     "|(?<![\u0590-\u05ff])(?P<bound>[\u05dc\u05d5])(?:\u05be|[-\u2013]|\\s)\\s*)$"
 )
 _HEBREW_RANGE_WALK_JOIN_PATTERN = re.compile(
-    "(?:(?<![\u0590-\u05ff])(?:עד|ועד|או)\\s+|(?<![\u0590-\u05ff])\u05d5(?:\u05be|-)?\\s*)$"
+    "(?:(?<![\u0590-\u05ff])(?:עד|ועד|או)\\s+"
+    "|(?<![\u0590-\u05ff])(?P<vav>\u05d5)(?:\u05be|-)?\\s*)$"
 )
 # An earlier number the walk must not scale: an age, a year, a form number,
 # a grade ("לילד עד גיל 5, 2 או 3 אחוזים"). A reference ("לפי סעיף קטן 5, 2
@@ -4629,17 +4636,14 @@ def _hebrew_spelled_span_carries_a_scale(text: str, start: int, end: int) -> boo
 # A currency mark on an operand: a sign before it ("$500", "₪ 500") or a
 # currency word or sign after it ("500 ש"ח", "500 שקלים", "500 ₪").
 _HEBREW_CURRENCY_CODES = ("USD", "EUR", "GBP", "ILS", "NIS", "CHF", "JPY")
-_HEBREW_CURRENCY_SIGN_BEFORE_PATTERN = re.compile(
-    "(?:[$\u20ac\u00a3\u20aa]|(?<![A-Za-z])(?:"
-    + "|".join(_HEBREW_CURRENCY_CODES)
-    + "))\\s*$",
-    re.IGNORECASE,
+_HEBREW_CURRENCY_SIGNS = frozenset("$\u20ac\u00a3\u20aa")
+# Whitespace and bidirectional formatting between a currency mark and its
+# amount ("₪\u200f 500", "₪" and any run of spaces).
+_HEBREW_CURRENCY_GAP_CHARACTERS = frozenset(
+    " \t\u00a0\u202f\u200e\u200f\u202a\u202b\u202c\u2066\u2067\u2068\u2069"
 )
-_HEBREW_CURRENCY_MARK_AFTER_PATTERN = re.compile(
-    "\\s*(?:[$\u20ac\u00a3\u20aa]|(?:"
-    + "|".join(_HEBREW_CURRENCY_CODES)
-    + ")(?![A-Za-z]))",
-    re.IGNORECASE,
+_HEBREW_CURRENCY_CODE_PATTERN = re.compile(
+    "(?:" + "|".join(_HEBREW_CURRENCY_CODES) + ")", re.IGNORECASE
 )
 
 
@@ -4659,19 +4663,33 @@ def _hebrew_respectively_after(text: str, unit_end: int) -> bool:
 def _hebrew_operand_is_denominated(text: str, start: int, end: int) -> bool:
     """Whether the operand in ``text[start:end]`` carries a currency mark of its own.
 
-    "$500 או 2% מהמחזור", "בין ₪ 500 ל־3 מיליון": a denominated amount is
-    an amount, whatever join or shared scale word follows it.
+    "$500 או 2% מהמחזור", "בין ₪ 500 ל־3 מיליון", "USD 500", "500 EUR": a
+    denominated amount is an amount, whatever join or shared scale word
+    follows it. Whitespace and bidirectional formatting between the mark
+    and the amount are skipped, however long the run.
     """
+    before = start
+    while before > 0 and text[before - 1] in _HEBREW_CURRENCY_GAP_CHARACTERS:
+        before -= 1
+    if before > 0 and text[before - 1] in _HEBREW_CURRENCY_SIGNS:
+        return True
+    code = _HEBREW_CURRENCY_CODE_PATTERN.match(text, max(0, before - 3), before)
     if (
-        _search_before(_HEBREW_CURRENCY_SIGN_BEFORE_PATTERN, text, start, 16)
-        is not None
+        code is not None
+        and code.end() == before
+        and (before - 3 == 0 or not text[before - 4].isalpha())
     ):
         return True
-    after_start = end + (len(text[end:]) - len(text[end:].lstrip()))
-    after = _HEBREW_WORD_TOKEN_PATTERN.match(text, after_start)
-    if after is not None and after.group(0) in _HEBREW_CURRENCY_WORDS:
+    after = end
+    while after < len(text) and text[after] in _HEBREW_CURRENCY_GAP_CHARACTERS:
+        after += 1
+    if after < len(text) and text[after] in _HEBREW_CURRENCY_SIGNS:
         return True
-    return _HEBREW_CURRENCY_MARK_AFTER_PATTERN.match(text, end) is not None
+    code = _HEBREW_CURRENCY_CODE_PATTERN.match(text, after)
+    if code is not None and (code.end() >= len(text) or not text[code.end()].isalpha()):
+        return True
+    word = _HEBREW_WORD_TOKEN_PATTERN.match(text, after)
+    return word is not None and word.group(0) in _HEBREW_CURRENCY_WORDS
 
 
 def _hebrew_number_run_ending_at(
@@ -4729,9 +4747,14 @@ def _iter_hebrew_percent_range_lower_matches(
             for span, value, is_rate in _iter_hebrew_printed_scale_matches(text):
                 if is_rate:
                     printed_rates.append(span)
-                elif span[1] not in printed_amounts:
+                elif span[1] not in printed_amounts and any(
+                    word in _HEBREW_PRINTED_SCALE_VALUES
+                    for word in text[span[0] : span[1]].split()
+                ):
                     # Matches arrive sorted, so the longest amount ending
-                    # at a position is the first.
+                    # at a position is the first. Only an amount with a
+                    # scale word is an endpoint here; a spelled lead with a
+                    # plain printed remainder ("חמש מאות ו־2") is not.
                     printed_amounts[span[1]] = (span[0], value)
             rate_starts = [span[0] for span in printed_rates]
         # The upper endpoint, printed or spelled, right before the noun -- a
@@ -4769,7 +4792,7 @@ def _iter_hebrew_percent_range_lower_matches(
             # pair of rates under "בהתאמה" after the unit ("2 ו־3 אחוזים,
             # בהתאמה"), the marker of a pair; without it the vav joins
             # clauses as often ("מספר העובדים הוא 50 ו־10% מהם").
-            vav_join = join.group(0).lstrip().startswith("\u05d5")
+            vav_join = join.group("bound") == "\u05d5"
             needs_bound = join.group("free") is None and not vav_join
             needs_respectively = vav_join
         elif (
@@ -4912,10 +4935,16 @@ def _iter_hebrew_percent_range_lower_matches(
             )
             if earlier_join is not None:
                 earlier_end = earlier_join.start()
+                vav_crossing = earlier_join.group("vav") is not None
             elif cursor > 0 and text[cursor] == "\u05d5" and text[cursor - 1].isspace():
                 # A vav on the endpoint itself ("אחד ושניים ושלושה אחוזים").
                 earlier_end = cursor
+                vav_crossing = True
             else:
+                break
+            if vav_crossing and not _hebrew_respectively_after(text, noun.end()):
+                # "ההכנסה היא 500 ו־2 או 3% ממנה": the vav joins clauses
+                # unless "בהתאמה" marks the list.
                 break
             earlier_digits = _search_before(
                 _HEBREW_DIGITS_BEFORE_PATTERN, text, earlier_end, 32
@@ -9993,7 +10022,15 @@ def _clean_source_text_for_numeric_extraction_tracked(
     # when the glyph precedes a digit, so cent-suffixed values ("50¢") are left
     # untouched. Covers the cent sign, cedi sign, fullwidth cent sign, and
     # naira sign.
-    tracked = tracked.sub(re.compile(r"([¢₵￠₦])(?=\d)"), r"\1 ")
+    # A bidirectional formatting mark before a digit ("₪\u200f500", a
+    # right-to-left mark a Hebrew source sets before a number) carries no
+    # content and hides the digit run from the boundary the matchers need:
+    # it becomes the space it stands for, one character for one.
+    tracked = tracked.sub(
+        re.compile("[\u200e\u200f\u202a-\u202e\u2066-\u2069](?=\\d)"), " "
+    )
+    # The shekel sign glued to its amount ("₪500") is detached the same way.
+    tracked = tracked.sub(re.compile(r"([¢₵￠₦₪])(?=\d)"), r"\1 ")
     # Nigerian gazette prints denominate naira with an ASCII "N" glued to the
     # amount ("N800,000" in the Nigeria Tax Act 2025 Fourth Schedule). Detach
     # it the same way, but only when the N is a standalone prefix (not part
