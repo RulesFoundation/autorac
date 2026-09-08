@@ -19586,6 +19586,36 @@ def test_shin_before_vav_is_a_root_letter():
         assert extract_numbers_from_text(text) == expected, text
 
 
+def test_the_doubled_vav_and_the_lexical_shin_nouns():
+    # Review round 122 on #1585: "שוועדת" is the doubled-vav spelling of the
+    # ועדה exception, and "שליח" is a lexical ש-noun.
+    rates = {0.1, 0.2, 0.3}
+    split = {500.0, 2_000_000.0, 3_000_000.0}
+    for text, expected in (
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה שוועדת הערר תקבע, תחול ההוראה.",
+            rates,
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה שועדת הערר תקבע, תחול ההוראה.",
+            rates,
+        ),
+        (
+            "אם התשלומים הם 500, 2 או 3 מיליון שקלים שליח החברה ישלם, והיתרה תוחזר.",
+            split,
+        ),
+        ("אם התשלומים הם 500, 2 או 3 מיליון שקלים שליח ישלם, והיתרה תוחזר.", split),
+        ("אם התשלומים הם 500, 2 או 3 מיליון שקלים שכן ישלם, והיתרה תוחזר.", split),
+        (
+            "אם התשלומים הם 500, 2 או 3 מיליון שקלים שמאי המקרקעין ישלם, והיתרה תוחזר.",
+            split,
+        ),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה ששופט יקבע, תחול ההוראה.", rates),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

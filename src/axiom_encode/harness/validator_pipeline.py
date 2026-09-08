@@ -5009,7 +5009,9 @@ def _hebrew_list_body_end(text: str, start: int) -> int:
 # יקבע", "שבית דין אזורי לעבודה יקבע"), shows itself by its own verb
 # within a few words. A Hebrew word almost never begins in ו, so ש before
 # ו is a root letter ("שותפה", "שוכרת", "שווי", "שומה"), never the relative
-# prefix, the ועדה family excepted ("שועדת הערר תקבע").
+# prefix, the ועדה family excepted ("שועדת הערר תקבע", "שוועדת הערר
+# תקבע"). Before another letter the lexical ש-nouns a statute uses
+# (שליח, שכן, שמאי) are listed; every other ש-word is the prefix.
 # The ש-initial words a statute uses that open no relative clause.
 _HEBREW_LEXICAL_SHIN_WORDS = (
     "(?:של|שכיר|שכירה|שכירים|שוטף|שוטפת|שוטפים|שנתי|שנתית|שנתיים|שקל|שקלים|שיעור"
@@ -5018,7 +5020,10 @@ _HEBREW_LEXICAL_SHIN_WORDS = (
     "|שיטה|שיטת|שינוי|שינויים|שימוש|שאלה|שבוע|שבועות|שאר|שומה|שומת|שומות|שיפוי"
     "|שיקום|שיקול|שיקולים|שיפור|שילוב|שיתוף|שליטה|שלטון|שמירה|שטר|שטרות|שיווק"
     "|שדה|שדות|שבח|שגיאה|שאירים|שאיר|שביתה|שהות|שעבוד|שיעבוד|שותף|שותפה|שותפת|שותפות"
-    "|שותפים)"
+    "|שותפים|שליח|שליחה|שליחי|שלוח|שלוחה|שלוחות|שכן|שכנה|שכנים|שמאי|שמאים|שמאות"
+    "|שמש|שוער|שגריר|שגרירות|שחקן|שדרן|שרת|שלט|שלטים|שלד|שריפה|שרשרת|שביל|שבוי"
+    "|שגרה|שיר|שירה|שדרה|שעון|שפה|שפע|שקט|שקע|שכונה|שכונת|שמחה|שאלות|שאילתה"
+    "|שדרות|שלוחת|שליטת|שמות|שמי|שמו|שמה|שמם|שרה|שרון|שמעון|שאול|שלומית|שולה)"
 )
 _HEBREW_RELATIVE_MARKER_PATTERN = re.compile(
     "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?:אשר|(?!"
@@ -5102,7 +5107,7 @@ _HEBREW_RELATIVE_SUBJECT_PATTERN = re.compile(
     "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?!"
     + _HEBREW_LEXICAL_SHIN_WORDS
     + "(?![\u0590-\u05ff]))"
-    "\u05e9(?!\u05d5(?!(?:עדה|עדת|עד|תק|תיק|תיקה)(?![\u0590-\u05ff])))"
+    "\u05e9(?!\u05d5(?!\u05d5?(?:עדה|עדת|עד|תק|תיק|תיקה)(?![\u0590-\u05ff])))"
     "[\u0590-\u05ff]{2,}(?![\u0590-\u05ff])"
 )
 
