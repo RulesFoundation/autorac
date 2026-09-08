@@ -259,6 +259,7 @@ from .harness.validator_pipeline import (
     _is_executable_rulespec_rule,
     _matching_delegated_setting_rule_names,
     _normalize_rulespec_dependency_roots,
+    _normalize_validation_staging_text,
     _numeric_profile_for_citation_path,
     _parse_rulespec_target,
     _resolve_rulespec_target_file,
@@ -57424,6 +57425,7 @@ class _ValidationPipelineLike(Protocol):
 
 
 _DEPENDENT_BASELINE_DEBT_ATTR = "_axiom_dependent_baseline_debt"
+_DEPENDENT_VALIDATION_ROOT_PLACEHOLDER = "<dependent-rulespec-root>"
 
 
 class _ToleratedDependentValidation:
@@ -57489,7 +57491,10 @@ class _DependentRegressionPipeline:
         if overlay.all_passed:
             return overlay
 
-        overlay_failures = _failed_validation_issue_counts(overlay)
+        overlay_failures = _failed_validation_issue_counts(
+            overlay,
+            normalization_root=self.overlay_root,
+        )
         if not overlay_failures or any(
             not diagnostics for diagnostics in overlay_failures.values()
         ):
@@ -57501,7 +57506,10 @@ class _DependentRegressionPipeline:
                 skip_reviewers=skip_reviewers,
             )
             self._baseline_cache[relative] = baseline
-        baseline_failures = _failed_validation_issue_counts(baseline)
+        baseline_failures = _failed_validation_issue_counts(
+            baseline,
+            normalization_root=self.baseline_root,
+        )
         if all(
             diagnostics <= baseline_failures.get(validator_name, Counter())
             for validator_name, diagnostics in overlay_failures.items()
@@ -57513,6 +57521,8 @@ class _DependentRegressionPipeline:
 
 def _failed_validation_issue_counts(
     validation: _PipelineResultLike,
+    *,
+    normalization_root: Path | None = None,
 ) -> dict[str, Counter[str]]:
     results = getattr(validation, "results", {})
     if not isinstance(results, Mapping):
@@ -57521,12 +57531,22 @@ def _failed_validation_issue_counts(
     for name, result in results.items():
         if getattr(result, "passed", False):
             continue
+        def normalize(diagnostic: object) -> str:
+            text = str(diagnostic)
+            if normalization_root is None:
+                return text
+            return _normalize_validation_staging_text(
+                text,
+                normalization_root,
+                placeholder=_DEPENDENT_VALIDATION_ROOT_PLACEHOLDER,
+            )
+
         diagnostics = Counter(
-            str(issue) for issue in (getattr(result, "issues", []) or [])
+            normalize(issue) for issue in (getattr(result, "issues", []) or [])
         )
         error = getattr(result, "error", None)
         if error:
-            diagnostics[str(error)] += 1
+            diagnostics[normalize(error)] += 1
         failures[str(name)] = diagnostics
     return failures
 
