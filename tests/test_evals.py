@@ -9981,7 +9981,9 @@ rules:
             for case in repaired_tests
         )
 
-    @pytest.mark.parametrize("date_function", ["date_add_days", "date_add_months", "date_add_years"])
+    @pytest.mark.parametrize(
+        "date_function", ["date_add_days", "date_add_months", "date_add_years"]
+    )
     def test_test_input_assignment_ignores_formula_builtins(self, date_function):
         content = """format: rulespec/v1
 module:
