@@ -3846,11 +3846,17 @@ def _iter_hebrew_shared_scale_range_matches(
         )
         needs_bound = False
         needs_respectively = False
+        list_kind = "range"
         if join is not None:
             lower_end = len(text[: join.start()].rstrip())
             if lower_end == join.start():
                 continue
             needs_respectively = join.group("join") == "\u05d5"
+            list_kind = (
+                "vav"
+                if needs_respectively
+                else ("range" if join.group("join") == "\u05dc" else "free")
+            )
         else:
             # A ל prefix on a spelled upper endpoint joins under "בין" or
             # "מ־" before the lower endpoint: "בין שלושה לחמישה מיליון". A
@@ -3874,6 +3880,7 @@ def _iter_hebrew_shared_scale_range_matches(
                 continue
             needs_bound = head.startswith("\u05dc")
             needs_respectively = head.startswith("\u05d5")
+            list_kind = "vav" if needs_respectively else "range"
         printed_lower = _search_before(
             _HEBREW_DIGITS_BEFORE_PATTERN, text, lower_end, 32
         )
@@ -3975,6 +3982,12 @@ def _iter_hebrew_shared_scale_range_matches(
             if vav_crossing and not _hebrew_respectively_after(text, scale_match.end()):
                 # "ההכנסה היא 500 ו־2 או 3 מיליון": the vav joins clauses
                 # unless "בהתאמה" marks the list.
+                break
+            if (vav_crossing and list_kind != "vav") or (
+                not vav_crossing and list_kind == "vav"
+            ):
+                # A list keeps one conjunction; mixed joins are a clause
+                # and a pair.
                 break
             earlier_printed = _search_before(
                 _HEBREW_DIGITS_BEFORE_PATTERN, text, earlier_flush, 32
@@ -4638,8 +4651,6 @@ def _hebrew_spelled_span_carries_a_scale(text: str, start: int, end: int) -> boo
 
 # A currency mark on an operand: a sign before it ("$500", "₪ 500") or a
 # currency word or sign after it ("500 ש"ח", "500 שקלים", "500 ₪").
-_HEBREW_CURRENCY_CODES = ("USD", "EUR", "GBP", "ILS", "NIS", "CHF", "JPY")
-_HEBREW_CURRENCY_SIGNS = frozenset("$\u20ac\u00a3\u20aa")
 # Whitespace and bidirectional formatting between a currency mark and its
 # amount ("₪\u200f 500", "₪" and any run of spaces).
 _HEBREW_BIDI_MARKS = frozenset(
@@ -4652,23 +4663,21 @@ def _hebrew_currency_gap_character(character: str) -> bool:
     return character.isspace() or character in _HEBREW_BIDI_MARKS
 
 
-_HEBREW_CURRENCY_CODE_PATTERN = re.compile(
-    "(?:" + "|".join(_HEBREW_CURRENCY_CODES) + ")", re.IGNORECASE
-)
-
-
 # A singular copula flush before a number states it as one value ("ההכנסה
 # היא 500"), so a vav after it joins clauses even under "בהתאמה", which
 # then describes the pair that follows ("ו־2 או 3% ... ליחיד ולחברה,
 # בהתאמה"). A plural copula introduces a list ("הסכומים הם 1 ו־2 או 3").
 _HEBREW_SINGULAR_COPULA_BEFORE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?:היא|הוא|יהיה|תהיה|הינו|הינה)\\s*$"
+    "(?<![\u0590-\u05ff])(?:היא|הוא|יהיה|תהיה|הינו|הינה)"
+    # Up to two modifiers between the copula and its value ("היא בדיוק 500",
+    # "הוא לפחות 500").
+    "(?:\\s+[\u0590-\u05ff]+){0,2}\\s*$"
 )
 
 
 def _hebrew_singular_copula_before(text: str, start: int) -> bool:
     return (
-        _search_before(_HEBREW_SINGULAR_COPULA_BEFORE_PATTERN, text, start, 12)
+        _search_before(_HEBREW_SINGULAR_COPULA_BEFORE_PATTERN, text, start, 40)
         is not None
     )
 
@@ -4689,30 +4698,25 @@ def _hebrew_respectively_after(text: str, unit_end: int) -> bool:
 def _hebrew_operand_is_denominated(text: str, start: int, end: int) -> bool:
     """Whether the operand in ``text[start:end]`` carries a currency mark of its own.
 
-    "$500 או 2% מהמחזור", "בין ₪ 500 ל־3 מיליון", "USD 500", "500 EUR": a
-    denominated amount is an amount, whatever join or shared scale word
-    follows it. Whitespace and bidirectional formatting between the mark
-    and the amount are skipped, however long the run.
+    "$500 או 2% מהמחזור", "בין ₪ 500 ל־3 מיליון", "CAD 500", "500 EUR",
+    "500 שקלים": a denominated amount is an amount, whatever join or
+    shared scale word follows it. The markers are the pipeline's own,
+    with the shekel sign and the Hebrew currency words; whitespace and
+    bidirectional formatting between the mark and the amount are skipped,
+    however long the run.
     """
     before = start
     while before > 0 and _hebrew_currency_gap_character(text[before - 1]):
         before -= 1
-    if before > 0 and text[before - 1] in _HEBREW_CURRENCY_SIGNS:
-        return True
-    code = _HEBREW_CURRENCY_CODE_PATTERN.match(text, max(0, before - 3), before)
     if (
-        code is not None
-        and code.end() == before
-        and (before - 3 == 0 or not text[before - 4].isalpha())
+        _HEBREW_CURRENCY_MARK_BEFORE_PATTERN.search(text, max(0, before - 40), before)
+        is not None
     ):
         return True
     after = end
     while after < len(text) and _hebrew_currency_gap_character(text[after]):
         after += 1
-    if after < len(text) and text[after] in _HEBREW_CURRENCY_SIGNS:
-        return True
-    code = _HEBREW_CURRENCY_CODE_PATTERN.match(text, after)
-    if code is not None and (code.end() >= len(text) or not text[code.end()].isalpha()):
+    if _HEBREW_CURRENCY_MARK_AFTER_PATTERN.match(text, after) is not None:
         return True
     word = _HEBREW_WORD_TOKEN_PATTERN.match(text, after)
     return word is not None and word.group(0) in _HEBREW_CURRENCY_WORDS
@@ -4812,6 +4816,7 @@ def _iter_hebrew_percent_range_lower_matches(
         # The join before it.
         join = _search_before(_HEBREW_RANGE_JOIN_BEFORE_PATTERN, text, upper_start, 12)
         needs_respectively = False
+        list_kind = "range"
         if join is not None:
             lower_end = join.start()
             # "ל־" needs "בין" or "מ־" before the lower endpoint; "ו־" joins a
@@ -4821,6 +4826,9 @@ def _iter_hebrew_percent_range_lower_matches(
             vav_join = join.group("bound") == "\u05d5"
             needs_bound = join.group("free") is None and not vav_join
             needs_respectively = vav_join
+            list_kind = (
+                "vav" if vav_join else ("free" if join.group("free") else "range")
+            )
         elif (
             upper_first is not None
             and upper_first[:1] in ("\u05dc", "\u05d5")
@@ -4836,6 +4844,7 @@ def _iter_hebrew_percent_range_lower_matches(
             lower_end = upper_start
             needs_bound = upper_first.startswith("\u05dc")
             needs_respectively = upper_first.startswith("\u05d5")
+            list_kind = "vav" if needs_respectively else "range"
         else:
             continue
         # The lower endpoint, printed or spelled, right before the join.
@@ -4974,6 +4983,12 @@ def _iter_hebrew_percent_range_lower_matches(
             if vav_crossing and not _hebrew_respectively_after(text, noun.end()):
                 # "ההכנסה היא 500 ו־2 או 3% ממנה": the vav joins clauses
                 # unless "בהתאמה" marks the list.
+                break
+            if (vav_crossing and list_kind != "vav") or (
+                not vav_crossing and list_kind == "vav"
+            ):
+                # A list keeps one conjunction: "1 או 2 או 3", "1 ו־2 ו־3".
+                # Mixed joins ("500 ו־2 או 3%") are a clause and a pair.
                 break
             earlier_digits = _search_before(
                 _HEBREW_DIGITS_BEFORE_PATTERN, text, earlier_end, 32
@@ -6252,6 +6267,17 @@ _CURRENCY_MARKER_BEFORE_NUMBER_PATTERN = re.compile(
 _CURRENCY_MARKER_AFTER_NUMBER_PATTERN = re.compile(
     rf"^\s*{_CURRENCY_MARKER_FRAGMENT}",
     re.IGNORECASE,
+)
+# The same markers, with the shekel sign and the codes Hebrew sources add,
+# flush before or after an operand the Hebrew range passes weigh.
+_HEBREW_CURRENCY_MARK_FRAGMENT = (
+    rf"(?:{_CURRENCY_MARKER_FRAGMENT}|\u20aa|(?<![A-Za-z])(?:ils|nis|jpy)(?![A-Za-z]))"
+)
+_HEBREW_CURRENCY_MARK_BEFORE_PATTERN = re.compile(
+    rf"{_HEBREW_CURRENCY_MARK_FRAGMENT}$", re.IGNORECASE
+)
+_HEBREW_CURRENCY_MARK_AFTER_PATTERN = re.compile(
+    _HEBREW_CURRENCY_MARK_FRAGMENT, re.IGNORECASE
 )
 _DANISH_CURRENCY_MARKER_PATTERN = re.compile(
     r"(?:\bkr(?:\.(?!\w)|(?![\w.]))|\bkroner\b|\børe\b)",
