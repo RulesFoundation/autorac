@@ -18920,6 +18920,62 @@ def test_a_signed_number_continues_the_list_after_a_wrap():
         assert extract_numbers_from_text(text) == expected, text
 
 
+def test_a_modifier_phrase_keeps_the_list_inside_the_condition():
+    # Review round 108 on #1585: the adjectives, construct nouns, "כאמור"
+    # and relative clauses of a unit modifier belong to the list; a verb
+    # running on is still the consequent.
+    rates = {0.1, 0.2, 0.3}
+    amounts = {1_000_000.0, 2_000_000.0, 3_000_000.0}
+    for text, expected in (
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה החייבת, תחול ההוראה.", rates),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים חדשים לשנת המס, ישולם מענק.", amounts),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים כאמור, תחול ההוראה.", rates),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים שנקבעו בצו, ישולם מענק.", amounts),
+        (
+            "אם הסכומים הם 1, 2 ו־3 מיליון שקלים המעסיק ישלם מענק.",
+            {1.0, 2.0, 3_000_000.0},
+        ),
+        ("אם התשלומים הם 500, 2 או 3% מהם ינוכו כמס.", {500.0, 2.0, 0.03}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
+def test_a_parenthetical_in_the_subject_phrase_keeps_the_heading():
+    # Review round 108 on #1585: a defined-term parenthetical and an
+    # attached subsection marker are subject text; a section number is a
+    # reference the recall set leaves out while grounding keeps it.
+    rates = {0.1, 0.2, 0.3}
+    amounts = {1_000_000.0, 2_000_000.0, 3_000_000.0}
+    for text, expected, grounded in (
+        ("השיעורים שנקבעו בצו (להלן הצו) הם 10, 20 ו־30 אחוזים.", rates, rates),
+        ("השיעורים לפי סעיף 2(א) הם 10, 20 ו־30 אחוזים.", rates, rates | {2.0}),
+        (
+            "הסכומים לפי סעיף 2(א)(1) לפקודה (להלן – הפקודה) הם 1, 2 ו־3 מיליון שקלים.",
+            amounts,
+            amounts | {2.0},
+        ),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == grounded, text
+
+
+def test_a_signed_number_word_continues_the_list_after_a_wrap():
+    # Review round 108 on #1585: a sign before a number word after the
+    # wrap is the list going on, as before a digit.
+    for text, expected in (
+        ("השיעורים הם 10, -עשרים ו־30 אחוזים.", {0.1, -0.2, 0.3}),
+        ("השיעורים הם 10,\n  -עשרים ו־30 אחוזים.", {0.1, -0.2, 0.3}),
+        (
+            "הסכומים הם 1,\n  -שניים ו־3 מיליון שקלים.",
+            {1_000_000.0, -2_000_000.0, 3_000_000.0},
+        ),
+        ("הסכומים הם 1,\n\n  -שניים ו־3 מיליון שקלים.", {1.0, -2.0, 3_000_000.0}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

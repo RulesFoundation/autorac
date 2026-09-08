@@ -4749,8 +4749,9 @@ _HEBREW_LIST_COPULAS = "הם|הן|יהיו|תהיינה|הינם|הינן|של|�
 # Before a true copula the whole subject phrase stands between the plural
 # noun and the copula -- a construct chain ("שיעורי מס ערך מוסף הם", "סכומי
 # שכר העבודה הם"), a relative clause ("השיעורים שנקבעו בצו שר האוצר הם")
-# -- since no predicate can; any words and numbers ("הקנסות שהוטלו על 5
-# עובדים הם"), to the copula within the clause. Before the genitive "של"
+# -- since no predicate can; any words, numbers and parentheticals ("הקנסות
+# שהוטלו על 5 עובדים הם", "השיעורים לפי סעיף 2(א) הם", "בצו (להלן הצו) הם"),
+# to the copula within the clause. Before the genitive "של"
 # a predicate can intervene ("הקנסות ייגזרו מתשלום של", "השיעורים יחולו על
 # ההכנסה של"), so only a nominal chain may stand there: definite nouns
 # ("סכומי הקנס של") and the construct nouns of the unit's kind ("שיעורי מס
@@ -4762,7 +4763,8 @@ _HEBREW_HEADING_NOMINAL_COMPLEMENT = (
     "(?:\\s+(?:\u05d4[\u0590-\u05ff]+|" + _HEBREW_HEADING_CONSTRUCT_NOUNS + ")){0,3}"
 )
 _HEBREW_HEADING_SUBJECT_COMPLEMENT = (
-    '(?:\\s+(?:[\u0590-\u05ff]+(?:[\u05f4"][\u0590-\u05ff]+)?|\\d[\\d.,]*))*'
+    '(?:\\s+(?:[\u0590-\u05ff]+(?:[\u05f4"][\u0590-\u05ff]+)?'
+    "|\\d[\\d.,]*(?:\\([^()\\n]{1,8}\\))*|\\([^()\\n]{1,80}\\)))*"
 )
 _HEBREW_LIST_TRUE_COPULAS = "הם|הן|יהיו|תהיינה|הינם|הינן|כדלקמן:?|הבאים:?|הבאות:?"
 _HEBREW_HEADING_TAIL = (
@@ -4894,25 +4896,28 @@ def _hebrew_list_body_end(text: str, start: int) -> int:
     return end
 
 
-# A modifier of the unit after the list -- a prepositional complement
-# ("אחוזים מההכנסה", "שקלים לעובד", "3% מהם", "אחוזים של ההכנסה") or
-# "חדשים" ("שקלים חדשים") -- is no consequent; a verb or a bare noun running
-# on is.
+# A modifier phrase of the unit after the list -- a prepositional
+# complement with its adjectives and construct nouns ("אחוזים מההכנסה
+# החייבת", "שקלים חדשים לשנת המס", "3% מהם", "אחוזים של ההכנסה"), "כאמור",
+# a relative clause ("שקלים שנקבעו בצו") -- is no consequent; a verb or a
+# bare noun running on is. The words of such a phrase carry a preposition,
+# the article, כ or ש; the consequent's verb carries none.
 _HEBREW_UNIT_MODIFIER_PATTERN = re.compile(
     "[ \\t]*(?:(?:של|על|לפי|לכל|בעד|לגבי|מן)[ \\t]+[\u0590-\u05ff]+"
-    "|[\u05d1\u05dc\u05de][\u0590-\u05ff]{2,}|חדשים|חדש)(?![\u0590-\u05ff])"
+    "|[\u05d1\u05dc\u05de\u05d4\u05db\u05e9][\u0590-\u05ff]{2,}|חדשים|חדש)"
+    "(?![\u0590-\u05ff])"
 )
 
 
 def _hebrew_list_ends_within_clause(text: str, body_end: int) -> bool:
     """Whether a comma, a stop or a list tail follows the list body.
 
-    Unit modifiers between them belong to the list ("אחוזים מההכנסה, תחול
-    ההוראה", "שקלים חדשים, ישולם"); any other word is the clause running on
-    ("שקלים ישולמו כמענק", "3% מהם ינוכו").
+    Unit modifiers between them belong to the list ("אחוזים מההכנסה
+    החייבת, תחול ההוראה", "שקלים חדשים לשנת המס, ישולם"); any other word is
+    the clause running on ("שקלים ישולמו כמענק", "3% מהם ינוכו").
     """
     position = body_end
-    for _ in range(5):
+    for _ in range(8):
         if _HEBREW_LIST_TAIL_PATTERN.match(text, position) is not None:
             return True
         modifier = _HEBREW_UNIT_MODIFIER_PATTERN.match(text, position)
@@ -4960,7 +4965,10 @@ def _hebrew_list_heading_end(text: str, start: int, rate: bool) -> int | None:
                         or (
                             text[resumed] in "-\u2212"
                             and resumed + 1 < len(text)
-                            and text[resumed + 1].isdigit()
+                            and (
+                                text[resumed + 1].isdigit()
+                                or "\u0590" <= text[resumed + 1] <= "\u05ff"
+                            )
                         )
                     )
                     and _HEBREW_SOFT_WRAP_BEFORE_PATTERN.search(
@@ -4969,8 +4977,8 @@ def _hebrew_list_heading_end(text: str, start: int, rate: bool) -> int | None:
                     is not None
                 ):
                     # A soft wrap inside the list, indented or not, a
-                    # signed number after it or not ("1,\n2 ו־3", "הם\n  1,
-                    # 2", "10,\n  -20 ו־30").
+                    # signed number or number word after it or not ("1,\n2
+                    # ו־3", "הם\n  1, 2", "10,\n  -20 ו־30", "10,\n  -עשרים").
                     clause_start -= 1
                     continue
             if (
