@@ -30103,6 +30103,21 @@ def _run_encode_attempt(
                     "  apply=auto_repaired_aca_36b_b_premium_assistance_compat:"
                     + ",".join(repaired_aca_36b_b_premium_assistance_compat)
                 )
+            repaired_invalid_source_verification_values = (
+                _try_repair_generated_invalid_source_verification_values_for_apply(
+                    result,
+                    output_root=args.output,
+                    issues=full_validation_issues,
+                )
+            )
+            if repaired_invalid_source_verification_values:
+                outcome["auto_repaired_invalid_source_verification_values"] = (
+                    repaired_invalid_source_verification_values
+                )
+                print(
+                    "  apply=auto_repaired_invalid_source_verification_values:"
+                    + ",".join(repaired_invalid_source_verification_values)
+                )
             can_apply, apply_issues, supplemental_files = (
                 _validate_generated_encoding_in_policy_overlay(
                     result,
@@ -41132,6 +41147,103 @@ def _try_repair_generated_empty_deferred_source_values_for_apply(
 
     rules_file = Path(str(getattr(result, "output_file", "") or ""))
     return _remove_empty_deferred_source_values(rules_file=rules_file)
+
+
+def _try_repair_generated_invalid_source_verification_values_for_apply(
+    result,
+    *,
+    output_root: Path,
+    issues: Sequence[str],
+) -> list[str]:
+    """Remove the model-only source-verification values field rejected by serde."""
+    expected_fields = (
+        "`corpus_citation_path`",
+        "`source_sha256`",
+        "`upstream_source_check`",
+    )
+    if not any(
+        "module.source_verification: unknown field `values`" in str(issue)
+        and all(field in str(issue) for field in expected_fields)
+        for issue in issues
+    ):
+        return []
+    try:
+        _relative_generated_output_path(result, output_root=output_root)
+    except RuntimeError:
+        return []
+
+    rules_file = Path(str(getattr(result, "output_file", "") or ""))
+    try:
+        original_bytes = rules_file.read_bytes()
+        original = original_bytes.decode("utf-8")
+        payload = yaml.safe_load(original) or {}
+        root_node = yaml.compose(original)
+    except (OSError, UnicodeError, ValueError, yaml.YAMLError):
+        return []
+    if not isinstance(payload, dict) or not isinstance(root_node, MappingNode):
+        return []
+    module = payload.get("module")
+    source_verification = (
+        module.get("source_verification") if isinstance(module, dict) else None
+    )
+    if not isinstance(source_verification, dict) or "values" not in source_verification:
+        return []
+
+    def _unique_mapping_pair(
+        node: object, key: str
+    ) -> tuple[ScalarNode, object] | None:
+        if not isinstance(node, MappingNode):
+            return None
+        matches = [
+            (key_node, value_node)
+            for key_node, value_node in node.value
+            if isinstance(key_node, ScalarNode) and key_node.value == key
+        ]
+        if len(matches) != 1:
+            return None
+        return matches[0]
+
+    module_pair = _unique_mapping_pair(root_node, "module")
+    source_verification_pair = (
+        _unique_mapping_pair(module_pair[1], "source_verification")
+        if module_pair is not None
+        else None
+    )
+    values_pair = (
+        _unique_mapping_pair(source_verification_pair[1], "values")
+        if source_verification_pair is not None
+        else None
+    )
+    if values_pair is None:
+        return []
+
+    key_node, value_node = values_pair
+    lines = original.splitlines(keepends=True)
+    start_line = key_node.start_mark.line
+    end_line_exclusive = value_node.end_mark.line
+    if (
+        value_node.end_mark.line == start_line
+        or value_node.end_mark.column > key_node.start_mark.column
+    ):
+        end_line_exclusive += 1
+    if not 0 <= start_line < end_line_exclusive <= len(lines):
+        return []
+    repaired = "".join([*lines[:start_line], *lines[end_line_exclusive:]])
+    try:
+        repaired_payload = yaml.safe_load(repaired) or {}
+    except (ValueError, yaml.YAMLError):
+        return []
+    expected_payload = copy.deepcopy(payload)
+    expected_payload["module"]["source_verification"].pop("values")
+    if repaired_payload != expected_payload:
+        return []
+
+    try:
+        mode = stat.S_IMODE(rules_file.stat().st_mode)
+        _atomic_replace_bytes(rules_file, repaired.encode("utf-8"), mode=mode)
+    except (OSError, RuntimeError, UnicodeError):
+        return []
+    return ["module.source_verification.values"]
 
 
 def _try_repair_generated_unquoted_source_scalars_for_apply(
