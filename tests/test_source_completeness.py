@@ -35659,6 +35659,39 @@ rules:
     assert not _has_issue(result, "rounding", "fractional"), "\n".join(result.issues)
 
 
+@pytest.mark.parametrize(
+    ("operand", "demonstrated_operand"),
+    [
+        ("amount + 0.5", "amount"),
+        ("0.5 + amount", "amount"),
+        ("amount + 0.5 + adjustment", "amount + adjustment"),
+        ("amount + (adjustment + (1 / 2))", "amount + adjustment"),
+    ],
+)
+def test_nearest_rounding_half_is_exact_and_addition_order_independent(
+    operand: str,
+    demonstrated_operand: str,
+):
+    assert (
+        completeness_module._rounding_demonstrated_operand(
+            operand,
+            direction="nearest",
+        )
+        == demonstrated_operand
+    )
+
+
+@pytest.mark.parametrize("offset", ["0.4999999999", "0.5000000001"])
+def test_nearest_rounding_rejects_near_half_offsets(offset: str):
+    assert (
+        completeness_module._rounding_demonstrated_operand(
+            f"amount + {offset}",
+            direction="nearest",
+        )
+        is None
+    )
+
+
 def test_estg_66_precise_absatz_3_deferral_suppresses_rounding_test_demand():
     source = """\
 (1) Das Kindergeld beträgt monatlich für jedes Kind 259 Euro.

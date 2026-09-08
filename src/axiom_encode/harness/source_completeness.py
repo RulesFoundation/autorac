@@ -26773,17 +26773,32 @@ def _rounding_demonstrated_operand(
         return operand
     with contextlib.suppress(SyntaxError):
         expression = ast.parse(operand.strip(), mode="eval").body
-        if isinstance(expression, ast.BinOp) and isinstance(
-            expression.op,
-            ast.Add,
-        ):
-            left_value = _known_numeric_formula_value(expression.left, {})
-            right_value = _known_numeric_formula_value(expression.right, {})
-            if left_value is not None and math.isclose(float(left_value), 0.5):
-                return ast.unparse(expression.right)
-            if right_value is not None and math.isclose(float(right_value), 0.5):
-                return ast.unparse(expression.left)
+        terms = _flatten_formula_addends(expression)
+        for index, term in enumerate(terms):
+            value = _known_numeric_formula_value(term, {})
+            if value is None or Decimal(str(value)) != Decimal("0.5"):
+                continue
+            remaining = terms[:index] + terms[index + 1 :]
+            if not remaining:
+                return None
+            demonstrated_operand = remaining[0]
+            for remaining_term in remaining[1:]:
+                demonstrated_operand = ast.BinOp(
+                    left=demonstrated_operand,
+                    op=ast.Add(),
+                    right=remaining_term,
+                )
+            return ast.unparse(demonstrated_operand)
     return None
+
+
+def _flatten_formula_addends(expression: ast.expr) -> list[ast.expr]:
+    if isinstance(expression, ast.BinOp) and isinstance(expression.op, ast.Add):
+        return [
+            *_flatten_formula_addends(expression.left),
+            *_flatten_formula_addends(expression.right),
+        ]
+    return [expression]
 
 
 def _expand_reached_formula_dependencies(
