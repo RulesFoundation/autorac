@@ -2128,7 +2128,7 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert inputs["source_bundle_json"] == {
         "description": (
             "JSON citation array, canonical_refresh_bundle object, or "
-            "atomic-source-transaction/v2 envelope for an independent refresh "
+            "atomic-source-transaction/v2/v3 envelope for an independent refresh "
             "transaction"
         ),
         "required": False,
@@ -2461,6 +2461,13 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert "--allowed-event-name workflow_dispatch" in command
     assert "--apply" in command
     assert "--require-complete-source-unit" in command
+    assert 'local require_complete_source_unit="${10:-true}"' in command
+    assert 'target_require_complete_source_unit="$(jq -er' in command
+    assert (
+        "scoped source-unit validation requires a normal source-bundle replacement"
+        in command
+    )
+    assert '"$target_require_complete_source_unit"' in command
     assert "--emit-final-rejected-candidate" in command
     assert '"$RUNNER_TEMP/generated/$output_lane/final-rejected-candidate"' in command
     assert 'mkdir -p "$RUNNER_TEMP/generated/$output_lane"' in command
