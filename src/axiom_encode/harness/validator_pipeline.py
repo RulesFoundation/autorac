@@ -3845,10 +3845,12 @@ def _iter_hebrew_shared_scale_range_matches(
             _HEBREW_SHARED_SCALE_JOIN_BEFORE_PATTERN, text, upper_start, 12
         )
         needs_bound = False
+        needs_respectively = False
         if join is not None:
             lower_end = len(text[: join.start()].rstrip())
             if lower_end == join.start():
                 continue
+            needs_respectively = join.group("join") == "\u05d5"
         else:
             # A ל prefix on a spelled upper endpoint joins under "בין" or
             # "מ־" before the lower endpoint: "בין שלושה לחמישה מיליון". A
@@ -3871,6 +3873,7 @@ def _iter_hebrew_shared_scale_range_matches(
             if lower_end == upper_start:
                 continue
             needs_bound = head.startswith("\u05dc")
+            needs_respectively = head.startswith("\u05d5")
         printed_lower = _search_before(
             _HEBREW_DIGITS_BEFORE_PATTERN, text, lower_end, 32
         )
@@ -3900,6 +3903,12 @@ def _iter_hebrew_shared_scale_range_matches(
             continue
         if _hebrew_operand_is_denominated(text, lower_span[0], lower_span[1]):
             # "בין ₪ 500 ל־3 מיליון": a denominated amount shares no scale.
+            continue
+        if needs_respectively and not _hebrew_respectively_after(
+            text, scale_match.end()
+        ):
+            # "1 ו־2 ו־3 מיליון שקלים, בהתאמה" lists; a bare vav joins
+            # clauses as often ("ההכנסה היא 500 ו־3 מיליון ישולמו").
             continue
         if needs_bound and (
             _search_before(_HEBREW_RANGE_LOWER_BOUND_PATTERN, text, lower_span[0], 16)
@@ -4619,7 +4628,32 @@ def _hebrew_spelled_span_carries_a_scale(text: str, start: int, end: int) -> boo
 
 # A currency mark on an operand: a sign before it ("$500", "₪ 500") or a
 # currency word or sign after it ("500 ש"ח", "500 שקלים", "500 ₪").
-_HEBREW_CURRENCY_SIGN_BEFORE_PATTERN = re.compile("[$\u20ac\u00a3\u20aa]\\s*$")
+_HEBREW_CURRENCY_CODES = ("USD", "EUR", "GBP", "ILS", "NIS", "CHF", "JPY")
+_HEBREW_CURRENCY_SIGN_BEFORE_PATTERN = re.compile(
+    "(?:[$\u20ac\u00a3\u20aa]|(?<![A-Za-z])(?:"
+    + "|".join(_HEBREW_CURRENCY_CODES)
+    + "))\\s*$",
+    re.IGNORECASE,
+)
+_HEBREW_CURRENCY_MARK_AFTER_PATTERN = re.compile(
+    "\\s*(?:[$\u20ac\u00a3\u20aa]|(?:"
+    + "|".join(_HEBREW_CURRENCY_CODES)
+    + ")(?![A-Za-z]))",
+    re.IGNORECASE,
+)
+
+
+def _hebrew_respectively_after(text: str, unit_end: int) -> bool:
+    """Whether "בהתאמה" stands within reach after the unit, no sentence stop between.
+
+    The marker of a paired list: "2 ו־3 אחוזים, בהתאמה". A bare vav pair
+    without it is two clauses as often as a pair ("מספר העובדים הוא 50
+    ו־10% מהם זכאים").
+    """
+    tail = text[unit_end : unit_end + 40]
+    if "בהתאמה" not in tail:
+        return False
+    return not any(stop in tail[: tail.index("בהתאמה")] for stop in ".;\n")
 
 
 def _hebrew_operand_is_denominated(text: str, start: int, end: int) -> bool:
@@ -4628,14 +4662,16 @@ def _hebrew_operand_is_denominated(text: str, start: int, end: int) -> bool:
     "$500 או 2% מהמחזור", "בין ₪ 500 ל־3 מיליון": a denominated amount is
     an amount, whatever join or shared scale word follows it.
     """
-    if _search_before(_HEBREW_CURRENCY_SIGN_BEFORE_PATTERN, text, start, 4) is not None:
+    if (
+        _search_before(_HEBREW_CURRENCY_SIGN_BEFORE_PATTERN, text, start, 16)
+        is not None
+    ):
         return True
     after_start = end + (len(text[end:]) - len(text[end:].lstrip()))
     after = _HEBREW_WORD_TOKEN_PATTERN.match(text, after_start)
     if after is not None and after.group(0) in _HEBREW_CURRENCY_WORDS:
         return True
-    rest = text[end:].lstrip()
-    return rest[:1] in ("$", "\u20ac", "\u00a3", "\u20aa") if rest else False
+    return _HEBREW_CURRENCY_MARK_AFTER_PATTERN.match(text, end) is not None
 
 
 def _hebrew_number_run_ending_at(
@@ -4726,13 +4762,16 @@ def _iter_hebrew_percent_range_lower_matches(
             upper_start -= 1
         # The join before it.
         join = _search_before(_HEBREW_RANGE_JOIN_BEFORE_PATTERN, text, upper_start, 12)
+        needs_respectively = False
         if join is not None:
             lower_end = join.start()
             # "ל־" needs "בין" or "מ־" before the lower endpoint; "ו־" joins a
-            # pair of rates on its own ("2 ו־3 אחוזים, בהתאמה").
-            needs_bound = join.group("free") is None and not join.group(
-                0
-            ).lstrip().startswith("\u05d5")
+            # pair of rates under "בהתאמה" after the unit ("2 ו־3 אחוזים,
+            # בהתאמה"), the marker of a pair; without it the vav joins
+            # clauses as often ("מספר העובדים הוא 50 ו־10% מהם").
+            vav_join = join.group(0).lstrip().startswith("\u05d5")
+            needs_bound = join.group("free") is None and not vav_join
+            needs_respectively = vav_join
         elif (
             upper_first is not None
             and upper_first[:1] in ("\u05dc", "\u05d5")
@@ -4743,9 +4782,11 @@ def _iter_hebrew_percent_range_lower_matches(
         ):
             # The whitespace before the upper endpoint stays, so a printed
             # lower endpoint ("בין 2 לשלושה אחוזים") ends flush before it. A
-            # vav prefix ("שניים ושלושה אחוזים") joins without a bound.
+            # vav prefix ("שניים ושלושה אחוזים, בהתאמה") joins under
+            # "בהתאמה", without a bound.
             lower_end = upper_start
             needs_bound = upper_first.startswith("\u05dc")
+            needs_respectively = upper_first.startswith("\u05d5")
         else:
             continue
         # The lower endpoint, printed or spelled, right before the join.
@@ -4815,6 +4856,8 @@ def _iter_hebrew_percent_range_lower_matches(
                 lower_span = (lower_span[0] - 1, lower_flush)
         if _hebrew_operand_is_denominated(text, lower_span[0], lower_span[1]):
             # "$500 או 2% מהמחזור": a denominated amount shares no unit.
+            continue
+        if needs_respectively and not _hebrew_respectively_after(text, noun.end()):
             continue
         if (
             needs_bound
