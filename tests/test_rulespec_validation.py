@@ -18856,6 +18856,70 @@ def test_a_list_wholly_within_a_condition_is_headed():
         assert extract_numbers_from_text(text) == expected, text
 
 
+def test_unit_modifiers_keep_the_list_inside_the_condition():
+    # Review round 107 on #1585: a prepositional complement or "חדשים"
+    # after the unit belongs to the list; a verb running on is the
+    # consequent.
+    rates = {0.1, 0.2, 0.3}
+    amounts = {1_000_000.0, 2_000_000.0, 3_000_000.0}
+    for text, expected in (
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה, תחול ההוראה.", rates),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים חדשים, ישולם מענק.", amounts),
+        (
+            "אם התשלומים הם 500, 2 או 3 מיליון שקלים בשנה, ישולם מענק.",
+            {500_000_000.0, 2_000_000.0, 3_000_000.0},
+        ),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים של ההכנסה בלבד, תחול ההוראה.", rates),
+        ("אם התשלומים הם 500, 2 או 3% מהם ינוכו כמס.", {500.0, 2.0, 0.03}),
+        (
+            "אם התשלומים הם 500, 2 או 3 מיליון שקלים לעובד ישולמו כמענק.",
+            {500.0, 2_000_000.0, 3_000_000.0},
+        ),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
+def test_the_subject_phrase_runs_to_the_copula():
+    # Review round 107 on #1585: the subject phrase before a true copula
+    # is as long as the clause allows, numbers included.
+    rates = {0.1, 0.2, 0.3}
+    amounts = {1_000_000.0, 2_000_000.0, 3_000_000.0}
+    for text, expected in (
+        ("השיעורים שנקבעו בצו שר האוצר הם 10, 20 ו־30 אחוזים.", rates),
+        ("הסכומים ששולמו לעובדים בשנת המס הם 1, 2 ו־3 מיליון שקלים.", amounts),
+        (
+            "השיעורים שנקבעו בצו שר האוצר לפי סעיף זה לשנת המס הם 10, 20 ו־30 אחוזים.",
+            rates,
+        ),
+        ("הקנסות שהוטלו על 5 עובדים הם 1, 2 ו־3 מיליון שקלים.", {5.0} | amounts),
+        ("השיעורים בשנת 2024 הם 10, 20 ו־30 אחוזים.", {2024.0} | rates),
+        (
+            "השיעורים נקבעו בצו. לפי הצו, הסכומים הם 1, 2 ו־3 מיליון שקלים.",
+            amounts,
+        ),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
+def test_a_signed_number_continues_the_list_after_a_wrap():
+    # Review round 107 on #1585: a sign before the digit after the wrap is
+    # the list going on; a blank line still ends the clause.
+    for text, expected in (
+        ("השיעורים הם 10, -20 ו־30 אחוזים.", {0.1, -0.2, 0.3}),
+        ("השיעורים הם 10,\n  -20 ו־30 אחוזים.", {0.1, -0.2, 0.3}),
+        ("השיעורים הם 10,\n  −20 ו־30 אחוזים.", {0.1, -0.2, 0.3}),
+        (
+            "הסכומים הם 1,\n  -2 ו־3 מיליון שקלים.",
+            {1_000_000.0, -2_000_000.0, 3_000_000.0},
+        ),
+        ("הסכומים הם 1,\n\n  -2 ו־3 מיליון שקלים.", {1.0, -2.0, 3_000_000.0}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

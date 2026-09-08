@@ -4748,8 +4748,9 @@ def _hebrew_rate_word_before(text: str, start: int) -> bool:
 _HEBREW_LIST_COPULAS = "הם|הן|יהיו|תהיינה|הינם|הינן|של|כדלקמן:?|הבאים:?|הבאות:?"
 # Before a true copula the whole subject phrase stands between the plural
 # noun and the copula -- a construct chain ("שיעורי מס ערך מוסף הם", "סכומי
-# שכר העבודה הם"), a relative clause ("השיעורים שנקבעו בצו הם") -- since no
-# predicate can; up to three words, any of them. Before the genitive "של"
+# שכר העבודה הם"), a relative clause ("השיעורים שנקבעו בצו שר האוצר הם")
+# -- since no predicate can; any words and numbers ("הקנסות שהוטלו על 5
+# עובדים הם"), to the copula within the clause. Before the genitive "של"
 # a predicate can intervene ("הקנסות ייגזרו מתשלום של", "השיעורים יחולו על
 # ההכנסה של"), so only a nominal chain may stand there: definite nouns
 # ("סכומי הקנס של") and the construct nouns of the unit's kind ("שיעורי מס
@@ -4761,7 +4762,7 @@ _HEBREW_HEADING_NOMINAL_COMPLEMENT = (
     "(?:\\s+(?:\u05d4[\u0590-\u05ff]+|" + _HEBREW_HEADING_CONSTRUCT_NOUNS + ")){0,3}"
 )
 _HEBREW_HEADING_SUBJECT_COMPLEMENT = (
-    '(?:\\s+[\u0590-\u05ff]+(?:[\u05f4"][\u0590-\u05ff]+)?){0,3}'
+    '(?:\\s+(?:[\u0590-\u05ff]+(?:[\u05f4"][\u0590-\u05ff]+)?|\\d[\\d.,]*))*'
 )
 _HEBREW_LIST_TRUE_COPULAS = "הם|הן|יהיו|תהיינה|הינם|הינן|כדלקמן:?|הבאים:?|הבאות:?"
 _HEBREW_HEADING_TAIL = (
@@ -4893,6 +4894,34 @@ def _hebrew_list_body_end(text: str, start: int) -> int:
     return end
 
 
+# A modifier of the unit after the list -- a prepositional complement
+# ("אחוזים מההכנסה", "שקלים לעובד", "3% מהם", "אחוזים של ההכנסה") or
+# "חדשים" ("שקלים חדשים") -- is no consequent; a verb or a bare noun running
+# on is.
+_HEBREW_UNIT_MODIFIER_PATTERN = re.compile(
+    "[ \\t]*(?:(?:של|על|לפי|לכל|בעד|לגבי|מן)[ \\t]+[\u0590-\u05ff]+"
+    "|[\u05d1\u05dc\u05de][\u0590-\u05ff]{2,}|חדשים|חדש)(?![\u0590-\u05ff])"
+)
+
+
+def _hebrew_list_ends_within_clause(text: str, body_end: int) -> bool:
+    """Whether a comma, a stop or a list tail follows the list body.
+
+    Unit modifiers between them belong to the list ("אחוזים מההכנסה, תחול
+    ההוראה", "שקלים חדשים, ישולם"); any other word is the clause running on
+    ("שקלים ישולמו כמענק", "3% מהם ינוכו").
+    """
+    position = body_end
+    for _ in range(5):
+        if _HEBREW_LIST_TAIL_PATTERN.match(text, position) is not None:
+            return True
+        modifier = _HEBREW_UNIT_MODIFIER_PATTERN.match(text, position)
+        if modifier is None:
+            return False
+        position = modifier.end()
+    return _HEBREW_LIST_TAIL_PATTERN.match(text, position) is not None
+
+
 _HEBREW_LIST_COLON_WORDS = (
     "כדלקמן",
     "הבאים",
@@ -4926,15 +4955,22 @@ def _hebrew_list_heading_end(text: str, start: int, rate: bool) -> int | None:
                 if (
                     resumed < len(text)
                     and (
-                        text[resumed].isdigit() or "\u0590" <= text[resumed] <= "\u05ff"
+                        text[resumed].isdigit()
+                        or "\u0590" <= text[resumed] <= "\u05ff"
+                        or (
+                            text[resumed] in "-\u2212"
+                            and resumed + 1 < len(text)
+                            and text[resumed + 1].isdigit()
+                        )
                     )
                     and _HEBREW_SOFT_WRAP_BEFORE_PATTERN.search(
                         text, max(0, clause_start - 24), clause_start - 1
                     )
                     is not None
                 ):
-                    # A soft wrap inside the list, indented or not ("1,\n2
-                    # ו־3", "הם\n  1, 2").
+                    # A soft wrap inside the list, indented or not, a
+                    # signed number after it or not ("1,\n2 ו־3", "הם\n  1,
+                    # 2", "10,\n  -20 ו־30").
                     clause_start -= 1
                     continue
             if (
@@ -4965,13 +5001,10 @@ def _hebrew_list_heading_end(text: str, start: int, rate: bool) -> int | None:
     if heading is None or not _hebrew_list_body_only(text, heading.end(), start):
         return None
     segment_start = text.rfind(",", clause_start, heading.start()) + 1
-    if (
-        _HEBREW_CONDITIONAL_CLAUSE_PATTERN.search(
-            text, max(clause_start, segment_start), heading.start()
-        )
-        is not None
-        and _HEBREW_LIST_TAIL_PATTERN.match(text, _hebrew_list_body_end(text, start))
-        is None
+    if _HEBREW_CONDITIONAL_CLAUSE_PATTERN.search(
+        text, max(clause_start, segment_start), heading.start()
+    ) is not None and not _hebrew_list_ends_within_clause(
+        text, _hebrew_list_body_end(text, start)
     ):
         return None
     return heading.end()
