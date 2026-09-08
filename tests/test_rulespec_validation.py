@@ -19102,6 +19102,65 @@ def test_a_mixed_fraction_stays_on_its_line_across_unicode_separators():
         assert 10.25 in extract_numbers_from_text(text), text
 
 
+def test_the_conditions_comma_tells_a_modifier_from_a_predicate():
+    # Review round 111 on #1585: the comma after the condition, a clause
+    # separator or a list tail closes a list inside it whatever words
+    # modify the unit; a sentence ending with words between and no comma,
+    # or a plural future verb, is the consequent running on.
+    rates = {0.1, 0.2, 0.3}
+    amounts = {1_000_000.0, 2_000_000.0, 3_000_000.0}
+    split = {500.0, 2_000_000.0, 3_000_000.0}
+    for text, expected in (
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה נמוכה, תחול ההוראה.", rates),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים מסוימים, ישולם מענק.", amounts),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים משולמים, ישולם מענק.", amounts),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים חדשים לפחות.", amounts),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים.", rates),
+        ("כאשר התשלומים הם 500, 2 או 3 מיליון שקלים משולמים כמענק.", split),
+        ("כאשר התשלומים הם 500, 2 או 3 מיליון שקלים מסוימים ישולמו.", split),
+        (
+            "כאשר התשלומים הם 500, 2 או 3 מיליון שקלים ישולמו כמענק, והיתרה תוחזר.",
+            split,
+        ),
+        (
+            "אם הסכומים הם 1, 2 ו־3 מיליון שקלים המעסיק ישלם מענק.",
+            {1.0, 2.0, 3_000_000.0},
+        ),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
+def test_a_percentage_run_ends_at_a_paragraph_boundary():
+    # Review round 111 on #1585: the backward word scan before a percent
+    # noun stops at a blank line or a paragraph separator, in its final
+    # gap too; a single line wrap still joins.
+    for text, expected in (
+        ("הסף הוא שלושה\n\nעשר אחוזים מההכנסה פטורים.", {3.0, 0.1}),
+        ("הסף הוא עשרים\n\nושלושה אחוזים מההכנסה פטורים.", {20.0, 0.03}),
+        ("הסף הוא עשרים ושלושה אחוזים מההכנסה פטורים.", {0.23}),
+        ("הסף הוא שלושה\nעשר אחוזים מההכנסה פטורים.", {0.13}),
+        ("הסף הוא שלושה עשר אחוזים מההכנסה פטורים.", {0.13}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
+def test_a_scaled_mixed_fraction_stays_on_its_line():
+    # Review round 111 on #1585: the printed-scale reader joins a whole
+    # number to its fraction by a space of some width only.
+    for text in (
+        "הסף הוא 10\n\n1⁄4 מיליון שקלים ישולמו.",
+        "הסף הוא 10\u20291⁄4 מיליון שקלים ישולמו.",
+    ):
+        assert _hebrew_recall(text) == {10.0, 250_000.0}, text
+        grounded = extract_numbers_from_text(text)
+        assert {10.0, 250_000.0} <= grounded and 10_250_000.0 not in grounded, text
+    text = "הסף הוא 10 1⁄4 מיליון שקלים ישולמו."
+    assert 10_250_000.0 in _hebrew_recall(text)
+    assert 10_250_000.0 in extract_numbers_from_text(text)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
