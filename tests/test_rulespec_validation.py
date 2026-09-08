@@ -19520,6 +19520,36 @@ def test_a_feminine_noun_hides_no_verb_and_a_relative_subject_shows_its_own():
         assert extract_numbers_from_text(text) == expected, text
 
 
+def test_a_relative_subject_needs_two_words_before_its_verb():
+    # Review round 120 on #1585: a ש-word the verb follows at once is a
+    # one-word subject ("שותפה תשלם"), no relative prefix; a titled
+    # subject of any length shows its verb within six words.
+    rates = {0.1, 0.2, 0.3}
+    amounts = {1_000_000.0, 2_000_000.0, 3_000_000.0}
+    split = {500.0, 2_000_000.0, 3_000_000.0}
+    for text, expected in (
+        ("אם התשלומים הם 500, 2 או 3 מיליון שקלים שותפה תשלם, והיתרה תוחזר.", split),
+        ("אם התשלומים הם 500, 2 או 3 מיליון שקלים שותף ישלם, והיתרה תוחזר.", split),
+        ("אם התשלומים הם 500, 2 או 3 מיליון שקלים שוכרת תשלם, והיתרה תוחזר.", split),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה שבית דין אזורי לעבודה יקבע, תחול ההוראה.",
+            rates,
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה שבית דין יקבע, תחול ההוראה.",
+            rates,
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה שועדת הערר תקבע, תחול ההוראה.",
+            rates,
+        ),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה שהמנהל יקבע, תחול ההוראה.", rates),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים ששולמו לעובד, ישולם מענק.", amounts),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

@@ -5007,7 +5007,9 @@ def _hebrew_list_body_end(text: str, start: int) -> int:
 # definite complement ("שפקיד השומה"), a verb-shaped word ("שנקבע") or a
 # past plural ("ששולמו"), the lexical ש-words (שכיר, שוטף, שנתי)
 # excepted. A relative clause on any subject, definite or not ("שבית
-# דין יקבע"), shows itself by its own verb within a few words.
+# דין יקבע", "שבית דין אזורי לעבודה יקבע"), shows itself by its own verb
+# within a few words; a ש-word the verb follows at once ("שותפה תשלם") is
+# a one-word subject and no evidence of a relative prefix.
 # The ש-initial words a statute uses that open no relative clause.
 _HEBREW_LEXICAL_SHIN_WORDS = (
     "(?:של|שכיר|שכירה|שכירים|שוטף|שוטפת|שוטפים|שנתי|שנתית|שנתיים|שקל|שקלים|שיעור"
@@ -5015,7 +5017,8 @@ _HEBREW_LEXICAL_SHIN_WORDS = (
     "|שישה|שש|שירות|שירותי|שווי|שוק|שער|שערי|שטח|שטחי|שם|שמות|שלב|שלבי|שעה|שעות"
     "|שיטה|שיטת|שינוי|שינויים|שימוש|שאלה|שבוע|שבועות|שאר|שומה|שומת|שומות|שיפוי"
     "|שיקום|שיקול|שיקולים|שיפור|שילוב|שיתוף|שליטה|שלטון|שמירה|שטר|שטרות|שיווק"
-    "|שדה|שדות|שבח|שגיאה|שאירים|שאיר|שביתה|שהות|שעבוד|שיעבוד|שותף|שותפות|שותפים)"
+    "|שדה|שדות|שבח|שגיאה|שאירים|שאיר|שביתה|שהות|שעבוד|שיעבוד|שותף|שותפה|שותפת|שותפות"
+    "|שותפים)"
 )
 _HEBREW_RELATIVE_MARKER_PATTERN = re.compile(
     "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?:אשר|(?!"
@@ -5107,8 +5110,10 @@ _HEBREW_RELATIVE_SUBJECT_PATTERN = re.compile(
 def _hebrew_opens_relative_clause(text: str, position: int) -> bool:
     """Whether a relative clause opens at ``position``.
 
-    A relative marker, or ש on a subject whose clause shows its own verb
-    within the next three words ("שבית דין יקבע", "שפקיד השומה יקבע").
+    A relative marker, or ש on a subject of two words or more whose clause
+    shows its own verb within the next six words ("שבית דין יקבע", "שבית
+    דין אזורי לעבודה יקבע"); a ש-word the verb follows at once ("שותפה
+    תשלם") is a one-word subject and no evidence of a relative prefix.
     """
     if _HEBREW_RELATIVE_MARKER_PATTERN.match(text, position) is not None:
         return True
@@ -5116,12 +5121,12 @@ def _hebrew_opens_relative_clause(text: str, position: int) -> bool:
     if subject is None:
         return False
     cursor = subject.end()
-    for _ in range(3):
+    for index in range(6):
         word = _HEBREW_WORD_AFTER_PATTERN.match(text, cursor)
         if word is None:
             return False
         if word.group("word") in _HEBREW_CONSEQUENT_VERBS:
-            return True
+            return index >= 1
         cursor = word.end()
     return False
 
