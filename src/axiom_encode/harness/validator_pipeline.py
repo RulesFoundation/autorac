@@ -1514,11 +1514,12 @@ _CONTEXTUAL_ASCII_FRACTION_PATTERN = re.compile(
 # A hyphen after a Hebrew letter joins a prefix to the fraction ("כ-1⁄4")
 # and is no sign; only a sign that no Hebrew letter precedes negates. The
 # whole number of a mixed number stands on the fraction's own line: "10
-# 1⁄4" is ten and a quarter, "10\n\n1⁄4" is ten, then a quarter.
+# 1⁄4" is ten and a quarter, "10\n\n1⁄4" is ten, then a quarter, and so
+# is "10\u20291⁄4"; only a space of some width joins them.
 _FRACTION_SLASH_PATTERN = re.compile(
     "(?<![\\d\u2044.,])"
     "(?:(?<![\u05d0-\u05ea])(?P<sign>[-\u2212]))?"
-    "(?:(?P<whole>\\d+)[^\\S\\r\\n]+)?"
+    "(?:(?P<whole>\\d+)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]+)?"
     "(?P<numerator>\\d+)\\s*\u2044\\s*(?P<denominator>\\d+)"
     "(?![\\d\u2044])(?![.,]\\d)"
 )
@@ -1912,7 +1913,16 @@ _HEBREW_TEEN_TENS_WORDS = ("עשר", "עשרה")
 # boundaries below refuse, so without this the hyphenated spellings match
 # nothing at all; with an ASCII hyphen they matched the two halves separately
 # and grounded 3 and 10 instead of 13.
-_HEBREW_TEEN_SEPARATOR_PATTERN = "(?:\\s+|\\s*[-\\u05be]\\s*)"
+# A blank line, a form feed or a Unicode line or paragraph separator ends a
+# paragraph; number words never compose across one ("שלושה\n\nעשר" is
+# three, then ten), while a single line wrap joins them.
+_PARAGRAPH_GAP_FRAGMENT = (
+    "(?:[\\u2028\\u2029\\x0b\\x0c\\x85]|\\r?\\n[^\\S\\r\\n]*\\r?\\n)"
+)
+_PARAGRAPH_GAP_PATTERN = re.compile(_PARAGRAPH_GAP_FRAGMENT)
+_HEBREW_TEEN_SEPARATOR_PATTERN = (
+    "(?:(?!\\s*" + _PARAGRAPH_GAP_FRAGMENT + ")\\s+|\\s*[-\\u05be]\\s*)"
+)
 _HEBREW_TEEN_PATTERN = re.compile(
     "(?<![\\u0590-\\u05ff])"
     + _HEBREW_WORD_PREFIX_PATTERN
@@ -2717,7 +2727,8 @@ def _iter_hebrew_compound_number_matches(
     ]
     # Runs of adjacent words are cut once, in one pass; a hyphen or maqaf
     # joins a unit to its ten ("שנים-עשר", "שנים־עשר") and whitespace joins
-    # anything. Each run is then parsed from every start index without
+    # anything short of a paragraph boundary. Each run is then parsed from
+    # every start index without
     # copying, and a start that is not a number word is skipped at once.
     runs: list[tuple[int, int]] = []
     run_start = 0
@@ -2731,9 +2742,12 @@ def _iter_hebrew_compound_number_matches(
     for index in range(1, len(tokens) + 1):
         if index < len(tokens):
             gap = text[tokens[index - 1][1] : tokens[index][0]]
-            if gap.strip() == "" or (
-                _HEBREW_TEEN_JOIN_PATTERN.match(gap)
-                and tokens[index][2] in _HEBREW_TEEN_TENS
+            if _PARAGRAPH_GAP_PATTERN.search(gap) is None and (
+                gap.strip() == ""
+                or (
+                    _HEBREW_TEEN_JOIN_PATTERN.match(gap)
+                    and tokens[index][2] in _HEBREW_TEEN_TENS
+                )
             ):
                 continue
         runs.append((run_start, index))
@@ -4801,8 +4815,8 @@ _HEBREW_CONDITIONAL_CLAUSE_PATTERN = re.compile(
 )
 _HEBREW_SENTENCE_STOP_CHARACTERS = frozenset(".;:\n")
 _HEBREW_LIST_TAIL_PATTERN = re.compile(
-    "[^\\S\\r\\n]*(?:(?<![\u0590-\u05ff])(?:בהתאמה|לפחות|בלבד|ומעלה|לכל\\s+היותר"
-    "|לפי\\s+העניין|בקירוב)[^\\S\\r\\n]*)?(?:[,.;:\\n)]|$)"
+    "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?:(?<![\u0590-\u05ff])(?:בהתאמה|לפחות|בלבד|ומעלה|לכל\\s+היותר"
+    "|לפי\\s+העניין|בקירוב)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*)?(?:[,.;:\\n)]|$)"
 )
 # A line wrap inside a list -- after a comma, a join or the heading's copula
 # ("הסכומים הם 1,\n2 ו־3 מיליון", "הסכומים הם\n1, 2 ו־3 מיליון") -- is
@@ -4810,7 +4824,7 @@ _HEBREW_LIST_TAIL_PATTERN = re.compile(
 # table rows and numbered paragraphs stay apart.
 _HEBREW_SOFT_WRAP_BEFORE_PATTERN = re.compile(
     "(?:,|\u05d5\u05be|(?<![\u0590-\u05ff])(?:או|עד|ועד|לבין|"
-    "הם|הן|יהיו|תהיינה|הינם|הינן|של|כדלקמן:?|הבאים:?|הבאות:?)|:)[^\\S\\r\\n]*$"
+    "הם|הן|יהיו|תהיינה|הינם|הינן|של|כדלקמן:?|הבאים:?|הבאות:?)|:)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*$"
 )
 
 
@@ -4904,21 +4918,25 @@ def _hebrew_list_body_end(text: str, start: int) -> int:
 # כמענק"). Every other word after the unit -- a prepositional complement,
 # an adjective, definite or not ("מההכנסה החייבת", "מהכנסה חייבת"), a
 # construct noun ("לשנת המס"), "כאמור", a relative clause ("שנקבעו בצו") --
-# modifies the unit and belongs to the list. A function word that begins
-# like a verb (אשר, את, או) is none, and a relative clause ("שקלים אשר
-# נקבעו בצו", "שקלים שהמעסיק ישלם") modifies the unit, its verb included.
+# modifies the unit and belongs to the list. A future verb never ends in
+# ים, ות or ת, so a word that does ("נוספים", "אחרים", "נוספת") is an
+# adjective or a noun, whatever its first letter; a function word that
+# begins like a verb (אשר, את, או) is none; and a relative clause ("שקלים
+# אשר נקבעו בצו", "שקלים שהמעסיק ישלם") modifies the unit, its verb
+# included.
 _HEBREW_RELATIVE_MARKER_PATTERN = re.compile(
-    "[^\\S\\r\\n]*(?:אשר|(?!של(?![\u0590-\u05ff]))\u05e9[\u0590-\u05ff]{2,})"
+    "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?:אשר|(?!של(?![\u0590-\u05ff]))\u05e9[\u0590-\u05ff]{2,})"
     "(?![\u0590-\u05ff])"
 )
 _HEBREW_PREDICATE_WORD_PATTERN = re.compile(
-    "[^\\S\\r\\n]*(?:"
+    "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?:"
     "(?!(?:אשר|את|אם|או|אל|אף|אך|אינו|אינה|אינם|אינן|יותר|יחד|נגד|תוך|תחת|נוסף)"
-    "(?![\u0590-\u05ff]))\u05d5?[\u05d9\u05ea\u05e0\u05d0][\u0590-\u05ff]{2,}"
+    "(?![\u0590-\u05ff]))\u05d5?[\u05d9\u05ea\u05e0\u05d0]"
+    "(?![\u0590-\u05ff]*(?:ים|ות|\u05ea)(?![\u0590-\u05ff]))[\u0590-\u05ff]{2,}"
     "|\u05de[\u0590-\u05d3\u05d5-\u05ff][\u0590-\u05ff]*(?:ים|ות))(?![\u0590-\u05ff])"
 )
 _HEBREW_UNIT_MODIFIER_PATTERN = re.compile(
-    "[^\\S\\r\\n]*(?:(?:של|על|לפי|לכל|בעד|לגבי|מן)[^\\S\\r\\n]+[\u0590-\u05ff]+"
+    "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?:(?:של|על|לפי|לכל|בעד|לגבי|מן)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]+[\u0590-\u05ff]+"
     "|[\u0590-\u05ff]+)(?![\u0590-\u05ff])"
 )
 
@@ -4965,7 +4983,7 @@ _HEBREW_LIST_COLON_WORDS = (
 
 def _is_horizontal_space(character: str) -> bool:
     """A space of any width that is no line break (U+00A0, U+2003 included)."""
-    return character.isspace() and character not in "\n\r\x0b\x0c\u2028\u2029"
+    return character.isspace() and character not in "\n\r\x0b\x0c\x85\u2028\u2029"
 
 
 def _hebrew_list_heading_end(text: str, start: int, rate: bool) -> int | None:

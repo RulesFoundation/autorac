@@ -19045,6 +19045,63 @@ def test_unicode_indentation_after_a_wrap_is_whitespace():
         assert extract_numbers_from_text(text) == expected, text
 
 
+def test_an_adjective_after_the_unit_is_a_modifier():
+    # Review round 110 on #1585: a future verb never ends in ים, ות or ת,
+    # so "נוספים" and "נוספת" modify the unit whatever their first letter;
+    # a plural future verb is still the consequent.
+    rates = {0.1, 0.2, 0.3}
+    amounts = {1_000_000.0, 2_000_000.0, 3_000_000.0}
+    for text, expected in (
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים נוספים, תחול ההוראה.", rates),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים נוספים, ישולם מענק.", amounts),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה נוספת, תחול ההוראה.", rates),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים אחרים, ישולם מענק.", amounts),
+        (
+            "כאשר התשלומים הם 500, 2 או 3 מיליון שקלים יינתנו כמענק.",
+            {500.0, 2_000_000.0, 3_000_000.0},
+        ),
+        (
+            "כאשר התשלומים הם 500, 2 או 3 מיליון שקלים ישולמו כמענק.",
+            {500.0, 2_000_000.0, 3_000_000.0},
+        ),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
+def test_number_words_end_at_a_paragraph_boundary():
+    # Review round 110 on #1585: a blank line or a Unicode paragraph
+    # separator ends a spelled number; a single line wrap does not.
+    for text, expected in (
+        ("הסף הוא שלושה\n\nעשר נקודות יינתנו.", {3.0, 10.0}),
+        ("הסף הוא עשרים\n\nושלושה ילדים זכאים.", {20.0, 3.0}),
+        ("הסף הוא עשרים ושלושה ילדים זכאים.", {20.0, 3.0}),
+        ("הסף הוא שלושה\n \nעשר נקודות יינתנו.", {3.0, 10.0}),
+        ("הסף הוא שלושה\nעשר נקודות יינתנו.", {13.0}),
+        ("הסף הוא שלושה עשר נקודות יינתנו.", {13.0}),
+        ("הסף הוא עשרים\nושלושה ילדים זכאים.", {23.0}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
+def test_a_mixed_fraction_stays_on_its_line_across_unicode_separators():
+    # Review round 110 on #1585: a Unicode paragraph, line or page
+    # separator parts the whole number from the fraction; a no-break space
+    # joins them like a space.
+    for text in (
+        "הסף הוא 10 1⁄4 מההכנסה פטור.",
+        "The threshold is 10 1⁄4 of the income is exempt.",
+        "The threshold is 10\x0c1⁄4 of the income is exempt.",
+    ):
+        assert _hebrew_recall(text) == {10.0, 0.25}, text
+        grounded = extract_numbers_from_text(text)
+        assert {10.0, 0.25} <= grounded and 10.25 not in grounded, text
+    for text in ("הסף הוא 10 1⁄4 נקודות זיכוי.", "The threshold is 10 1⁄4 percent."):
+        assert 10.25 in _hebrew_recall(text), text
+        assert 10.25 in extract_numbers_from_text(text), text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
