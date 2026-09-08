@@ -3904,8 +3904,9 @@ def _iter_hebrew_shared_scale_range_matches(
         if _hebrew_operand_is_denominated(text, lower_span[0], lower_span[1]):
             # "בין ₪ 500 ל־3 מיליון": a denominated amount shares no scale.
             continue
-        if needs_respectively and not _hebrew_respectively_after(
-            text, scale_match.end()
+        if needs_respectively and (
+            not _hebrew_respectively_after(text, scale_match.end())
+            or _hebrew_singular_copula_before(text, lower_span[0])
         ):
             # "1 ו־2 ו־3 מיליון שקלים, בהתאמה" lists; a bare vav joins
             # clauses as often ("ההכנסה היא 500 ו־3 מיליון ישולמו").
@@ -4012,6 +4013,8 @@ def _iter_hebrew_shared_scale_range_matches(
             ):
                 break
             if _hebrew_operand_is_denominated(text, earlier_span[0], earlier_span[1]):
+                break
+            if vav_crossing and _hebrew_singular_copula_before(text, earlier_span[0]):
                 break
             matches.append(
                 (
@@ -4639,12 +4642,35 @@ _HEBREW_CURRENCY_CODES = ("USD", "EUR", "GBP", "ILS", "NIS", "CHF", "JPY")
 _HEBREW_CURRENCY_SIGNS = frozenset("$\u20ac\u00a3\u20aa")
 # Whitespace and bidirectional formatting between a currency mark and its
 # amount ("₪\u200f 500", "₪" and any run of spaces).
-_HEBREW_CURRENCY_GAP_CHARACTERS = frozenset(
-    " \t\u00a0\u202f\u200e\u200f\u202a\u202b\u202c\u2066\u2067\u2068\u2069"
+_HEBREW_BIDI_MARKS = frozenset(
+    "\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069\u061c"
 )
+
+
+def _hebrew_currency_gap_character(character: str) -> bool:
+    """Whitespace of any kind, a newline included, or a bidirectional control."""
+    return character.isspace() or character in _HEBREW_BIDI_MARKS
+
+
 _HEBREW_CURRENCY_CODE_PATTERN = re.compile(
     "(?:" + "|".join(_HEBREW_CURRENCY_CODES) + ")", re.IGNORECASE
 )
+
+
+# A singular copula flush before a number states it as one value ("ההכנסה
+# היא 500"), so a vav after it joins clauses even under "בהתאמה", which
+# then describes the pair that follows ("ו־2 או 3% ... ליחיד ולחברה,
+# בהתאמה"). A plural copula introduces a list ("הסכומים הם 1 ו־2 או 3").
+_HEBREW_SINGULAR_COPULA_BEFORE_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])(?:היא|הוא|יהיה|תהיה|הינו|הינה)\\s*$"
+)
+
+
+def _hebrew_singular_copula_before(text: str, start: int) -> bool:
+    return (
+        _search_before(_HEBREW_SINGULAR_COPULA_BEFORE_PATTERN, text, start, 12)
+        is not None
+    )
 
 
 def _hebrew_respectively_after(text: str, unit_end: int) -> bool:
@@ -4669,7 +4695,7 @@ def _hebrew_operand_is_denominated(text: str, start: int, end: int) -> bool:
     and the amount are skipped, however long the run.
     """
     before = start
-    while before > 0 and text[before - 1] in _HEBREW_CURRENCY_GAP_CHARACTERS:
+    while before > 0 and _hebrew_currency_gap_character(text[before - 1]):
         before -= 1
     if before > 0 and text[before - 1] in _HEBREW_CURRENCY_SIGNS:
         return True
@@ -4681,7 +4707,7 @@ def _hebrew_operand_is_denominated(text: str, start: int, end: int) -> bool:
     ):
         return True
     after = end
-    while after < len(text) and text[after] in _HEBREW_CURRENCY_GAP_CHARACTERS:
+    while after < len(text) and _hebrew_currency_gap_character(text[after]):
         after += 1
     if after < len(text) and text[after] in _HEBREW_CURRENCY_SIGNS:
         return True
@@ -4880,7 +4906,10 @@ def _iter_hebrew_percent_range_lower_matches(
         if _hebrew_operand_is_denominated(text, lower_span[0], lower_span[1]):
             # "$500 או 2% מהמחזור": a denominated amount shares no unit.
             continue
-        if needs_respectively and not _hebrew_respectively_after(text, noun.end()):
+        if needs_respectively and (
+            not _hebrew_respectively_after(text, noun.end())
+            or _hebrew_singular_copula_before(text, lower_span[0])
+        ):
             continue
         if (
             needs_bound
@@ -4982,6 +5011,10 @@ def _iter_hebrew_percent_range_lower_matches(
             if earlier_value >= 1000 and not explicit_range:
                 break
             if _hebrew_operand_is_denominated(text, earlier_span[0], earlier_span[1]):
+                break
+            if vav_crossing and _hebrew_singular_copula_before(text, earlier_span[0]):
+                # "ההכנסה היא 500 ו־2 או 3% ... ליחיד ולחברה, בהתאמה": the
+                # marker describes the pair; the income is its own value.
                 break
             matches.append((earlier_span, earlier_value / 100))
             cursor = earlier_span[0]
@@ -10027,7 +10060,7 @@ def _clean_source_text_for_numeric_extraction_tracked(
     # content and hides the digit run from the boundary the matchers need:
     # it becomes the space it stands for, one character for one.
     tracked = tracked.sub(
-        re.compile("[\u200e\u200f\u202a-\u202e\u2066-\u2069](?=\\d)"), " "
+        re.compile("[\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c](?=\\d)"), " "
     )
     # The shekel sign glued to its amount ("₪500") is detached the same way.
     tracked = tracked.sub(re.compile(r"([¢₵￠₦₪])(?=\d)"), r"\1 ")

@@ -18580,6 +18580,47 @@ def test_a_currency_mark_survives_any_gap():
         assert not ({5.0, 500_000_000.0} & extract_numbers_from_text(text)), text
 
 
+def test_respectively_describes_the_pair_not_a_singular_value_before_it():
+    for text, expected in (
+        (
+            "ההכנסה היא 500 ו־2 או 3% ממנה ינוכו ליחיד ולחברה, בהתאמה.",
+            {500.0, 0.02, 0.03},
+        ),
+        (
+            "ההכנסה היא 500 ו־2 או 3 מיליון שקלים ישולמו ליחיד ולחברה, בהתאמה.",
+            {500.0, 2_000_000.0, 3_000_000.0},
+        ),
+        ("ההכנסה היא 500 ו־2% ממנה, בהתאמה.", {500.0, 0.02}),
+        (
+            "הסכומים הם 1 ו־2 או 3 מיליון שקלים, בהתאמה",
+            {1_000_000.0, 2_000_000.0, 3_000_000.0},
+        ),
+        ("השיעורים הם 1 ו־2 או 3 אחוזים, בהתאמה", {0.01, 0.02, 0.03}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+    assert not (
+        {5.0, 500_000_000.0}
+        & extract_numbers_from_text(
+            "ההכנסה היא 500 ו־2 או 3% ממנה ינוכו ליחיד ולחברה, בהתאמה. ההכנסה היא 500 ו־2 או 3 מיליון שקלים ישולמו, בהתאמה."
+        )
+    )
+
+
+def test_a_currency_mark_survives_any_whitespace_or_bidi_control():
+    for text, expected in (
+        ("הקנס יהיה ₪\n500 או 2% מהמחזור.", {500.0, 0.02}),
+        ("הסכום הוא בין ₪\u2009500 ל־3 מיליון שקלים.", {500.0, 3_000_000.0}),
+        ("הקנס יהיה ₪\u202e500 או 2% מהמחזור.", {500.0, 0.02}),
+        ("הקנס יהיה ₪\u202d 500 או 2% מהמחזור.", {500.0, 0.02}),
+        ("הקנס יהיה ₪\u061c500 או 2% מהמחזור.", {500.0, 0.02}),
+        ("הסכום הוא בין ₪\t\n 500 ל־3 מיליון שקלים.", {500.0, 3_000_000.0}),
+    ):
+        recall = _hebrew_recall(text)
+        assert recall == expected, (text, recall)
+        assert not ({5.0, 500_000_000.0} & extract_numbers_from_text(text)), text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
