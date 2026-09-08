@@ -182,6 +182,7 @@ def test_split_atomic_source_input_preserves_legacy_source_array() -> None:
     assert split_atomic_source_input('["us-ri/statute/44-30-1"]') == {
         "canonical_refresh_bundle": [],
         "primary_required_test_cases": [],
+        "require_complete_source_unit": True,
         "source_bundle": ["us-ri/statute/44-30-1"],
     }
 
@@ -197,6 +198,7 @@ def test_split_atomic_source_input_selects_canonical_refresh_mode() -> None:
     ) == {
         "canonical_refresh_bundle": [addition],
         "primary_required_test_cases": [],
+        "require_complete_source_unit": True,
         "source_bundle": [],
     }
 
@@ -222,8 +224,39 @@ def test_split_atomic_source_input_selects_v2_structured_refresh_mode() -> None:
     assert split_atomic_source_input(json.dumps(payload)) == {
         "canonical_refresh_bundle": [],
         "primary_required_test_cases": [required_case],
+        "require_complete_source_unit": True,
         "source_bundle": [],
     }
+
+
+def test_split_atomic_source_input_selects_v3_scoped_validation() -> None:
+    payload = {
+        "schema": "axiom-encode/atomic-source-transaction/v3",
+        "source_bundle": ["us/regulation/7/273/4"],
+        "canonical_refresh_bundle": [],
+        "primary_required_test_cases": [],
+        "require_complete_source_unit": False,
+    }
+
+    assert split_atomic_source_input(json.dumps(payload)) == {
+        "canonical_refresh_bundle": [],
+        "primary_required_test_cases": [],
+        "require_complete_source_unit": False,
+        "source_bundle": ["us/regulation/7/273/4"],
+    }
+
+
+def test_split_atomic_source_input_rejects_nonboolean_v3_scope() -> None:
+    payload = {
+        "schema": "axiom-encode/atomic-source-transaction/v3",
+        "source_bundle": [],
+        "canonical_refresh_bundle": [],
+        "primary_required_test_cases": [],
+        "require_complete_source_unit": "false",
+    }
+
+    with pytest.raises(ValueError, match="must be a boolean"):
+        split_atomic_source_input(json.dumps(payload))
 
 
 @pytest.mark.parametrize("period_kind", ["month", "benefit_week"])
@@ -282,6 +315,7 @@ def test_split_atomic_source_input_cli_emits_normalized_object(
 
     assert capsys.readouterr().out == (
         '{"canonical_refresh_bundle":[],"primary_required_test_cases":[],'
+        '"require_complete_source_unit":true,'
         '"source_bundle":["us-ri/statute/44-30-1"]}\n'
     )
 

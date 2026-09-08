@@ -2128,7 +2128,7 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert inputs["source_bundle_json"] == {
         "description": (
             "JSON citation array, canonical_refresh_bundle object, or "
-            "atomic-source-transaction/v2 envelope for an independent refresh "
+            "atomic-source-transaction/v2/v3 envelope for an independent refresh "
             "transaction"
         ),
         "required": False,
@@ -2461,6 +2461,13 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert "--allowed-event-name workflow_dispatch" in command
     assert "--apply" in command
     assert "--require-complete-source-unit" in command
+    assert 'local require_complete_source_unit="${10:-true}"' in command
+    assert 'target_require_complete_source_unit="$(jq -r' in command
+    assert (
+        "scoped source-unit validation requires a normal source-bundle replacement"
+        in command
+    )
+    assert '"$target_require_complete_source_unit"' in command
     assert "--emit-final-rejected-candidate" in command
     assert '"$RUNNER_TEMP/generated/$output_lane/final-rejected-candidate"' in command
     assert 'mkdir -p "$RUNNER_TEMP/generated/$output_lane"' in command
@@ -2905,6 +2912,53 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     )
     assert steps.index(checksum_step) + 1 == steps.index(upload_step)
     assert steps.index(failure_upload_step) == len(steps) - 1
+
+
+def test_targeted_reencode_extracts_false_complete_source_scope() -> None:
+    jq = shutil.which("jq")
+    if jq is None:
+        pytest.skip("jq is required to execute the workflow extraction")
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/targeted-signed-reencode.yml").read_text()
+    )
+    command = next(
+        step["run"]
+        for step in workflow["jobs"]["encode"]["steps"]
+        if step.get("name") == "Encode, review, validate, and apply"
+    )
+    assignment_start = command.index("target_require_complete_source_unit=")
+    assignment_end = command.index(
+        "\n", command.index('<<< "$atomic_source_payload")', assignment_start)
+    )
+    assignment = command[assignment_start:assignment_end]
+    payload = json.dumps(
+        {
+            "canonical_refresh_bundle": [],
+            "primary_required_test_cases": [],
+            "require_complete_source_unit": False,
+            "source_bundle": ["us/guidance/usda/fns/example"],
+        }
+    )
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            "\n".join(
+                (
+                    "set -euo pipefail",
+                    f"atomic_source_payload={shlex.quote(payload)}",
+                    assignment,
+                    "printf '%s\\n' \"$target_require_complete_source_unit\"",
+                )
+            ),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == "false\n"
 
 
 @pytest.mark.parametrize(

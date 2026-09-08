@@ -39,7 +39,7 @@ on:
         required: false
         type: string
       source_bundle_json:
-        description: JSON citation array, canonical_refresh_bundle object, or atomic-source-transaction/v2 envelope for an independent refresh transaction
+        description: JSON citation array, canonical_refresh_bundle object, or atomic-source-transaction/v2/v3 envelope for an independent refresh transaction
         required: false
         default: "[]"
         type: string
@@ -1158,6 +1158,7 @@ jobs:
             local require_direct_imports="$7"
             local deferred_output_contracts_json="${8:-[]}"
             local required_test_cases_json="${9:-[]}"
+            local require_complete_source_unit="${10:-true}"
             local review_finding_path=""
             local review_contract_json=""
             local candidate_root=""
@@ -1176,10 +1177,20 @@ jobs:
               --emit-final-rejected-candidate \
                 "$RUNNER_TEMP/generated/$output_lane/final-rejected-candidate"
               --mode repo-augmented
-              --require-complete-source-unit
               --db "$RUNNER_TEMP/encodings.db"
               --apply
             )
+            case "$require_complete_source_unit" in
+              true)
+                args+=(--require-complete-source-unit)
+                ;;
+              false)
+                ;;
+              *)
+                echo "require_complete_source_unit must be true or false" >&2
+                exit 1
+                ;;
+            esac
             if [ "$target_only" = "true" ]; then
               args+=(--apply-target-only)
             fi
@@ -1448,6 +1459,8 @@ jobs:
             <<< "$atomic_source_payload")"
           primary_required_test_cases_json="$(jq -cer \
             '.primary_required_test_cases' <<< "$atomic_source_payload")"
+          target_require_complete_source_unit="$(jq -r \
+            '.require_complete_source_unit' <<< "$atomic_source_payload")"
           canonical_refresh_primary_required_test_cases_json="$primary_required_test_cases_json"
           if [ "$REPAIR_TESTS_ONLY" = "true" ]; then
             canonical_refresh_primary_required_test_cases_json="[]"
@@ -1540,6 +1553,16 @@ jobs:
           source_bundle_enabled=false
           if [ "$source_bundle_count" -gt 0 ]; then
             source_bundle_enabled=true
+          fi
+          if [ "$target_require_complete_source_unit" = "false" ] && \
+             { [ "$source_bundle_enabled" != "true" ] || \
+               [ -z "$REPLACE_RULESPEC_PATH" ] || \
+               [ -n "$REPLACE_LEGACY_RULESPEC_PATH" ] || \
+               [ -n "$DEPENDENT_CITATION" ] || \
+               [ -n "$SECOND_DEPENDENT_CITATION" ] || \
+               [ -n "$QUEUE_ID" ]; }; then
+            echo "scoped source-unit validation requires a normal source-bundle replacement" >&2
+            exit 1
           fi
           if [ "$source_bundle_enabled" = "true" ] && \
              [ -n "${REPAIR_RUN_ID:-}" ]; then
@@ -1715,7 +1738,8 @@ jobs:
                [ -z "$REPLACE_LEGACY_RULESPEC_PATH" ]; then
               run_signed_encode \
                 "$CITATION" "$REVIEW_FINDING" false target-preflight \
-                "$REPLACE_RULESPEC_PATH" "" false
+                "$REPLACE_RULESPEC_PATH" "" false "[]" "[]" \
+                "$target_require_complete_source_unit"
               "$workflow_python" "$backfill_helper" \
                 reconcile-retired-manifest-inventory \
                 "$RULESPEC_CHECKOUT" "$REPLACE_RULESPEC_PATH"
@@ -1761,7 +1785,8 @@ jobs:
                 target "$REPLACE_RULESPEC_PATH" \
                 "$REPLACE_LEGACY_RULESPEC_PATH" \
                 "$required_imports_enabled" "[]" \
-                "$primary_required_test_cases_json"
+                "$primary_required_test_cases_json" \
+                "$target_require_complete_source_unit"
             fi
 
             if { [ "$source_bundle_enabled" = "false" ] || \
