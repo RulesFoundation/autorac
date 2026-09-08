@@ -3667,8 +3667,12 @@ _HEBREW_SHARED_SCALE_WORD_PATTERN = re.compile(
 # not occur in the statute text these passes serve, and the same vav joins
 # clauses ("ההכנסה עומדת על 500 ו־2 ו־3 מיליון ישולמו"), which nothing in
 # the text tells apart. "או" alternatives and bounded ranges remain.
+# Nor does "או": an "או"-joined amount list ("1 או 2 מיליון") does not occur
+# in the statute text these passes serve, and the same "או" sets one amount
+# beside another ("הקנס הוא 500 או 3 מיליון"), which nothing in the text
+# tells apart. Bounded and explicit ranges remain.
 _HEBREW_SHARED_SCALE_JOIN_BEFORE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?P<join>לבין|ועד|עד|או|ל)(?:[\u05be-]\\s*|\\s+)$"
+    "(?<![\u0590-\u05ff])(?P<join>לבין|ועד|עד|ל)(?:[\u05be-]\\s*|\\s+)$"
 )
 # A noun that numbers the lower endpoint rather than counting it: "תוספת 2
 # עד מאה ועשרים אלף" is supplement 2, up to 120,000, and shares nothing.
@@ -3902,19 +3906,6 @@ def _iter_hebrew_shared_scale_range_matches(
         if _hebrew_operand_is_denominated(text, lower_span[0], lower_span[1]):
             # "בין ₪ 500 ל־3 מיליון": a denominated amount shares no scale.
             continue
-        if (
-            join is not None
-            and join.group("join") == "או"
-            and (
-                _hebrew_alternatives_are_compared(text, scale_match.end())
-                or _hebrew_singular_money_noun_governs(text, lower_span[0])
-            )
-        ):
-            # "סכום של 500 או 3 מיליון, לפי הנמוך", "סכום של 500 או 3
-            # מיליון": two quantities compared, or an amount a singular
-            # money noun governs, share no scale; "בסכומים של 1 או 2 מיליון"
-            # lists.
-            continue
         if needs_bound and (
             _search_before(_HEBREW_RANGE_LOWER_BOUND_PATTERN, text, lower_span[0], 16)
             is None
@@ -3959,69 +3950,10 @@ def _iter_hebrew_shared_scale_range_matches(
                 is_rate,
             )
         )
-        # Earlier alternatives share the scale too: "1, 2 או 3 מיליון",
-        # "אחד, שניים או שלושה מיליון". The walk back stops at a reference,
-        # a label noun, a complete amount and a bare start.
-        cursor = lower_span[0]
-        for _ in range(16):
-            earlier_join = _search_before(
-                _HEBREW_RANGE_WALK_JOIN_PATTERN, text, cursor, 12
-            )
-            if earlier_join is None:
-                break
-            earlier_flush = len(text[: earlier_join.start()].rstrip())
-            earlier_printed = _search_before(
-                _HEBREW_DIGITS_BEFORE_PATTERN, text, earlier_flush, 32
-            )
-            if earlier_printed is not None:
-                earlier_value = _hebrew_printed_endpoint_value(earlier_printed)
-                if (
-                    earlier_value is None
-                    or "," in earlier_printed.group(0)
-                    or abs(earlier_value) >= 1000
-                ):
-                    break
-                earlier_span = (earlier_printed.start(), earlier_flush)
-            else:
-                earlier_spelled = _hebrew_spelled_endpoint_before(
-                    text, earlier_flush, tokens
-                )
-                if earlier_spelled is None:
-                    break
-                earlier_span = (earlier_spelled[0], earlier_flush)
-                earlier_value = earlier_spelled[1]
-                if _hebrew_unary_sign_at(text, earlier_span[0] - 1):
-                    earlier_value = -earlier_value
-                    earlier_span = (earlier_span[0] - 1, earlier_flush)
-            if (
-                _span_overlaps(earlier_span, structural_spans)
-                or _hebrew_endpoint_continues_an_amount(text, earlier_span[0])
-                or _search_before(
-                    _HEBREW_SHARED_SCALE_LABEL_BEFORE_PATTERN, text, earlier_span[0], 24
-                )
-                is not None
-                or _search_before(
-                    _HEBREW_RANGE_WALK_STOP_PATTERN, text, earlier_span[0], 24
-                )
-                is not None
-            ):
-                break
-            if _hebrew_operand_is_denominated(text, earlier_span[0], earlier_span[1]):
-                break
-            if earlier_join.group(0).lstrip().startswith("או") and (
-                _hebrew_alternatives_are_compared(text, scale_match.end())
-                or _hebrew_singular_money_noun_governs(text, earlier_span[0])
-            ):
-                break
-            matches.append(
-                (
-                    earlier_span,
-                    earlier_value * scale / 100 if is_rate else earlier_value * scale,
-                    is_rate,
-                )
-            )
-            cursor = earlier_span[0]
     return matches
+
+
+# The whitespace before a vav-bound spelled remainder    return matches
 
 
 # The whitespace before a vav-bound spelled remainder ("3 מיליון ומאתיים אלף").
@@ -4649,52 +4581,27 @@ def _hebrew_currency_gap_character(character: str) -> bool:
     return character.isspace() or character in _HEBREW_BIDI_MARKS
 
 
-# Two alternatives compared ("X או Y, לפי הגבוה", "לפי הנמוך מביניהם") are
-# two quantities, whatever units they carry; the form is common in tax
-# statutes ("משכורת העובד או 32,000 שקלים חדשים, לפי הנמוך").
-_HEBREW_COMPARATIVE_AFTER_PATTERN = re.compile(
-    "לפי ה(?:גבוה|נמוך)(?:\\s+מביניהם)?|ה(?:גבוה|נמוך)\\s+מביניהם"
-)
-
-
-# A singular money noun governing the operand directly ("קנס של 50", "סכום
-# של 500", "בסך 500") states one amount; a plural ("בסכומים של 1 או 2
-# מיליון") introduces a list, and a rate word ("בשיעור של 125 או 150
-# אחוזים") a list of rates, so neither is matched here.
-_HEBREW_SINGULAR_MONEY_NOUN_GOVERNOR_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])[\u05d1\u05d4\u05d5\u05dc\u05e9\u05db]{0,2}"
-    "(?:קנס|סכום|תשלום|מענק|קצבה|פיצוי|עמלה|אגרה|שכר|משכורת|הכנסה|מחיר|עלות|"
-    "הוצאה|מחזור|חוב|היטל|פרמיה|מלגה|תמורה|רווח|שווי)"
-    # The construct connectors only: under a copula the subject's value is
-    # listed ("הסכום הוא 1 או 2 או 3 מיליון"), and the list shares.
-    "(?:\\s+(?:של|בסך|בסכום|בגובה))?\\s*$"
-)
+# An explicit rate word within reach before an "או" pair ("בשיעור של 125 או
+# 150 אחוזים", "שיעור המס יהיה 2 או 3 אחוזים", "הריבית תהיה 2 או 3 אחוזים")
+# is the one evidence that the bare alternative before "או" is a rate of
+# the pair; without it the number keeps its value ("קנס של 50 או 2%",
+# "הקנס יהיה 50 או 2%"). Money nouns, copulas and comparisons say nothing
+# either way, and the "או" rate pair does not occur in the statute text
+# these passes serve.
+# The window after the rate word admits a few tokens of any kind -- words,
+# earlier alternatives, their joins ("שיעור המס יהיה 1 או 2 או 3 אחוזים",
+# "בשיעור של 100 או 125 או 150 אחוזים"). "תוספת" is an addition of so many
+# percent when a rate follows it; as a schedule reference ("לפי תוספת 5,")
+# the comma before the pair keeps its number apart.
 _HEBREW_RATE_WORD_BEFORE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?:ב?שיעור|שיעורי|בשיעורי|בשיעורים|אחוז|אחוזים|ריבית|הריבית)"
-    "(?:\\s+של)?(?:\\s+[\u0590-\u05ff]+)?\\s*$"
+    "(?<![\u0590-\u05ff])(?:[\u05d1\u05d4\u05d5\u05dc\u05e9]{0,2}שיעור(?:ים|י)?|אחוז(?:ים)?|ה?ריבית"
+    "|[\u05d1\u05d4\u05d5\u05dc]{0,2}תוספת)"
+    "(?:\\s+[^\\s]+){0,6}\\s*$"
 )
 
 
-def _hebrew_singular_money_noun_governs(text: str, start: int) -> bool:
-    """Whether a singular money noun governs the number at ``start`` and no rate word does.
-
-    "קנס של 50 או 2% מהמחזור": the fine is an amount beside a rate. "בשיעור
-    של 125 או 150 אחוזים": a rate list, whatever noun stands further back.
-    """
-    if _search_before(_HEBREW_RATE_WORD_BEFORE_PATTERN, text, start, 40) is not None:
-        return False
-    return (
-        _search_before(_HEBREW_SINGULAR_MONEY_NOUN_GOVERNOR_PATTERN, text, start, 32)
-        is not None
-    )
-
-
-def _hebrew_alternatives_are_compared(text: str, unit_end: int) -> bool:
-    tail = text[unit_end : unit_end + 48]
-    match = _HEBREW_COMPARATIVE_AFTER_PATTERN.search(tail)
-    return match is not None and not any(
-        stop in tail[: match.start()] for stop in ".;\n"
-    )
+def _hebrew_rate_word_before(text: str, start: int) -> bool:
+    return _search_before(_HEBREW_RATE_WORD_BEFORE_PATTERN, text, start, 48) is not None
 
 
 def _hebrew_operand_is_denominated(text: str, start: int, end: int) -> bool:
@@ -4906,15 +4813,11 @@ def _iter_hebrew_percent_range_lower_matches(
         if (
             join is not None
             and join.group("free") == "או"
-            and (
-                _hebrew_alternatives_are_compared(text, noun.end())
-                or _hebrew_singular_money_noun_governs(text, lower_span[0])
-            )
+            and not _hebrew_rate_word_before(text, lower_span[0])
         ):
-            # "קנס של 500 או 2% מהמחזור, לפי הגבוה": two quantities compared
-            # share no unit; nor does an amount a singular money noun
-            # governs ("קנס של 50 או 2% מהמחזור"). A rate list keeps its
-            # rates however large ("בשיעור של 125 או 150 אחוזים").
+            # "קנס של 50 או 2% מהמחזור", "הקנס יהיה 50 או 2%": without a rate
+            # word before the pair the number before "או" keeps its value;
+            # "בשיעור של 125 או 150 אחוזים" shares, however large the rates.
             continue
         if (
             needs_bound
@@ -5007,10 +4910,9 @@ def _iter_hebrew_percent_range_lower_matches(
                 break
             if _hebrew_operand_is_denominated(text, earlier_span[0], earlier_span[1]):
                 break
-            if earlier_join.group(0).lstrip().startswith("או") and (
-                _hebrew_alternatives_are_compared(text, noun.end())
-                or _hebrew_singular_money_noun_governs(text, earlier_span[0])
-            ):
+            if earlier_join.group(0).lstrip().startswith(
+                "או"
+            ) and not _hebrew_rate_word_before(text, earlier_span[0]):
                 break
             matches.append((earlier_span, earlier_value / 100))
             cursor = earlier_span[0]
