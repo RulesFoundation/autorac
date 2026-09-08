@@ -18717,6 +18717,82 @@ def test_a_heading_is_no_condition_and_no_other_predicate():
     )
 
 
+def test_a_construct_chain_heads_the_list():
+    # Review round 105 on #1585: the construct nouns of the unit's kind
+    # stand between the plural noun and its copula, definite or not; a verb
+    # or a preposition never does.
+    for text, expected in (
+        ("שיעורי דמי הביטוח הם 10, 20 ו־30 אחוזים.", {0.1, 0.2, 0.3}),
+        ("שיעורי דמי ביטוח לאומי הם 10, 20 ו־30 אחוזים.", {0.1, 0.2, 0.3}),
+        (
+            "סכומי דמי הביטוח הם 1, 2 ו־3 מיליון שקלים.",
+            {1_000_000.0, 2_000_000.0, 3_000_000.0},
+        ),
+        ("השיעורים יחולו על ההכנסה של 500 ו־2% ממנה ינוכו.", {500.0, 0.02}),
+        (
+            "הקנסות ייגזרו מתשלום של 500, 2 או 3 מיליון שקלים ישולמו כמענק.",
+            {500.0, 2_000_000.0, 3_000_000.0},
+        ),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
+def test_a_completed_condition_leaves_the_list_headed():
+    # Review round 105 on #1585: a condition closed by a comma before the
+    # heading's own segment governs nothing in it.
+    for text, expected in (
+        (
+            "לעניין זה, אם ההכנסה נמוכה, השיעורים הם 10, 20 ו־30 אחוזים.",
+            {0.1, 0.2, 0.3},
+        ),
+        (
+            "אם ההכנסה נמוכה, הסכומים הם 1, 2 ו־3 מיליון שקלים.",
+            {1_000_000.0, 2_000_000.0, 3_000_000.0},
+        ),
+        (
+            "לעניין זה, כאשר התשלומים הם 500, 2 או 3 מיליון שקלים ישולמו כמענק.",
+            {500.0, 2_000_000.0, 3_000_000.0},
+        ),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
+def test_a_soft_wrap_inside_a_headed_list_is_whitespace():
+    # Review round 105 on #1585: a line wrap after a comma or the copula is
+    # whitespace inside the list; any other newline, a blank line included,
+    # ends the clause.
+    amounts = {1_000_000.0, 2_000_000.0, 3_000_000.0}
+    for text, expected in (
+        ("הסכומים הם 1,\n2 ו־3 מיליון שקלים.", amounts),
+        ("הסכומים הם\n1, 2 ו־3 מיליון שקלים.", amounts),
+        ("השיעורים הם 10,\n20 ו־30 אחוזים.", {0.1, 0.2, 0.3}),
+        ("הסכומים הם 1\n2 ו־3 מיליון שקלים.", {1.0, 2.0, 3_000_000.0}),
+        ("הסכומים הם 1,\n\n2 ו־3 מיליון שקלים.", {1.0, 2.0, 3_000_000.0}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
+def test_headed_thousand_plus_rate_multipliers_share_the_scale():
+    # Review round 105 on #1585: under a heading a thousand-plus or grouped
+    # multiplier shares the scale of a rate list too; the percentage pass
+    # leaves it to the shared-scale pass.
+    for text, expected in (
+        ("השיעורים הם 900, 1000 ו־1100 אלפים אחוזים.", {9_000.0, 10_000.0, 11_000.0}),
+        (
+            "השיעורים הם 1,500, 2,000 ו־2,500 אלפים אחוזים.",
+            {15_000.0, 20_000.0, 25_000.0},
+        ),
+        ("השיעורים הם 900, 1000 ו־1100 אחוזים.", {9.0, 10.0, 11.0}),
+        ("בין 1,000 ל־2,000 אחוזים", {10.0, 20.0}),
+        ("בין 2,000 ל־3 אלפים אחוזים", {20.0, 30.0}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

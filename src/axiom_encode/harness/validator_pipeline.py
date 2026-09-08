@@ -4746,11 +4746,18 @@ def _hebrew_rate_word_before(text: str, start: int) -> bool:
 # nothing, a bare plural copula ("ההכנסות הן 500 ו־2 ו־3%") is no such noun,
 # and a conditional clause ("אם התשלומים הם 500, 2 או 3%") states a condition.
 _HEBREW_LIST_COPULAS = "הם|הן|יהיו|תהיינה|הינם|הינן|של|כדלקמן:?|הבאים:?|הבאות:?"
-# Between the plural noun and its copula only a construct complement may
-# stand -- a definite noun ("שיעורי המס", "סכומי הקנס") or "מס"/"הכנסה"
-# ("שיעורי מס הכנסה") -- never a verb, so "הקנסות ייגזרו מתשלום של" and
-# "השיעורים יחושבו מהכנסה של" head nothing.
-_HEBREW_HEADING_COMPLEMENT = "(?:\\s+(?:\u05d4[\u0590-\u05ff]+|מס|הכנסה)){0,2}"
+# Between the plural noun and its copula only a construct chain may stand:
+# definite nouns ("שיעורי המס", "סכומי הקנס") and the construct nouns of the
+# unit's kind ("שיעורי מס הכנסה", "שיעורי דמי הביטוח", "סכומי דמי ביטוח
+# לאומי") -- never a verb or a preposition, so "הקנסות ייגזרו מתשלום של",
+# "השיעורים יחושבו מהכנסה של" and "השיעורים יחולו על ההכנסה של" head
+# nothing.
+_HEBREW_HEADING_CONSTRUCT_NOUNS = (
+    "מס|מסי|הכנסה|הכנסת|ביטוח|לאומי|בריאות|דמי|תשלומי|מענקי|סכומי|שיעורי|ריבית|היטל"
+)
+_HEBREW_HEADING_COMPLEMENT = (
+    "(?:\\s+(?:\u05d4[\u0590-\u05ff]+|" + _HEBREW_HEADING_CONSTRUCT_NOUNS + ")){0,3}"
+)
 _HEBREW_PLURAL_RATE_HEADING_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])(?:השיעורים|שיעורי|בשיעורים|שיעורים|הריביות|ריביות)"
     + _HEBREW_HEADING_COMPLEMENT
@@ -4766,14 +4773,24 @@ _HEBREW_PLURAL_AMOUNT_HEADING_PATTERN = re.compile(
     + _HEBREW_LIST_COPULAS
     + ")(?![\u0590-\u05ff])"
 )
-# A conditional marker anywhere between the clause start and the heading,
-# after a preamble ("לעניין זה, כאשר") or with a vav ("וכאשר"), states a
-# condition; "כש" is a prefix on the next word.
+# A conditional marker in the heading's own comma segment, after a preamble
+# ("לעניין זה, כאשר התשלומים הם") or with a vav ("וכאשר"), states a
+# condition; "כש" is a prefix on the next word. A condition completed before
+# the segment ("אם ההכנסה נמוכה, השיעורים הם 10, 20 ו־30 אחוזים") leaves the
+# list headed.
 _HEBREW_CONDITIONAL_CLAUSE_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])\u05d5?(?:אם|כאשר|ככל\\s+ש|במקרה\\s+ש|אילו|לכשיהיה)(?![\u0590-\u05ff])"
     "|(?<![\u0590-\u05ff])\u05d5?כש(?=[\u0590-\u05ff])"
 )
 _HEBREW_SENTENCE_STOP_CHARACTERS = frozenset(".;:\n")
+# A line wrap inside a list -- after a comma, a join or the heading's copula
+# ("הסכומים הם 1,\n2 ו־3 מיליון", "הסכומים הם\n1, 2 ו־3 מיליון") -- is
+# whitespace; any other newline, a blank line included, ends the clause, so
+# table rows and numbered paragraphs stay apart.
+_HEBREW_SOFT_WRAP_BEFORE_PATTERN = re.compile(
+    "(?:,|\u05d5\u05be|(?<![\u0590-\u05ff])(?:או|עד|ועד|לבין|"
+    "הם|הן|יהיו|תהיינה|הינם|הינן|של|כדלקמן:?|הבאים:?|הבאות:?)|:)[ \\t]*$"
+)
 
 
 _HEBREW_LIST_JOIN_WORDS = frozenset({"או", "עד", "ועד", "\u05d5"})
@@ -4847,6 +4864,21 @@ def _hebrew_list_heading_end(text: str, start: int, rate: bool) -> int | None:
         character = text[clause_start - 1]
         if character in _HEBREW_SENTENCE_STOP_CHARACTERS:
             if (
+                character == "\n"
+                and clause_start < len(text)
+                and (
+                    text[clause_start].isdigit()
+                    or "\u0590" <= text[clause_start] <= "\u05ff"
+                )
+                and _HEBREW_SOFT_WRAP_BEFORE_PATTERN.search(
+                    text, max(0, clause_start - 24), clause_start - 1
+                )
+                is not None
+            ):
+                # A soft wrap inside the list ("1,\n2 ו־3", "הם\n1, 2").
+                clause_start -= 1
+                continue
+            if (
                 character == "."
                 and clause_start >= 2
                 and clause_start < len(text)
@@ -4873,8 +4905,11 @@ def _hebrew_list_heading_end(text: str, start: int, rate: bool) -> int | None:
         heading = match
     if heading is None or not _hebrew_list_body_only(text, heading.end(), start):
         return None
+    segment_start = text.rfind(",", clause_start, heading.start()) + 1
     if (
-        _HEBREW_CONDITIONAL_CLAUSE_PATTERN.search(text, clause_start, heading.start())
+        _HEBREW_CONDITIONAL_CLAUSE_PATTERN.search(
+            text, max(clause_start, segment_start), heading.start()
+        )
         is not None
     ):
         return None
@@ -5080,7 +5115,9 @@ def _iter_hebrew_percent_range_lower_matches(
         # A lower endpoint is complete on its own when it is a printed
         # amount, a spelled number with a scale, or a grouped or
         # thousand-plus printed number ("בין 2,000 ל־3 אלפים אחוזים"); only
-        # a small bare number omits the upper endpoint's scale.
+        # a small bare number omits the upper endpoint's scale. Under a
+        # heading every printed member shares the scale ("השיעורים הם 900,
+        # 1000 ו־1100 אלפים אחוזים"), and the shared-scale pass reads it.
         lower_scaled = (
             lower_amount is not None
             or (
@@ -5094,6 +5131,12 @@ def _iter_hebrew_percent_range_lower_matches(
                 and (
                     "," in lower_digits.group(0)
                     or abs(_hebrew_printed_endpoint_value(lower_digits) or 0) >= 1000
+                )
+                and not (
+                    upper_scaled
+                    and _hebrew_vav_pair_is_coordinated(
+                        text, lower_digits.start(), True
+                    )
                 )
             )
         )
