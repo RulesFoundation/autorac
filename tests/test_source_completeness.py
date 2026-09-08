@@ -35545,14 +35545,20 @@ rules:
         "auf volle Euro zu runden",
     ],
 )
+@pytest.mark.parametrize(
+    "rounded_formula",
+    [
+        "floor(income * multiplier + 0.5)",
+        "floor(income * multiplier + (1 / 2))",
+    ],
+)
 def test_generic_german_rounding_requires_nearest_rounding_and_fractional_proof(
     rounding_text: str,
+    rounded_formula: str,
 ):
     source = f"(1) Der Betrag wird als Einkommen * 2 berechnet und ist {rounding_text}."
     unrounded = _single_rounding_content("income * multiplier")
-    rounded = _single_rounding_content(
-        "floor(income * multiplier + 0.5)",
-    )
+    rounded = _single_rounding_content(rounded_formula)
     fractional_case = {
         "name": "nearest fractional result",
         "period": "2026",
@@ -35590,6 +35596,100 @@ def test_generic_german_rounding_requires_nearest_rounding_and_fractional_proof(
     assert _has_issue(missing_operator, "rounding", "principal formula")
     assert _has_issue(missing_fractional_proof, "rounding", "fractional")
     assert not complete.issues
+
+
+def test_nearest_rounding_accepts_fractional_fixed_base_on_selected_branch():
+    source = (
+        "(1) For eligible household sizes up to 2, the amount is 8 percent "
+        "of the 298 dollar base, rounded to the nearest whole dollar."
+    )
+    content = """\
+format: rulespec/v1
+module:
+  source_verification:
+    corpus_citation_path: us/statute/7/2017/a
+rules:
+  - name: base_amount
+    kind: parameter
+    dtype: Money
+    source: us/statute/7/2017/a(1)
+    versions: [{formula: 298}]
+  - name: minimum_rate
+    kind: parameter
+    dtype: Rate
+    source: us/statute/7/2017/a(1)
+    versions: [{formula: 0.08}]
+  - name: rounded_amount
+    kind: derived
+    dtype: Money
+    source: us/statute/7/2017/a(1)
+    versions:
+      - formula: >-
+          if household_size <= 2:
+            floor(base_amount * minimum_rate + (1 / 2))
+          else:
+            0
+"""
+    test_cases = [
+        {
+            "name": "selected fractional branch",
+            "period": "2026",
+            "input": {"household_size": 2},
+            "output": {"rounded_amount": 24},
+        },
+        {
+            "name": "unselected branch",
+            "period": "2026",
+            "input": {"household_size": 3},
+            "output": {"rounded_amount": 0},
+        },
+    ]
+
+    result = _analyze(
+        content,
+        source,
+        corpus_citation_path="us/statute/7/2017/a",
+        test_cases=test_cases,
+        extract_numeric_occurrences=EN_NUMERIC_OCCURRENCE_EXTRACTOR,
+        extract_numeric_grounding_occurrences=(
+            EN_NUMERIC_GROUNDING_OCCURRENCE_EXTRACTOR
+        ),
+    )
+
+    assert not _has_issue(result, "rounding", "fractional"), "\n".join(result.issues)
+
+
+@pytest.mark.parametrize(
+    ("operand", "demonstrated_operand"),
+    [
+        ("amount + 0.5", "amount"),
+        ("0.5 + amount", "amount"),
+        ("amount + 0.5 + adjustment", "amount + adjustment"),
+        ("amount + (adjustment + (1 / 2))", "amount + adjustment"),
+    ],
+)
+def test_nearest_rounding_half_is_exact_and_addition_order_independent(
+    operand: str,
+    demonstrated_operand: str,
+):
+    assert (
+        completeness_module._rounding_demonstrated_operand(
+            operand,
+            direction="nearest",
+        )
+        == demonstrated_operand
+    )
+
+
+@pytest.mark.parametrize("offset", ["0.4999999999", "0.5000000001"])
+def test_nearest_rounding_rejects_near_half_offsets(offset: str):
+    assert (
+        completeness_module._rounding_demonstrated_operand(
+            f"amount + {offset}",
+            direction="nearest",
+        )
+        is None
+    )
 
 
 def test_estg_66_precise_absatz_3_deferral_suppresses_rounding_test_demand():
