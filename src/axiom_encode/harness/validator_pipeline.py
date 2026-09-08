@@ -3954,11 +3954,11 @@ def _iter_hebrew_shared_scale_range_matches(
             continue
         # "2 עד 3 אלפים אחוזים": the shared scale word carries a percent unit
         # too, and both endpoints are rates.
+        headed = unit_word_after and _hebrew_vav_pair_is_coordinated(
+            text, lower_span[0], is_rate
+        )
         list_coordinated = vav_join or comma_join
-        if list_coordinated and not (
-            unit_word_after
-            and _hebrew_vav_pair_is_coordinated(text, lower_span[0], is_rate)
-        ):
+        if list_coordinated and not headed:
             # "הסכומים הם 2 ו־3 מיליון שקלים, בהתאמה" shares; "ההכנסה עומדת על
             # 500 ו־2 ו־3 מיליון ישולמו" joins clauses.
             continue
@@ -3984,7 +3984,7 @@ def _iter_hebrew_shared_scale_range_matches(
                 is_rate,
             )
         )
-        if not list_coordinated and (join is None or join.group("join") != "או"):
+        if not headed and (join is None or join.group("join") != "או"):
             continue
         # Earlier alternatives share the unit too: "1 או 2 או 3 מיליון
         # שקלים". The walk back stops at a reference, a label noun, a
@@ -4001,7 +4001,7 @@ def _iter_hebrew_shared_scale_range_matches(
                     or earlier_join.group("comma") is not None
                 )
             elif (
-                list_coordinated
+                headed
                 and cursor > 0
                 and text[cursor] == "\u05d5"
                 and text[cursor - 1].isspace()
@@ -4010,9 +4010,9 @@ def _iter_hebrew_shared_scale_range_matches(
                 coordinated_crossing = True
             else:
                 break
-            if coordinated_crossing != list_coordinated or (
-                not coordinated_crossing
-                and not earlier_join.group(0).lstrip().startswith("או")
+            if not headed and (
+                coordinated_crossing
+                or not earlier_join.group(0).lstrip().startswith("או")
             ):
                 break
             earlier_printed = _search_before(
@@ -4054,7 +4054,7 @@ def _iter_hebrew_shared_scale_range_matches(
                 )
             ):
                 break
-            if list_coordinated and not _hebrew_vav_pair_is_coordinated(
+            if headed and not _hebrew_vav_pair_is_coordinated(
                 text, earlier_span[0], is_rate
             ):
                 break
@@ -4761,14 +4761,53 @@ _HEBREW_CONDITIONAL_CLAUSE_PATTERN = re.compile(
 _HEBREW_SENTENCE_STOP_CHARACTERS = frozenset(".;:\n")
 
 
+_HEBREW_LIST_JOIN_WORDS = frozenset({"או", "עד", "ועד", "\u05d5"})
+_HEBREW_LIST_INTRODUCERS = ("כדלקמן", "הבאים", "הבאות")
+
+
+def _hebrew_list_body_only(text: str, start: int, end: int) -> bool:
+    """Whether ``text[start:end]`` holds list items and joins alone.
+
+    Numbers, number words, scale words, percent nouns, currency words,
+    joins, commas and signs: "10, 20 ו־" is a list body, "10% ו־20%, הקנס
+    יהיה" is not.
+    """
+    for match in _HEBREW_WORD_TOKEN_PATTERN.finditer(text, start, end):
+        word = match.group(0).rstrip("\u05be")
+        bare = word[1:] if len(word) > 1 and word.startswith("\u05d5") else word
+        if (
+            word in _HEBREW_LIST_JOIN_WORDS
+            or _strip_hebrew_number_prefix(word, _HEBREW_RUN_START_VOCABULARY)
+            is not None
+            or word in _HEBREW_PRINTED_SCALE_VALUES
+            or bare in _HEBREW_PRINTED_SCALE_VALUES
+            or _hebrew_is_percent_noun(word)
+            or _hebrew_is_percent_noun(bare)
+            or word in _HEBREW_CURRENCY_WORDS
+            or bare in _HEBREW_CURRENCY_WORDS
+        ):
+            continue
+        return False
+    return True
+
+
 def _hebrew_list_heading_end(text: str, start: int, rate: bool) -> int | None:
-    """Where the heading of the coordinated list the number at ``start`` belongs to ends, or None."""
+    """Where the heading of the list the number at ``start`` belongs to ends, or None.
+
+    The clause runs back to a sentence stop, except the colon that
+    introduces a list ("כדלקמן:"); a conditional clause heads nothing; the
+    last plural noun of the unit's kind with its copula heads the list, and
+    only list items may stand between it and the number.
+    """
     clause_start = start
-    while (
-        clause_start > 0
-        and text[clause_start - 1] not in _HEBREW_SENTENCE_STOP_CHARACTERS
-        and start - clause_start < 160
-    ):
+    while clause_start > 0 and start - clause_start < 160:
+        character = text[clause_start - 1]
+        if character in _HEBREW_SENTENCE_STOP_CHARACTERS:
+            before = text[: clause_start - 1].rstrip()
+            if character == ":" and before.endswith(_HEBREW_LIST_INTRODUCERS):
+                clause_start -= 1
+                continue
+            break
         clause_start -= 1
     if _HEBREW_CONDITIONAL_CLAUSE_PATTERN.match(text, clause_start, start) is not None:
         return None
@@ -4780,6 +4819,8 @@ def _hebrew_list_heading_end(text: str, start: int, rate: bool) -> int | None:
     end: int | None = None
     for match in pattern.finditer(text, clause_start, start):
         end = match.end()
+    if end is None or not _hebrew_list_body_only(text, end, start):
+        return None
     return end
 
 
@@ -5033,10 +5074,9 @@ def _iter_hebrew_percent_range_lower_matches(
         if _hebrew_operand_is_denominated(text, lower_span[0], lower_span[1]):
             # "$500 או 2% מהמחזור": a denominated amount shares no unit.
             continue
+        headed = _hebrew_vav_pair_is_coordinated(text, lower_span[0], True)
         list_coordinated = vav_join or comma_join
-        if list_coordinated and not _hebrew_vav_pair_is_coordinated(
-            text, lower_span[0], True
-        ):
+        if list_coordinated and not headed:
             continue
         if (
             join is not None
@@ -5122,7 +5162,7 @@ def _iter_hebrew_percent_range_lower_matches(
                     or earlier_join.group("comma") is not None
                 )
             elif (
-                list_coordinated
+                headed
                 and cursor > 0
                 and text[cursor] == "\u05d5"
                 and text[cursor - 1].isspace()
@@ -5132,9 +5172,9 @@ def _iter_hebrew_percent_range_lower_matches(
                 coordinated_crossing = True
             else:
                 break
-            if coordinated_crossing != list_coordinated:
-                # A headed list joins by commas and vavs; an "או" list by
-                # "או" alone.
+            if not headed and coordinated_crossing:
+                # An unheaded list joins by "או" alone; a headed list by any
+                # connector within its body.
                 break
             earlier_digits = _search_before(
                 _HEBREW_DIGITS_BEFORE_PATTERN, text, earlier_end, 32
@@ -5183,7 +5223,7 @@ def _iter_hebrew_percent_range_lower_matches(
                 and not _hebrew_rate_word_before(text, earlier_span[0])
             ):
                 break
-            if list_coordinated and not _hebrew_vav_pair_is_coordinated(
+            if headed and not _hebrew_vav_pair_is_coordinated(
                 text, earlier_span[0], True
             ):
                 # The heading bounds the list: an item before it is no item.
