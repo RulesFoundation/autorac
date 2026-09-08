@@ -1459,7 +1459,7 @@ jobs:
             <<< "$atomic_source_payload")"
           primary_required_test_cases_json="$(jq -cer \
             '.primary_required_test_cases' <<< "$atomic_source_payload")"
-          target_require_complete_source_unit="$(jq -er \
+          target_require_complete_source_unit="$(jq -r \
             '.require_complete_source_unit' <<< "$atomic_source_payload")"
           canonical_refresh_primary_required_test_cases_json="$primary_required_test_cases_json"
           if [ "$REPAIR_TESTS_ONLY" = "true" ]; then
