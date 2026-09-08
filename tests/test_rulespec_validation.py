@@ -19308,6 +19308,50 @@ def test_agreement_tells_an_adjective_from_the_consequents_verb():
         assert extract_numbers_from_text(text) == expected, text
 
 
+def test_the_definite_subject_tells_the_consequents_verb():
+    # Review round 115 on #1585: a singular consequent verb is followed by
+    # its definite subject; an adjective or a construct complement is not,
+    # and a lexical ש-word opens no relative clause.
+    rates = {0.1, 0.2, 0.3}
+    amounts = {1_000_000.0, 2_000_000.0, 3_000_000.0}
+    split = {500.0, 2_000_000.0, 3_000_000.0}
+    for text, expected in (
+        (
+            "אם התשלומים הם 500, 2 או 3 מיליון שקלים לעובד ישלם המעסיק, והיתרה תוחזר.",
+            split,
+        ),
+        (
+            "אם התשלומים הם 500, 2 או 3 מיליון שקלים לעובד תשלם הרשות, והיתרה תוחזר.",
+            split,
+        ),
+        (
+            "אם התשלומים הם 500, 2 או 3 מיליון שקלים ישית בית המשפט כקנס, והיתרה תוחזר.",
+            split,
+        ),
+        (
+            "אם התשלומים הם 500, 2 או 3 מיליון שקלים לעובד שכיר ישולמו כמענק, והיתרה תוחזר.",
+            split,
+        ),
+        (
+            "אם התשלומים הם 500, 2 או 3 מיליון שקלים לעובד קבוע ישולמו כמענק, והיתרה תוחזר.",
+            split,
+        ),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מדמי אבטלה, תחול ההוראה.", rates),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מדמי אבטלה חלקיים, תחול ההוראה.", rates),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסת יחיד, תחול ההוראה.", rates),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסות ייצור, תחול ההוראה.", rates),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה יומית, תחול ההוראה.", rates),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים ממס ישיר, תחול ההוראה.", rates),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים אשר נקבעו בצו, ישולם מענק.", amounts),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים שנקבעו בצו, ישולם מענק.", amounts),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים ששולמו לעובד, ישולם מענק.", amounts),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים שהמעסיק שילם, ישולם מענק.", amounts),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים לשכר שנתי, ישולם מענק.", amounts),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

@@ -4991,30 +4991,40 @@ def _hebrew_list_body_end(text: str, start: int) -> int:
 # Within a condition the comma before the consequent is the one after the
 # condition, so a headed list inside the condition is followed by that
 # comma, a clause separator or a list tail, with at most modifiers of the
-# unit between ("אחוזים מהכנסה נמוכה, תחול ההוראה", "אחוזים מההכנסה נטו,
+# unit between ("אחוזים מהכנסה נמוכה, תחול ההוראה", "אחוזים מדמי אבטלה,
 # תחול ההוראה", "שקלים מסוימים, ישולם מענק"); a list the consequent
 # swallowed runs on to the sentence end with words between and no comma
 # ("שקלים משולמים כמענק.") or shows the consequent's verb before the comma
-# ("שקלים ישולמו כמענק, והיתרה תוחזר", "שקלים חדשים ישלם המעסיק, והיתרה
-# תוחזר", "שקלים חדשים תשלם הרשות, והיתרה תוחזר"). Agreement tells the verb
-# from an adjective: an adjective agrees with the noun before it in gender
-# and number ("שקלים נוספים", "מהכנסה יומית", "ממס ישיר"), while the
-# consequent's verb agrees with its own subject, not with the word before
-# it ("חדשים ישלם", "חדשים תשלם", "שקלים ישית"), and a plural future verb
-# ends in ו, as no adjective does ("שקלים ישולמו", "לעובד ישולמו"). Only a
-# verb-shaped word -- beginning in י, ת, נ or א -- is read at all, an
-# indeclinable adverb, a demonstrative, a function word or a proper noun
-# (נטו, אלה, אשר, ישראל) never, and a relative clause ("אשר נקבעו בצו")
-# carries its own verb.
+# ("שקלים ישולמו כמענק, והיתרה תוחזר", "שקלים לעובד ישלם המעסיק, והיתרה
+# תוחזר", "שקלים חדשים תשלם הרשות, והיתרה תוחזר"). What follows a
+# verb-shaped word -- one beginning in י, ת, נ or א -- tells the verb: a
+# plural future verb ends in ו, as no adjective does ("ישולמו"), and a
+# singular one is followed by its definite subject ("ישלם המעסיק", "תשלם
+# הרשות", "ישית בית המשפט"), which no adjective ("מהכנסה יומית,", "ממס
+# ישיר,") and no construct complement ("מדמי אבטלה,", "מהכנסת יחיד,")
+# is. A plural ending (ים, ות) is agreement with the noun before, never a
+# verb; an indeclinable adverb, a demonstrative, a function word or a
+# proper noun (נטו, אלה, אשר, ישראל) is never read; and a relative clause
+# carries its own verb -- "אשר", or ש before the article ("שהמעסיק"), a
+# verb-shaped word ("שנקבע", "שיחול") or a past plural ("ששולמו"), the
+# lexical ש-words (שכיר, שוטף, שנתי) excepted.
 _HEBREW_RELATIVE_MARKER_PATTERN = re.compile(
-    "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?:אשר|(?!של(?![\u0590-\u05ff]))\u05e9[\u0590-\u05ff]{2,})"
-    "(?![\u0590-\u05ff])"
+    "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?:אשר|(?!(?:של|שכיר|שכירה|שכירים|שוטף|שוטפת|שוטפים|שנתי|שנתית"
+    "|שנתיים|שקל|שקלים|שיעור|שיעורי|שיעורים|שכר|שלם|שלמה|שלמים|שנה|שנת|שני|שתי"
+    "|שלושה|שלוש|שבעה|שבע|שמונה|שישה|שש|שירות|שירותי)(?![\u0590-\u05ff]))"
+    "\u05e9(?:\u05d4[\u0590-\u05ff]+|[\u05d9\u05ea\u05e0\u05d0][\u0590-\u05ff]{2,}"
+    "|[\u0590-\u05ff]{2,}\u05d5))(?![\u0590-\u05ff])"
 )
 _HEBREW_VERB_SHAPED_WORD_PATTERN = re.compile(
     "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?!(?:נטו|ברוטו|נומינלי|נומינלית|נומינליים|אלו|אלה|אותם|אותן|אותו"
     "|אותה|יחד|יחדיו|יותר|נוסף|נוספת|אחר|אחרת|אחד|אחת|או|את|אם|אשר|אף|אך|אל|אפילו"
     "|אילו|איפוא|אולי|תוך|תחת|נגד|ישראל|ירושלים|יהודה|יבוא|יצוא)(?![\u0590-\u05ff]))"
     "\u05d5?(?P<word>[\u05d9\u05ea\u05e0\u05d0][\u0590-\u05ff]{2,})(?![\u0590-\u05ff])"
+)
+# The definite subject after a singular consequent verb: a definite noun
+# ("המעסיק", "הרשות") or a construct with one ("בית המשפט").
+_HEBREW_DEFINITE_SUBJECT_AFTER_PATTERN = re.compile(
+    "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]+(?:[\u0590-\u05ff]+[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]+)?\u05d4[\u0590-\u05ff]+(?![\u0590-\u05ff])"
 )
 _HEBREW_LIST_TAIL_WORD_PATTERN = re.compile(
     "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?<![\u0590-\u05ff])(?:בהתאמה|לפחות|בלבד|ומעלה|לכל\\s+היותר"
@@ -5032,33 +5042,21 @@ _HEBREW_UNIT_MODIFIER_PATTERN = re.compile(
     "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?:(?:של|על|לפי|לכל|בעד|לגבי|מן)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]+[\u0590-\u05ff]+"
     "|[\u0590-\u05ff]+)(?![\u0590-\u05ff])"
 )
-_HEBREW_LAST_WORD_PATTERN = re.compile("([\u0590-\u05ff]+)[^\u0590-\u05ff]*$")
 
 
-def _hebrew_agreement_class(word: str) -> str:
-    """The gender-and-number class a word's ending shows: mp, fp, fs or ms."""
-    if word.endswith("ים"):
-        return "mp"
-    if word.endswith("ות"):
-        return "fp"
-    if word.endswith(("\u05d4", "\u05ea")):
-        return "fs"
-    return "ms"
+def _hebrew_is_consequent_verb(text: str, verb: "re.Match[str]") -> bool:
+    """Whether the verb-shaped word ``verb`` matched is the consequent's verb.
 
-
-def _hebrew_is_consequent_verb(word: str, previous: str | None) -> bool:
-    """Whether a verb-shaped ``word`` is the consequent's verb after ``previous``.
-
-    A plural future verb ends in ו, as no adjective does; a plural ending
-    (ים, ות) is agreement with a plural noun, never a verb; otherwise the
-    verb disagrees with the word before it, the adjective agrees.
+    A plural future verb ends in ו; a plural ending (ים, ות) is agreement
+    with the noun before, never a verb; a singular verb is followed by its
+    definite subject, which no adjective or construct complement is.
     """
+    word = verb.group("word")
     if word.endswith("\u05d5"):
         return True
-    word_class = _hebrew_agreement_class(word)
-    if word_class in ("mp", "fp"):
+    if word.endswith(("ים", "ות")):
         return False
-    return previous is None or word_class != _hebrew_agreement_class(previous)
+    return _HEBREW_DEFINITE_SUBJECT_AFTER_PATTERN.match(text, verb.end()) is not None
 
 
 def _hebrew_list_ends_within_clause(text: str, body_end: int) -> bool:
@@ -5067,15 +5065,11 @@ def _hebrew_list_ends_within_clause(text: str, body_end: int) -> bool:
     A comma, a clause separator or a list tail after the unit, at most
     modifiers between, ends it there ("אחוזים מהכנסה נמוכה, תחול ההוראה");
     the sentence ending with words between and no comma ("שקלים משולמים
-    כמענק.") or the consequent's verb ("שקלים ישולמו כמענק", "שקלים חדשים
-    תשלם הרשות") is the clause running on.
+    כמענק.") or the consequent's verb ("שקלים ישולמו כמענק", "שקלים לעובד
+    ישלם המעסיק") is the clause running on.
     """
     position = body_end
     relative = False
-    previous_match = _HEBREW_LAST_WORD_PATTERN.search(
-        text, max(0, body_end - 40), body_end
-    )
-    previous = previous_match.group(1) if previous_match else None
     for _ in range(12):
         if _HEBREW_LIST_TAIL_WORD_PATTERN.match(text, position) is not None:
             return True
@@ -5087,14 +5081,11 @@ def _hebrew_list_ends_within_clause(text: str, body_end: int) -> bool:
             relative = True
         elif not relative:
             verb = _HEBREW_VERB_SHAPED_WORD_PATTERN.match(text, position)
-            if verb is not None and _hebrew_is_consequent_verb(
-                verb.group("word"), previous
-            ):
+            if verb is not None and _hebrew_is_consequent_verb(text, verb):
                 return False
         modifier = _HEBREW_UNIT_MODIFIER_PATTERN.match(text, position)
         if modifier is None:
             return False
-        previous = _HEBREW_WORD_TOKEN_PATTERN.findall(modifier.group(0))[-1]
         position = modifier.end()
     return False
 
