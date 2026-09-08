@@ -3672,7 +3672,7 @@ _HEBREW_SHARED_SCALE_WORD_PATTERN = re.compile(
 # beside another ("הקנס הוא 500 או 3 מיליון"), which nothing in the text
 # tells apart. Bounded and explicit ranges remain.
 _HEBREW_SHARED_SCALE_JOIN_BEFORE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?P<join>לבין|ועד|עד|ל)(?:[\u05be-]\\s*|\\s+)$"
+    "(?<![\u0590-\u05ff])(?P<join>לבין|ועד|עד|או|ל)(?:[\u05be-]\\s*|\\s+)$"
 )
 # A noun that numbers the lower endpoint rather than counting it: "תוספת 2
 # עד מאה ועשרים אלף" is supplement 2, up to 120,000, and shares nothing.
@@ -3837,7 +3837,8 @@ def _iter_hebrew_shared_scale_range_matches(
             _HEBREW_DIGITS_BEFORE_PATTERN, text, upper_end, 32
         )
         if printed_upper is not None:
-            if _hebrew_printed_endpoint_value(printed_upper) is None:
+            upper_value = _hebrew_printed_endpoint_value(printed_upper)
+            if upper_value is None:
                 continue
             upper_start = printed_upper.start()
         else:
@@ -3845,6 +3846,17 @@ def _iter_hebrew_shared_scale_range_matches(
             if spelled_upper is None:
                 continue
             upper_start = spelled_upper[0]
+            upper_value = spelled_upper[1]
+        # The unit is read after the whole upper endpoint, remainder
+        # included: "בין 2 ל־3 אלפים ומאתיים אחוזים" runs from twenty. A
+        # unit word after it -- a currency word or a percent noun --
+        # distributes over "או"; a bare scale word does not.
+        upper_tail = _hebrew_continuation_after(
+            text, scale_match.end(), scale, False, judge=False
+        )
+        upper_end_whole = upper_tail[1] if upper_tail is not None else scale_match.end()
+        is_rate = _hebrew_percent_unit_after(text, upper_end_whole) is not None
+        unit_word_after = _hebrew_unit_word_after(text, upper_end_whole)
         if _hebrew_unary_sign_at(text, upper_start - 1):
             # "−שלושה עד −שניים אלפים": the upper endpoint's sign is its
             # own; the join stands before it.
@@ -3936,13 +3948,15 @@ def _iter_hebrew_shared_scale_range_matches(
             continue
         # "2 עד 3 אלפים אחוזים": the shared scale word carries a percent unit
         # too, and both endpoints are rates.
-        # The shared unit is read after the whole upper endpoint, remainder
-        # included: "בין 2 ל־3 אלפים ומאתיים אחוזים" runs from twenty.
-        upper_tail = _hebrew_continuation_after(
-            text, scale_match.end(), scale, False, judge=False
-        )
-        upper_end = upper_tail[1] if upper_tail is not None else scale_match.end()
-        is_rate = _hebrew_percent_unit_after(text, upper_end) is not None
+        if join is not None and join.group("join") == "או" and not unit_word_after:
+            # "הקנס הוא 500 או 3 מיליון.", "סכום של 500 או 3 מיליון": a bare
+            # scale word does not distribute; "2 או 3 מיליון שקלים" and "1
+            # או 2 או 3 אלפים אחוזים" share.
+            continue
+        if (join is None or join.group("join") != "או") and lower_value >= upper_value:
+            # A range ascends: "בין 500 ל־3 מיליון" runs from 500 shekels,
+            # not from five hundred million.
+            continue
         matches.append(
             (
                 lower_span,
@@ -3950,6 +3964,68 @@ def _iter_hebrew_shared_scale_range_matches(
                 is_rate,
             )
         )
+        if join is None or join.group("join") != "או":
+            continue
+        # Earlier alternatives share the unit too: "1 או 2 או 3 מיליון
+        # שקלים". The walk back stops at a reference, a label noun, a
+        # complete amount, a denominated amount and a bare start.
+        cursor = lower_span[0]
+        for _ in range(16):
+            earlier_join = _search_before(
+                _HEBREW_RANGE_WALK_JOIN_PATTERN, text, cursor, 12
+            )
+            if earlier_join is None or not earlier_join.group(0).lstrip().startswith(
+                "או"
+            ):
+                break
+            earlier_flush = len(text[: earlier_join.start()].rstrip())
+            earlier_printed = _search_before(
+                _HEBREW_DIGITS_BEFORE_PATTERN, text, earlier_flush, 32
+            )
+            if earlier_printed is not None:
+                earlier_value = _hebrew_printed_endpoint_value(earlier_printed)
+                if (
+                    earlier_value is None
+                    or "," in earlier_printed.group(0)
+                    or abs(earlier_value) >= 1000
+                ):
+                    break
+                earlier_span = (earlier_printed.start(), earlier_flush)
+            else:
+                earlier_spelled = _hebrew_spelled_endpoint_before(
+                    text, earlier_flush, tokens
+                )
+                if earlier_spelled is None:
+                    break
+                earlier_span = (earlier_spelled[0], earlier_flush)
+                earlier_value = earlier_spelled[1]
+                if _hebrew_unary_sign_at(text, earlier_span[0] - 1):
+                    earlier_value = -earlier_value
+                    earlier_span = (earlier_span[0] - 1, earlier_flush)
+            if (
+                _span_overlaps(earlier_span, structural_spans)
+                or _hebrew_endpoint_continues_an_amount(text, earlier_span[0])
+                or _search_before(
+                    _HEBREW_SHARED_SCALE_LABEL_BEFORE_PATTERN, text, earlier_span[0], 24
+                )
+                is not None
+                or _search_before(
+                    _HEBREW_RANGE_WALK_STOP_PATTERN, text, earlier_span[0], 24
+                )
+                is not None
+                or _hebrew_operand_is_denominated(
+                    text, earlier_span[0], earlier_span[1]
+                )
+            ):
+                break
+            matches.append(
+                (
+                    earlier_span,
+                    earlier_value * scale / 100 if is_rate else earlier_value * scale,
+                    is_rate,
+                )
+            )
+            cursor = earlier_span[0]
     return matches
 
 
@@ -4581,27 +4657,44 @@ def _hebrew_currency_gap_character(character: str) -> bool:
     return character.isspace() or character in _HEBREW_BIDI_MARKS
 
 
-# An explicit rate word within reach before an "או" pair ("בשיעור של 125 או
-# 150 אחוזים", "שיעור המס יהיה 2 או 3 אחוזים", "הריבית תהיה 2 או 3 אחוזים")
-# is the one evidence that the bare alternative before "או" is a rate of
-# the pair; without it the number keeps its value ("קנס של 50 או 2%",
-# "הקנס יהיה 50 או 2%"). Money nouns, copulas and comparisons say nothing
-# either way, and the "או" rate pair does not occur in the statute text
-# these passes serve.
-# The window after the rate word admits a few tokens of any kind -- words,
-# earlier alternatives, their joins ("שיעור המס יהיה 1 או 2 או 3 אחוזים",
-# "בשיעור של 100 או 125 או 150 אחוזים"). "תוספת" is an addition of so many
-# percent when a rate follows it; as a schedule reference ("לפי תוספת 5,")
-# the comma before the pair keeps its number apart.
+# A unit word distributes over "או"; a sign or a bare scale word does not.
+# "125 או 150 אחוזים" and "2 או 3 מיליון שקלים" share their unit, "50 או 2%"
+# and "500 או 3 מיליון" set one quantity beside another -- the reading every
+# reviewed case takes, and the one the text itself carries. An explicit rate
+# word in the same clause before the pair ("בשיעור של 2 או 3%") makes a
+# signed pair share too.
 _HEBREW_RATE_WORD_BEFORE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?:[\u05d1\u05d4\u05d5\u05dc\u05e9]{0,2}שיעור(?:ים|י)?|אחוז(?:ים)?|ה?ריבית"
-    "|[\u05d1\u05d4\u05d5\u05dc]{0,2}תוספת)"
-    "(?:\\s+[^\\s]+){0,6}\\s*$"
+    "(?<![\u0590-\u05ff])(?:[\u05d1\u05d4\u05d5\u05dc\u05e9]{0,2}שיעור(?:ים|י)?|אחוז(?:ים)?|ה?ריבית)"
+    "(?:\\s+[^\\s.;:\\n]+){0,6}\\s*$"
 )
+_HEBREW_CLAUSE_STOP_CHARACTERS = frozenset(".;:\n")
 
 
 def _hebrew_rate_word_before(text: str, start: int) -> bool:
-    return _search_before(_HEBREW_RATE_WORD_BEFORE_PATTERN, text, start, 48) is not None
+    """An explicit rate word before ``start``, within the same clause."""
+    clause_start = start
+    while (
+        clause_start > 0
+        and text[clause_start - 1] not in _HEBREW_CLAUSE_STOP_CHARACTERS
+    ):
+        clause_start -= 1
+        if start - clause_start > 48:
+            break
+    return (
+        _HEBREW_RATE_WORD_BEFORE_PATTERN.search(text, clause_start, start) is not None
+    )
+
+
+def _hebrew_unit_word_after(text: str, end: int) -> bool:
+    """A currency word or a percent noun right after ``end``: a unit that distributes over "או"."""
+    after = end
+    while after < len(text) and _hebrew_currency_gap_character(text[after]):
+        after += 1
+    word = _HEBREW_WORD_TOKEN_PATTERN.match(text, after)
+    if word is None:
+        return False
+    token = word.group(0)
+    return token in _HEBREW_CURRENCY_WORDS or _hebrew_is_percent_noun(token)
 
 
 def _hebrew_operand_is_denominated(text: str, start: int, end: int) -> bool:
@@ -4679,6 +4772,7 @@ def _iter_hebrew_percent_range_lower_matches(
     # endpoint is read whole. Built once, at the first noun.
     printed_amounts: dict[int, tuple[int, float]] = {}
     printed_rates: list[tuple[int, int]] = []
+    printed_rate_values: dict[int, float] = {}
     rate_starts: list[int] = []
     for noun in _HEBREW_PERCENT_NOUN_ANYWHERE_PATTERN.finditer(text):
         if tokens is None:
@@ -4686,6 +4780,7 @@ def _iter_hebrew_percent_range_lower_matches(
             for span, value, is_rate in _iter_hebrew_printed_scale_matches(text):
                 if is_rate:
                     printed_rates.append(span)
+                    printed_rate_values[span[0]] = value * 100
                 elif span[1] not in printed_amounts and any(
                     word in _HEBREW_PRINTED_SCALE_VALUES
                     for word in text[span[0] : span[1]].split()
@@ -4703,16 +4798,19 @@ def _iter_hebrew_percent_range_lower_matches(
         upper_scaled = False
         rate_index = bisect.bisect_right(rate_starts, noun.start()) - 1
         digits = _search_before(_HEBREW_DIGITS_BEFORE_PATTERN, text, noun.start(), 32)
+        upper_percent: float | None = None
         if rate_index >= 0 and printed_rates[rate_index][1] > noun.start():
             upper_start = printed_rates[rate_index][0]
             upper_scaled = True
+            upper_percent = printed_rate_values.get(upper_start)
         elif digits is not None:
             upper_start = digits.start()
+            upper_percent = _hebrew_printed_endpoint_value(digits)
         else:
             spelled = _hebrew_number_run_ending_at(text, noun.start(), tokens, True)
             if spelled is None:
                 continue
-            upper_start, _value, upper_first = spelled
+            upper_start, upper_percent, upper_first = spelled
             # A spelled endpoint with a scale of its own ("לשלושת אלפים
             # ומאתיים אחוזים", "אלפיים") is scaled as a printed one is.
             upper_scaled = _hebrew_spelled_span_carries_a_scale(
@@ -4813,11 +4911,21 @@ def _iter_hebrew_percent_range_lower_matches(
         if (
             join is not None
             and join.group("free") == "או"
+            and "%" in noun.group(0)
             and not _hebrew_rate_word_before(text, lower_span[0])
         ):
-            # "קנס של 50 או 2% מהמחזור", "הקנס יהיה 50 או 2%": without a rate
-            # word before the pair the number before "או" keeps its value;
-            # "בשיעור של 125 או 150 אחוזים" shares, however large the rates.
+            # "קנס של 50 או 2% מהמחזור", "הקנס יהיה 50 או 2%": a sign does not
+            # distribute, so the number before "או" keeps its value unless a
+            # rate word in the clause makes the pair rates ("בשיעור של 2 או
+            # 3%"). The noun distributes: "תשלום של 125 או 150 אחוזים".
+            continue
+        if (
+            join is not None
+            and join.group("free") != "או"
+            and upper_percent is not None
+            and lower_value >= upper_percent
+        ):
+            # A range ascends: "בין 500 ל־3 אחוזים" is no range of rates.
             continue
         if (
             needs_bound
@@ -4910,9 +5018,11 @@ def _iter_hebrew_percent_range_lower_matches(
                 break
             if _hebrew_operand_is_denominated(text, earlier_span[0], earlier_span[1]):
                 break
-            if earlier_join.group(0).lstrip().startswith(
-                "או"
-            ) and not _hebrew_rate_word_before(text, earlier_span[0]):
+            if (
+                earlier_join.group(0).lstrip().startswith("או")
+                and "%" in noun.group(0)
+                and not _hebrew_rate_word_before(text, earlier_span[0])
+            ):
                 break
             matches.append((earlier_span, earlier_value / 100))
             cursor = earlier_span[0]
