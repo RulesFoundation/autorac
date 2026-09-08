@@ -47167,6 +47167,102 @@ rules:
         )
         assert overlay_pipeline.validate.call_count == 2
 
+    def test_dependent_regression_validation_normalizes_overlay_and_baseline_roots(
+        self, tmp_path
+    ):
+        from axiom_encode.cli import (
+            _DEPENDENT_BASELINE_DEBT_ATTR,
+            _DependentRegressionPipeline,
+        )
+
+        baseline_root = tmp_path / "baseline" / "rulespec-us" / "us"
+        overlay_root = tmp_path / "overlay" / "rulespec-us" / "us"
+        relative = Path("policies/usda/snap/state-plan-composition.yaml")
+        baseline_path = baseline_root / relative
+        overlay_path = overlay_root / relative
+        baseline_path.parent.mkdir(parents=True)
+        overlay_path.parent.mkdir(parents=True)
+        baseline_path.write_text("format: rulespec/v1\nrules: []\n")
+        overlay_path.write_text("format: rulespec/v1\nrules: []\n")
+
+        def failed(path):
+            issue = (
+                "Axiom rules engine compile failed: failed to load RuleSpec module "
+                f"`{path}`: atomic RuleSpec module must not declare module.kind"
+            )
+            return SimpleNamespace(
+                all_passed=False,
+                results={
+                    "compile": SimpleNamespace(
+                        passed=False,
+                        issues=[issue],
+                        error=issue,
+                    )
+                },
+            )
+
+        baseline_pipeline = MagicMock()
+        baseline_pipeline.validate.side_effect = lambda path, **_kwargs: failed(path)
+        overlay_pipeline = MagicMock()
+        overlay_pipeline.validate.side_effect = lambda path, **_kwargs: failed(path)
+        pipeline = _DependentRegressionPipeline(
+            overlay_pipeline=overlay_pipeline,
+            baseline_pipeline=baseline_pipeline,
+            overlay_root=overlay_root,
+            baseline_root=baseline_root,
+        )
+
+        result = pipeline.validate(overlay_path, skip_reviewers=True)
+
+        assert result.all_passed is True
+        assert getattr(result, _DEPENDENT_BASELINE_DEBT_ATTR, False) is True
+
+    def test_dependent_regression_validation_still_blocks_different_root_relative_issue(
+        self, tmp_path
+    ):
+        from axiom_encode.cli import _DependentRegressionPipeline
+
+        baseline_root = tmp_path / "baseline" / "rulespec-us" / "us"
+        overlay_root = tmp_path / "overlay" / "rulespec-us" / "us"
+        relative = Path("policies/usda/snap/state-plan-composition.yaml")
+        baseline_path = baseline_root / relative
+        overlay_path = overlay_root / relative
+        baseline_path.parent.mkdir(parents=True)
+        overlay_path.parent.mkdir(parents=True)
+        baseline_path.write_text("format: rulespec/v1\nrules: []\n")
+        overlay_path.write_text("format: rulespec/v1\nrules: []\n")
+
+        def failed(issue):
+            return SimpleNamespace(
+                all_passed=False,
+                results={
+                    "compile": SimpleNamespace(
+                        passed=False,
+                        issues=[issue],
+                        error=None,
+                    )
+                },
+            )
+
+        baseline_pipeline = MagicMock()
+        baseline_pipeline.validate.return_value = failed(
+            f"failed to load `{baseline_path}`: legacy failure"
+        )
+        overlay_pipeline = MagicMock()
+        overlay_pipeline.validate.return_value = failed(
+            f"failed to load `{overlay_root / 'policies/new.yaml'}`: new failure"
+        )
+        pipeline = _DependentRegressionPipeline(
+            overlay_pipeline=overlay_pipeline,
+            baseline_pipeline=baseline_pipeline,
+            overlay_root=overlay_root,
+            baseline_root=baseline_root,
+        )
+
+        result = pipeline.validate(overlay_path, skip_reviewers=True)
+
+        assert result.all_passed is False
+
     def test_dependent_regression_validation_fails_closed_without_issues(
         self, tmp_path
     ):
