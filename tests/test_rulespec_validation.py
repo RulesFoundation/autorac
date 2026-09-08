@@ -19223,6 +19223,54 @@ def test_a_printed_tail_ends_at_a_paragraph_boundary():
             assert sum(expected) not in grounded, text
 
 
+def test_a_verb_after_a_modifier_opens_the_consequent():
+    # Review round 113 on #1585: after a modifier the third-person future
+    # a statute writes its consequents in is read, ת-final forms included;
+    # י-initial nouns and adjectives are not verbs.
+    rates = {0.1, 0.2, 0.3}
+    amounts = {1_000_000.0, 2_000_000.0, 3_000_000.0}
+    split = {500.0, 2_000_000.0, 3_000_000.0}
+    for text, expected in (
+        (
+            "אם התשלומים הם 500, 2 או 3 מיליון שקלים חדשים ישלם המעסיק, והיתרה תוחזר.",
+            split,
+        ),
+        (
+            "אם התשלומים הם 500, 2 או 3 מיליון שקלים ישית בית המשפט כקנס, והיתרה תוחזר.",
+            split,
+        ),
+        (
+            "אם הסכומים הם 1, 2 ו־3 מיליון שקלים לעובד ישולמו כמענק, והיתרה תוחזר.",
+            {1.0, 2.0, 3_000_000.0},
+        ),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים ממס ישיר, תחול ההוראה.", rates),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים לתושב ישראל, ישולם מענק.", amounts),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה נטו, תחול ההוראה.", rates),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים חדשים, ישולם מענק.", amounts),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
+def test_a_printed_number_joins_its_unit_across_a_wrap_only():
+    # Review round 113 on #1585: a scale word or a percent noun joins a
+    # printed number across a space or a single line wrap, never a blank
+    # line or a paragraph separator.
+    for text, expected, apart in (
+        ("הסף הוא 10\n\nמיליון שקלים ישולמו.", {10.0, 1_000_000.0}, 10_000_000.0),
+        ("הסף הוא 10 מיליון שקלים ישולמו.", {10.0, 1_000_000.0}, 10_000_000.0),
+        ("הסף הוא 10\nמיליון שקלים ישולמו.", {10_000_000.0}, None),
+        ("הסף הוא 10\n\nאחוזים מההכנסה.", {10.0}, 0.1),
+        ("הסף הוא 10\nאחוזים מההכנסה.", {0.1}, None),
+        ("הסף הוא 10% מההכנסה.", {0.1}, None),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        grounded = extract_numbers_from_text(text)
+        assert expected <= grounded, text
+        if apart is not None:
+            assert apart not in grounded, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

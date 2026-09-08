@@ -2079,11 +2079,15 @@ _HEBREW_NUMBER_PREFIX_LETTERS = "\u05d5\u05d4\u05d1\u05db\u05dc\u05de\u05e9"
 # character here: "שנים־עשר" is two tokens, joined the way "שנים-עשר" is.
 _HEBREW_WORD_TOKEN_PATTERN = re.compile("[\u0590-\u05bd\u05bf-\u05ff]+")
 _HEBREW_TEEN_JOIN_PATTERN = re.compile("^\\s*[-\u05be]\\s*$")
-_HEBREW_PERCENT_WORD_PATTERN = re.compile("\\s+\u05d4?אחוז(?:ים|י)?(?![\u0590-\u05ff])")
-_HEBREW_PERCENT_SIGN_AFTER_PATTERN = re.compile("\\s*%")
+_HEBREW_PERCENT_WORD_PATTERN = re.compile(
+    _WRAP_SPACE_FRAGMENT + "+\u05d4?אחוז(?:ים|י)?(?![\u0590-\u05ff])"
+)
+_HEBREW_PERCENT_SIGN_AFTER_PATTERN = re.compile(_WRAP_SPACE_FRAGMENT + "*%")
 # The percent noun may precede its count -- "אחוז אחד" is one percent.
 _HEBREW_PERCENT_NOUN_BEFORE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}\u05d4?אחוז(?:ים)?\\s+$"
+    "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}\u05d4?אחוז(?:ים)?"
+    + _WRAP_SPACE_FRAGMENT
+    + "+$"
 )
 
 
@@ -2723,7 +2727,11 @@ _HEBREW_FRACTION_OPERAND_AFTER_PATTERN = re.compile(
     + _HEBREW_FRACTION_BASE_AMOUNT_PATTERN.pattern
     # A percent noun or sign: "3 מיליון וחצי אחוז" is three million, and
     # half a percent.
-    + "|\\s+\u05d4?אחוז(?:ים|י)?(?![\u0590-\u05ff])|\\s*%"
+    + "|"
+    + _WRAP_SPACE_FRAGMENT
+    + "+\u05d4?אחוז(?:ים|י)?(?![\u0590-\u05ff])|"
+    + _WRAP_SPACE_FRAGMENT
+    + "*%"
     + ")"
 )
 
@@ -2933,7 +2941,13 @@ _HEBREW_DIGIT_PERCENT_PATTERN = re.compile(
     # the sign before a Hebrew fractional tail ("3% וחצי" is three and a
     # half percent). A bare number before a bare sign is the general digit
     # pass's.
-    "(?:\\s+אחוז(?:ים|י)?(?![\u0590-\u05ff])|(?(denominator)\\s*%|\\s*%(?=\\s+\u05d5(?:"
+    "(?:"
+    + _WRAP_SPACE_FRAGMENT
+    + "+אחוז(?:ים|י)?(?![\u0590-\u05ff])|(?(denominator)"
+    + _WRAP_SPACE_FRAGMENT
+    + "*%|"
+    + _WRAP_SPACE_FRAGMENT
+    + "*%(?=\\s+\u05d5(?:"
     + "|".join(
         re.escape(w)
         for w in sorted(_HEBREW_MIXED_FRACTION_VALUES, key=len, reverse=True)
@@ -2983,7 +2997,7 @@ _HEBREW_FRACTION_WORD_PATTERN = re.compile(
     "|ה?אחוז(?:ים|י)?(?![֐-׿]))"
     # The percent marker serves the fraction as the percent word does:
     # "חמישית%" is a fifth of a percent.
-    "|\\s*%)?"
+    "|" + _WRAP_SPACE_FRAGMENT + "*%)?"
     "(?P<loose_partitive>\\s+(?:של(?![֐-׿])|"
     + _HEBREW_NOT_A_PARTITIVE_LOOKAHEAD
     + "(?:מ|ה)[֐-׿]{2,}))?"
@@ -3109,8 +3123,12 @@ def _iter_hebrew_fraction_word_matches(
 # its words.
 _HEBREW_PERCENT_PHRASE_PATTERN = re.compile(
     "(?<![\u0590-\u05ff\\d.,])"
-    "(?:(?P<digits>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)\\s+"
-    "|(?:(?P<whole>\\d+)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]+)?(?P<numerator>\\d+)\\s*[/\u2044]\\s*(?P<denominator>\\d+)\\s+)?"
+    "(?:(?P<digits>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
+    + _WRAP_SPACE_FRAGMENT
+    + "+"
+    "|(?:(?P<whole>\\d+)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]+)?(?P<numerator>\\d+)\\s*[/\u2044]\\s*(?P<denominator>\\d+)"
+    + _WRAP_SPACE_FRAGMENT
+    + "+)?"
     "(?P<noun_prefix>[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2})"
     "(?P<noun>\u05d4?אחוז(?:ים)?)"
     "(?:"
@@ -3556,7 +3574,11 @@ _HEBREW_PRINTED_SCALE_PATTERN = re.compile(
     + "+(?P<tail_fraction>"
     + _HEBREW_PRINTED_SCALE_COUNTED
     + ")(?![\u0590-\u05ff])))?"
-    "\\s+(?P<scale>" + _HEBREW_PRINTED_SCALE_WORDS + ")(?![\u0590-\u05ff])"
+    ""
+    + _WRAP_SPACE_FRAGMENT
+    + "+(?P<scale>"
+    + _HEBREW_PRINTED_SCALE_WORDS
+    + ")(?![\u0590-\u05ff])"
     # A scaled tail after the scale word: a whole fraction word that does
     # not name its own operand (a lower scale word, a partitive, a
     # construct with an amount noun).
@@ -4231,7 +4253,7 @@ _HEBREW_PERCENT_TAIL_AFTER_PATTERN = re.compile(
 
 
 _HEBREW_PERCENT_MARKER_BEFORE_TAIL_PATTERN = re.compile(
-    "(?:%|(?<![\u0590-\u05ff])\u05d4?אחוז(?:ים|י)?)\\s+$"
+    "(?:%|(?<![\u0590-\u05ff])\u05d4?אחוז(?:ים|י)?)" + _WRAP_SPACE_FRAGMENT + "+$"
 )
 
 
@@ -4972,13 +4994,17 @@ def _hebrew_list_body_end(text: str, start: int) -> int:
 # unit between ("אחוזים מהכנסה נמוכה, תחול ההוראה", "אחוזים מההכנסה נטו,
 # תחול ההוראה", "שקלים מסוימים, ישולם מענק"); a list the consequent
 # swallowed runs on to the sentence end with words between and no comma
-# ("שקלים משולמים כמענק.") or begins the consequent with its verb right
-# after the unit ("שקלים ישולמו כמענק, והיתרה תוחזר", "שקלים ישלם המעסיק,
-# והיתרה תוחזר"). Only that one position is read for verb shape: an
-# adjective there agrees with the plural unit and ends in ים or ות
-# ("שקלים נוספים", "שקלים מסוימים"), a verb does not; a unit adverb or a
-# demonstrative (נטו, אלה) is neither. No word elsewhere is classified by
-# its letters, and a relative clause ("אשר נקבעו בצו") carries its own verb.
+# ("שקלים משולמים כמענק.") or shows the consequent's verb before the comma
+# ("שקלים ישולמו כמענק, והיתרה תוחזר", "שקלים חדשים ישלם המעסיק, והיתרה
+# תוחזר", "שקלים ישית בית המשפט כקנס, והיתרה תוחזר"). Right after the unit
+# a verb of any person is read: an adjective there agrees with the plural
+# unit and ends in ים or ות ("שקלים נוספים"), a verb does not, and a unit
+# adverb or a demonstrative (נטו, אלה) is neither. After a modifier only
+# the third-person future a statute writes its consequents in is read: a
+# word beginning in י that ends in neither ים, ות nor י, the י-initial
+# nouns and adjectives a statute uses (ישראל, ישיר, יבוא) excepted; no
+# other word is classified by its letters, and a relative clause ("אשר
+# נקבעו בצו") carries its own verb.
 _HEBREW_RELATIVE_MARKER_PATTERN = re.compile(
     "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?:אשר|(?!של(?![\u0590-\u05ff]))\u05e9[\u0590-\u05ff]{2,})"
     "(?![\u0590-\u05ff])"
@@ -4988,7 +5014,14 @@ _HEBREW_VERB_AFTER_UNIT_PATTERN = re.compile(
     "|יחד|יחדיו|יותר|נוסף|אחר|אחרת|אחד|אחת|או|את|אם|אשר|אף|אך|אל|אפילו|אילו|איפוא"
     "|אולי|תוך|תחת|נגד)(?![\u0590-\u05ff]))"
     "\u05d5?[\u05d9\u05ea\u05e0\u05d0]"
-    "(?![\u0590-\u05ff]*(?:ים|ות|\u05ea)(?![\u0590-\u05ff]))[\u0590-\u05ff]{2,}"
+    "(?![\u0590-\u05ff]*(?:ים|ות)(?![\u0590-\u05ff]))[\u0590-\u05ff]{2,}"
+    "(?![\u0590-\u05ff])"
+)
+_HEBREW_THIRD_PERSON_FUTURE_PATTERN = re.compile(
+    "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?!(?:ישראל|ישיר|ישירה|ישן|ישנה|יקר|יקרה|יחיד|יחידה|יחידת|ידוע"
+    "|ידועה|יעיל|יציב|יבוא|יצוא|יתרה|יתרת|יצרן|יבואן|יועץ|יזם|יין|יער|יום|יומו"
+    "|ילדו|ילדיו|ידיו|יחדיו|יורשו|יורשיו|יותר|יחד|יהודה|ירושלים)(?![\u0590-\u05ff]))"
+    "\u05d5?\u05d9(?![\u0590-\u05ff]*(?:ים|ות|\u05d9)(?![\u0590-\u05ff]))[\u0590-\u05ff]{2,}"
     "(?![\u0590-\u05ff])"
 )
 _HEBREW_LIST_TAIL_WORD_PATTERN = re.compile(
@@ -5015,7 +5048,7 @@ def _hebrew_list_ends_within_clause(text: str, body_end: int) -> bool:
     A comma, a clause separator or a list tail after the unit, at most
     modifiers between, ends it there ("אחוזים מהכנסה נמוכה, תחול ההוראה");
     the sentence ending with words between and no comma ("שקלים משולמים
-    כמענק.") or a verb right after the unit ("שקלים ישולמו כמענק", "שקלים
+    כמענק.") or the consequent's verb ("שקלים ישולמו כמענק", "שקלים חדשים
     ישלם המעסיק") is the clause running on.
     """
     position = body_end
@@ -5029,10 +5062,13 @@ def _hebrew_list_ends_within_clause(text: str, body_end: int) -> bool:
             return position == body_end
         if _HEBREW_RELATIVE_MARKER_PATTERN.match(text, position) is not None:
             relative = True
-        elif (
-            position == body_end
-            and not relative
-            and _HEBREW_VERB_AFTER_UNIT_PATTERN.match(text, position) is not None
+        elif not relative and (
+            (
+                _HEBREW_VERB_AFTER_UNIT_PATTERN
+                if position == body_end
+                else _HEBREW_THIRD_PERSON_FUTURE_PATTERN
+            ).match(text, position)
+            is not None
         ):
             return False
         modifier = _HEBREW_UNIT_MODIFIER_PATTERN.match(text, position)
