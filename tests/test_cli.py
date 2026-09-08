@@ -182,6 +182,7 @@ from axiom_encode.cli import (
     _resolve_encode_replacement_target,
     _resolve_explicit_policy_repo_for_corpus_source,
     _resolve_required_import_rulespec_paths,
+    _resolve_scheduled_proof_hash_dependents,
     _rewrite_generated_yaml_without_non_ascii_escapes,
     _rewrite_gpt_runner_backend,
     _rewrite_import_output_test_input_refs,
@@ -13189,6 +13190,9 @@ class TestCmdEncode:
             None,
         )
         args.apply_target_only = overrides.get("apply_target_only", False)
+        args.scheduled_dependent_rulespec_path = overrides.get(
+            "scheduled_dependent_rulespec_path", []
+        )
         args.allow_shrink = overrides.get("allow_shrink", False)
         return args
 
@@ -47890,6 +47894,58 @@ rules:
         assert issues == []
         assert supplemental == {}
         assert [path.name for path in validated_paths] == ["h.yaml"]
+
+    def test_scheduled_proof_hash_dependent_is_narrowly_authenticated(self, tmp_path):
+        content_root = tmp_path / "rulespec-us" / "us"
+        target = content_root / "policies/usda/snap/maximum.yaml"
+        scheduled = content_root / "statutes/7/2017/a.yaml"
+        ordinary = content_root / "regulations/7-cfr/273/10.yaml"
+        target.parent.mkdir(parents=True)
+        scheduled.parent.mkdir(parents=True)
+        ordinary.parent.mkdir(parents=True)
+        target.write_text("format: rulespec/v1\nrules: []\n")
+        scheduled.write_text(
+            """format: rulespec/v1
+imports:
+  - us:policies/usda/snap/maximum
+rules:
+  - name: allotment
+    metadata:
+      proof:
+        atoms:
+          - kind: import
+            import:
+              target: us:policies/usda/snap/maximum#maximum
+              hash: sha256:deadbeef
+"""
+        )
+        ordinary.write_text(
+            "format: rulespec/v1\n"
+            "imports:\n  - us:policies/usda/snap/maximum\n"
+            "rules: []\n"
+        )
+
+        resolved = _resolve_scheduled_proof_hash_dependents(
+            (Path("us/statutes/7/2017/a.yaml"),),
+            overlay_content_root=content_root,
+            dependents=[scheduled, ordinary],
+        )
+
+        assert resolved == {scheduled}
+        assert scheduled.read_text().endswith("hash: sha256:deadbeef\n")
+
+    def test_scheduled_dependent_without_stale_proof_hash_is_rejected(self, tmp_path):
+        content_root = tmp_path / "rulespec-us" / "us"
+        dependent = content_root / "regulations/7-cfr/273/10.yaml"
+        dependent.parent.mkdir(parents=True)
+        dependent.write_text("format: rulespec/v1\nrules: []\n")
+
+        with pytest.raises(ValueError, match="no stale proof import hash"):
+            _resolve_scheduled_proof_hash_dependents(
+                (Path("us/regulations/7-cfr/273/10.yaml"),),
+                overlay_content_root=content_root,
+                dependents=[dependent],
+            )
 
     def test_apply_overlay_validation_fills_dependent_inputs_from_baseline(
         self, tmp_path

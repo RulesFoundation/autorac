@@ -2910,6 +2910,17 @@ def main():
         ),
     )
     encode_parser.add_argument(
+        "--scheduled-dependent-rulespec-path",
+        action="append",
+        default=[],
+        type=Path,
+        help=(
+            "With --apply, defer this exact checkout-relative proof-hash dependent "
+            "to a separately signed lane while continuing to validate every other "
+            "dependent. Repeat once per scheduled dependent."
+        ),
+    )
+    encode_parser.add_argument(
         "--replace-rulespec-path",
         type=Path,
         help=(
@@ -29705,6 +29716,9 @@ def _run_encode_attempt(
             axiom_rules_path=axiom_rules_path,
             local_corpus_release=corpus_release,
             validate_dependents=validate_dependents,
+            scheduled_dependent_rulespec_paths=tuple(
+                getattr(args, "scheduled_dependent_rulespec_path", ())
+            ),
             rulespec_dependency_roots=rulespec_dependency_roots,
             require_complete_source_unit=(
                 getattr(args, "require_complete_source_unit", False) is True
@@ -55049,6 +55063,7 @@ def _validate_generated_encoding_in_policy_overlay_with_release(
     axiom_rules_path: Path,
     local_corpus_release: LocalCorpusRelease,
     validate_dependents: bool = True,
+    scheduled_dependent_rulespec_paths: Sequence[Path] = (),
     rulespec_dependency_roots: Sequence[Path] = (),
     require_complete_source_unit: bool = False,
     deferred_output_review_contract: _DeferredOutputReviewContract | None = None,
@@ -55370,6 +55385,19 @@ def _validate_generated_encoding_in_policy_overlay_with_release(
             if validate_dependents
             else []
         )
+        try:
+            scheduled_dependents = _resolve_scheduled_proof_hash_dependents(
+                scheduled_dependent_rulespec_paths,
+                overlay_content_root=overlay_content_root,
+                dependents=dependents,
+            )
+        except ValueError as exc:
+            return False, [str(exc)], {}
+        dependents = [
+            dependent
+            for dependent in dependents
+            if dependent not in scheduled_dependents
+        ]
         dependent_pipeline = (
             _DependentRegressionPipeline(
                 overlay_pipeline=ValidatorPipeline(
@@ -55936,6 +55964,7 @@ def _run_generated_encoding_overlay_validation(
     axiom_rules_path: Path,
     local_corpus_release: LocalCorpusRelease,
     validate_dependents: bool = True,
+    scheduled_dependent_rulespec_paths: Sequence[Path] = (),
     rulespec_dependency_roots: Sequence[Path] = (),
     require_complete_source_unit: bool = False,
     deferred_output_review_contract: _DeferredOutputReviewContract | None = None,
@@ -55950,6 +55979,7 @@ def _run_generated_encoding_overlay_validation(
         axiom_rules_path=axiom_rules_path,
         local_corpus_release=local_corpus_release,
         validate_dependents=validate_dependents,
+        scheduled_dependent_rulespec_paths=scheduled_dependent_rulespec_paths,
         rulespec_dependency_roots=rulespec_dependency_roots,
         require_complete_source_unit=require_complete_source_unit,
         deferred_output_review_contract=deferred_output_review_contract,
@@ -57822,6 +57852,63 @@ def _repair_dependent_proof_import_hashes(
         dependent.write_bytes(repaired.encode("utf-8"))
         changed.append(dependent)
     return changed
+
+
+def _resolve_scheduled_proof_hash_dependents(
+    scheduled_paths: Sequence[Path],
+    *,
+    overlay_content_root: Path,
+    dependents: Sequence[Path],
+) -> set[Path]:
+    """Authenticate dependents deferred to separately source-bound apply lanes."""
+
+    if not scheduled_paths:
+        return set()
+    dependent_set = set(dependents)
+    scheduled: set[Path] = set()
+    for raw_path in scheduled_paths:
+        path = Path(raw_path)
+        if (
+            path.is_absolute()
+            or path.as_posix() != str(raw_path)
+            or any(part in {"", ".", ".."} for part in path.parts)
+            or len(path.parts) < 3
+            or path.parts[0] != overlay_content_root.name
+            or path.suffix != RULESPEC_FILE_SUFFIX
+            or path.name.endswith(".test.yaml")
+        ):
+            raise ValueError(
+                "Scheduled dependent path must be a canonical checkout-relative "
+                "RuleSpec module in the active jurisdiction"
+            )
+        candidate = overlay_content_root / Path(*path.parts[1:])
+        if candidate in scheduled:
+            raise ValueError("Scheduled dependent paths must be unique")
+        if candidate not in dependent_set:
+            raise ValueError(
+                f"Scheduled dependent is not in the target dependency closure: {path}"
+            )
+        try:
+            content = candidate.read_bytes().decode("utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise ValueError(f"Cannot inspect scheduled dependent: {path}") from exc
+        target_base = (
+            f"{overlay_content_root.name}:"
+            f"{_relative_rulespec_import_target(candidate.relative_to(overlay_content_root))}"
+        )
+        repaired, repair_count = _repair_proof_import_hashes(
+            content,
+            target_base=target_base,
+            rules_file=candidate,
+            repo_path=overlay_content_root,
+        )
+        if repair_count <= 0 or repaired == content:
+            raise ValueError(
+                "Scheduled dependent has no stale proof import hash after target "
+                f"replacement: {path}"
+            )
+        scheduled.add(candidate)
+    return scheduled
 
 
 def _finalize_legacy_exact_dependents_from_overlay(
