@@ -26739,18 +26739,26 @@ def _rounding_call_operands(
                 and not expression.keywords
             ):
                 operand = ast.unparse(expression.args[0])
-                if functions != {"nearest"} or _rounding_demonstrated_operand(
-                    operand,
-                    direction="nearest",
-                ) is not None:
+                if (
+                    functions != {"nearest"}
+                    or _rounding_demonstrated_operand(
+                        operand,
+                        direction="nearest",
+                    )
+                    is not None
+                ):
                     return ((expression.func.id, operand),)
         return ()
     for function_name in function_names:
         for operand in _balanced_call_operands(formula_text, function_name):
-            if functions == {"nearest"} and _rounding_demonstrated_operand(
-                operand,
-                direction="nearest",
-            ) is None:
+            if (
+                functions == {"nearest"}
+                and _rounding_demonstrated_operand(
+                    operand,
+                    direction="nearest",
+                )
+                is None
+            ):
                 continue
             calls.append((function_name, operand))
     return tuple(calls)
@@ -26877,10 +26885,9 @@ def _fractional_input_materially_affects_operand(
                 operand,
                 changed_environment,
             )
-            if (
-                _rulespec_runtime_decimal(changed_value) is not None
-                and not math.isclose(float(changed_value), operand_value)
-            ):
+            if _rulespec_runtime_decimal(
+                changed_value
+            ) is not None and not math.isclose(float(changed_value), operand_value):
                 return True
         changed_execution = _case_formula_execution(
             rule,
