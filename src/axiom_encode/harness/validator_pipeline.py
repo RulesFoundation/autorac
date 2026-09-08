@@ -3663,8 +3663,12 @@ _HEBREW_SHARED_SCALE_WORD_PATTERN = re.compile(
 # A comma never joins: it separates clauses as often as it lists ("על הכנסה
 # עד 500, 3 מיליון" states a threshold), and nothing in the text tells the
 # two apart. A list closed by a conjunction shares from the joined pair on.
+# A vav never joins either: a vav-paired list ("2 ו־3 מיליון, בהתאמה") does
+# not occur in the statute text these passes serve, and the same vav joins
+# clauses ("ההכנסה עומדת על 500 ו־2 ו־3 מיליון ישולמו"), which nothing in
+# the text tells apart. "או" alternatives and bounded ranges remain.
 _HEBREW_SHARED_SCALE_JOIN_BEFORE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?P<join>לבין|ועד|עד|או|ל|\u05d5)(?:[\u05be-]\\s*|\\s+)$"
+    "(?<![\u0590-\u05ff])(?P<join>לבין|ועד|עד|או|ל)(?:[\u05be-]\\s*|\\s+)$"
 )
 # A noun that numbers the lower endpoint rather than counting it: "תוספת 2
 # עד מאה ועשרים אלף" is supplement 2, up to 120,000, and shares nothing.
@@ -3845,30 +3849,19 @@ def _iter_hebrew_shared_scale_range_matches(
             _HEBREW_SHARED_SCALE_JOIN_BEFORE_PATTERN, text, upper_start, 12
         )
         needs_bound = False
-        needs_respectively = False
-        list_kind = "range"
         if join is not None:
             lower_end = len(text[: join.start()].rstrip())
             if lower_end == join.start():
                 continue
-            needs_respectively = join.group("join") == "\u05d5"
-            list_kind = (
-                "vav"
-                if needs_respectively
-                else ("range" if join.group("join") == "\u05dc" else "free")
-            )
         else:
             # A ל prefix on a spelled upper endpoint joins under "בין" or
-            # "מ־" before the lower endpoint: "בין שלושה לחמישה מיליון". A
-            # vav prefix closes a list on its own: "אחד, שניים ושלושה
-            # מיליון" (a composable pair, "חמישים ושלושה", is one number
-            # and never reaches here).
+            # "מ־" before the lower endpoint: "בין שלושה לחמישה מיליון".
             upper_word = _HEBREW_WORD_TOKEN_PATTERN.match(text, upper_start)
             if printed_upper is not None or upper_word is None:
                 continue
             head = upper_word.group(0)
             if (
-                head[:1] not in ("\u05dc", "\u05d5")
+                not head.startswith("\u05dc")
                 or _strip_hebrew_number_prefix(
                     head[1:].lstrip("\u05be"), _HEBREW_RUN_START_VOCABULARY
                 )
@@ -3878,9 +3871,7 @@ def _iter_hebrew_shared_scale_range_matches(
             lower_end = len(text[:upper_start].rstrip())
             if lower_end == upper_start:
                 continue
-            needs_bound = head.startswith("\u05dc")
-            needs_respectively = head.startswith("\u05d5")
-            list_kind = "vav" if needs_respectively else "range"
+            needs_bound = True
         printed_lower = _search_before(
             _HEBREW_DIGITS_BEFORE_PATTERN, text, lower_end, 32
         )
@@ -3911,12 +3902,13 @@ def _iter_hebrew_shared_scale_range_matches(
         if _hebrew_operand_is_denominated(text, lower_span[0], lower_span[1]):
             # "בין ₪ 500 ל־3 מיליון": a denominated amount shares no scale.
             continue
-        if needs_respectively and (
-            not _hebrew_respectively_after(text, scale_match.end())
-            or _hebrew_singular_copula_before(text, lower_span[0])
+        if (
+            join is not None
+            and join.group("join") == "או"
+            and _hebrew_alternatives_are_compared(text, scale_match.end())
         ):
-            # "1 ו־2 ו־3 מיליון שקלים, בהתאמה" lists; a bare vav joins
-            # clauses as often ("ההכנסה היא 500 ו־3 מיליון ישולמו").
+            # "סכום של 500 או 3 מיליון, לפי הנמוך": two quantities compared
+            # share no scale.
             continue
         if needs_bound and (
             _search_before(_HEBREW_RANGE_LOWER_BOUND_PATTERN, text, lower_span[0], 16)
@@ -3970,25 +3962,9 @@ def _iter_hebrew_shared_scale_range_matches(
             earlier_join = _search_before(
                 _HEBREW_RANGE_WALK_JOIN_PATTERN, text, cursor, 12
             )
-            if earlier_join is not None:
-                earlier_flush = len(text[: earlier_join.start()].rstrip())
-                vav_crossing = earlier_join.group("vav") is not None
-            elif cursor > 0 and text[cursor] == "\u05d5" and text[cursor - 1].isspace():
-                # A vav on the endpoint itself ("אחד ושניים ושלושה מיליון").
-                earlier_flush = len(text[:cursor].rstrip())
-                vav_crossing = True
-            else:
+            if earlier_join is None:
                 break
-            if vav_crossing and not _hebrew_respectively_after(text, scale_match.end()):
-                # "ההכנסה היא 500 ו־2 או 3 מיליון": the vav joins clauses
-                # unless "בהתאמה" marks the list.
-                break
-            if (vav_crossing and list_kind != "vav") or (
-                not vav_crossing and list_kind == "vav"
-            ):
-                # A list keeps one conjunction; mixed joins are a clause
-                # and a pair.
-                break
+            earlier_flush = len(text[: earlier_join.start()].rstrip())
             earlier_printed = _search_before(
                 _HEBREW_DIGITS_BEFORE_PATTERN, text, earlier_flush, 32
             )
@@ -4027,7 +4003,9 @@ def _iter_hebrew_shared_scale_range_matches(
                 break
             if _hebrew_operand_is_denominated(text, earlier_span[0], earlier_span[1]):
                 break
-            if vav_crossing and _hebrew_singular_copula_before(text, earlier_span[0]):
+            if earlier_join.group(0).lstrip().startswith(
+                "או"
+            ) and _hebrew_alternatives_are_compared(text, scale_match.end()):
                 break
             matches.append(
                 (
@@ -4606,14 +4584,16 @@ def _hebrew_printed_endpoint_value(match: "re.Match[str]") -> float | None:
 # as it lists ("על הכנסה עד 500, 10% מס" states a threshold), and nothing in
 # the text tells the two apart. A list closed by a conjunction shares from the
 # joined pair on ("1, 2 או 3 אחוזים" shares the two and the three).
+# A vav never joins either, here or in the walk back: a vav-paired list ("2
+# ו־3 אחוזים, בהתאמה") does not occur in the statute text these passes serve,
+# and the same vav joins clauses ("ההכנסה עומדת על 500 ו־2 ו־3% ממנה ינוכו"),
+# which nothing in the text tells apart. "או" alternatives and bounded ranges
+# remain.
 _HEBREW_RANGE_JOIN_BEFORE_PATTERN = re.compile(
     "(?:(?<![\u0590-\u05ff])(?P<free>עד|ועד|לבין|או)\\s+"
-    "|(?<![\u0590-\u05ff])(?P<bound>[\u05dc\u05d5])(?:\u05be|[-\u2013]|\\s)\\s*)$"
+    "|(?<![\u0590-\u05ff])(?P<bound>\u05dc)(?:\u05be|[-\u2013]|\\s)\\s*)$"
 )
-_HEBREW_RANGE_WALK_JOIN_PATTERN = re.compile(
-    "(?:(?<![\u0590-\u05ff])(?:עד|ועד|או)\\s+"
-    "|(?<![\u0590-\u05ff])(?P<vav>\u05d5)(?:\u05be|-)?\\s*)$"
-)
+_HEBREW_RANGE_WALK_JOIN_PATTERN = re.compile("(?<![\u0590-\u05ff])(?:עד|ועד|או)\\s+$")
 # An earlier number the walk must not scale: an age, a year, a form number,
 # a grade ("לילד עד גיל 5, 2 או 3 אחוזים"). A reference ("לפי סעיף קטן 5, 2
 # או 3 אחוזים") is stopped at by its structural span.
@@ -4663,36 +4643,20 @@ def _hebrew_currency_gap_character(character: str) -> bool:
     return character.isspace() or character in _HEBREW_BIDI_MARKS
 
 
-# A singular copula flush before a number states it as one value ("ההכנסה
-# היא 500"), so a vav after it joins clauses even under "בהתאמה", which
-# then describes the pair that follows ("ו־2 או 3% ... ליחיד ולחברה,
-# בהתאמה"). A plural copula introduces a list ("הסכומים הם 1 ו־2 או 3").
-_HEBREW_SINGULAR_COPULA_BEFORE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?:היא|הוא|יהיה|תהיה|הינו|הינה)"
-    # Up to two modifiers between the copula and its value ("היא בדיוק 500",
-    # "הוא לפחות 500").
-    "(?:\\s+[\u0590-\u05ff]+){0,2}\\s*$"
+# Two alternatives compared ("X או Y, לפי הגבוה", "לפי הנמוך מביניהם") are
+# two quantities, whatever units they carry; the form is common in tax
+# statutes ("משכורת העובד או 32,000 שקלים חדשים, לפי הנמוך").
+_HEBREW_COMPARATIVE_AFTER_PATTERN = re.compile(
+    "לפי ה(?:גבוה|נמוך)(?:\\s+מביניהם)?|ה(?:גבוה|נמוך)\\s+מביניהם"
 )
 
 
-def _hebrew_singular_copula_before(text: str, start: int) -> bool:
-    return (
-        _search_before(_HEBREW_SINGULAR_COPULA_BEFORE_PATTERN, text, start, 40)
-        is not None
+def _hebrew_alternatives_are_compared(text: str, unit_end: int) -> bool:
+    tail = text[unit_end : unit_end + 48]
+    match = _HEBREW_COMPARATIVE_AFTER_PATTERN.search(tail)
+    return match is not None and not any(
+        stop in tail[: match.start()] for stop in ".;\n"
     )
-
-
-def _hebrew_respectively_after(text: str, unit_end: int) -> bool:
-    """Whether "בהתאמה" stands within reach after the unit, no sentence stop between.
-
-    The marker of a paired list: "2 ו־3 אחוזים, בהתאמה". A bare vav pair
-    without it is two clauses as often as a pair ("מספר העובדים הוא 50
-    ו־10% מהם זכאים").
-    """
-    tail = text[unit_end : unit_end + 40]
-    if "בהתאמה" not in tail:
-        return False
-    return not any(stop in tail[: tail.index("בהתאמה")] for stop in ".;\n")
 
 
 def _hebrew_operand_is_denominated(text: str, start: int, end: int) -> bool:
@@ -4815,36 +4779,22 @@ def _iter_hebrew_percent_range_lower_matches(
             upper_start -= 1
         # The join before it.
         join = _search_before(_HEBREW_RANGE_JOIN_BEFORE_PATTERN, text, upper_start, 12)
-        needs_respectively = False
-        list_kind = "range"
         if join is not None:
             lower_end = join.start()
-            # "ל־" needs "בין" or "מ־" before the lower endpoint; "ו־" joins a
-            # pair of rates under "בהתאמה" after the unit ("2 ו־3 אחוזים,
-            # בהתאמה"), the marker of a pair; without it the vav joins
-            # clauses as often ("מספר העובדים הוא 50 ו־10% מהם").
-            vav_join = join.group("bound") == "\u05d5"
-            needs_bound = join.group("free") is None and not vav_join
-            needs_respectively = vav_join
-            list_kind = (
-                "vav" if vav_join else ("free" if join.group("free") else "range")
-            )
+            # "ל־" needs "בין" or "מ־" before the lower endpoint.
+            needs_bound = join.group("free") is None
         elif (
             upper_first is not None
-            and upper_first[:1] in ("\u05dc", "\u05d5")
+            and upper_first.startswith("\u05dc")
             and _strip_hebrew_number_prefix(
                 upper_first[1:].lstrip("\u05be"), _HEBREW_RUN_START_VOCABULARY
             )
             is not None
         ):
             # The whitespace before the upper endpoint stays, so a printed
-            # lower endpoint ("בין 2 לשלושה אחוזים") ends flush before it. A
-            # vav prefix ("שניים ושלושה אחוזים, בהתאמה") joins under
-            # "בהתאמה", without a bound.
+            # lower endpoint ("בין 2 לשלושה אחוזים") ends flush before it.
             lower_end = upper_start
-            needs_bound = upper_first.startswith("\u05dc")
-            needs_respectively = upper_first.startswith("\u05d5")
-            list_kind = "vav" if needs_respectively else "range"
+            needs_bound = True
         else:
             continue
         # The lower endpoint, printed or spelled, right before the join.
@@ -4915,10 +4865,18 @@ def _iter_hebrew_percent_range_lower_matches(
         if _hebrew_operand_is_denominated(text, lower_span[0], lower_span[1]):
             # "$500 או 2% מהמחזור": a denominated amount shares no unit.
             continue
-        if needs_respectively and (
-            not _hebrew_respectively_after(text, noun.end())
-            or _hebrew_singular_copula_before(text, lower_span[0])
+        if (
+            join is not None
+            and join.group("free") == "או"
+            and (
+                _hebrew_alternatives_are_compared(text, noun.end())
+                or (not lower_scaled and abs(lower_value) >= 100)
+            )
         ):
+            # "קנס של 500 או 2% מהמחזור, לפי הגבוה": two quantities compared
+            # share no unit; nor does a bare hundred-plus alternative, which
+            # is an amount beside a rate ("קנס של 500 או 2% מהמחזור"), a rate
+            # above a hundred percent carrying its own unit when it occurs.
             continue
         if (
             needs_bound
@@ -4971,25 +4929,9 @@ def _iter_hebrew_percent_range_lower_matches(
             earlier_join = _search_before(
                 _HEBREW_RANGE_WALK_JOIN_PATTERN, text, cursor, 12
             )
-            if earlier_join is not None:
-                earlier_end = earlier_join.start()
-                vav_crossing = earlier_join.group("vav") is not None
-            elif cursor > 0 and text[cursor] == "\u05d5" and text[cursor - 1].isspace():
-                # A vav on the endpoint itself ("אחד ושניים ושלושה אחוזים").
-                earlier_end = cursor
-                vav_crossing = True
-            else:
+            if earlier_join is None:
                 break
-            if vav_crossing and not _hebrew_respectively_after(text, noun.end()):
-                # "ההכנסה היא 500 ו־2 או 3% ממנה": the vav joins clauses
-                # unless "בהתאמה" marks the list.
-                break
-            if (vav_crossing and list_kind != "vav") or (
-                not vav_crossing and list_kind == "vav"
-            ):
-                # A list keeps one conjunction: "1 או 2 או 3", "1 ו־2 ו־3".
-                # Mixed joins ("500 ו־2 או 3%") are a clause and a pair.
-                break
+            earlier_end = earlier_join.start()
             earlier_digits = _search_before(
                 _HEBREW_DIGITS_BEFORE_PATTERN, text, earlier_end, 32
             )
@@ -5027,9 +4969,16 @@ def _iter_hebrew_percent_range_lower_matches(
                 break
             if _hebrew_operand_is_denominated(text, earlier_span[0], earlier_span[1]):
                 break
-            if vav_crossing and _hebrew_singular_copula_before(text, earlier_span[0]):
-                # "ההכנסה היא 500 ו־2 או 3% ... ליחיד ולחברה, בהתאמה": the
-                # marker describes the pair; the income is its own value.
+            if earlier_join.group(0).lstrip().startswith("או") and (
+                _hebrew_alternatives_are_compared(text, noun.end())
+                or (
+                    earlier_amount is None
+                    and abs(earlier_value) >= 100
+                    and not _hebrew_spelled_span_carries_a_scale(
+                        text, earlier_span[0], earlier_span[1]
+                    )
+                )
+            ):
                 break
             matches.append((earlier_span, earlier_value / 100))
             cursor = earlier_span[0]
