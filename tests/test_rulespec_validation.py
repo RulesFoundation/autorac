@@ -18976,6 +18976,75 @@ def test_a_signed_number_word_continues_the_list_after_a_wrap():
         assert extract_numbers_from_text(text) == expected, text
 
 
+def test_a_mixed_fraction_stays_on_its_line():
+    # Review round 109 on #1585: the whole number of a mixed number stands
+    # on the fraction's line; across a blank line they are two numbers.
+    for text in (
+        "The threshold is 10\n\n1⁄4 of the income is exempt.",
+        "הסף הוא 10\n\n1⁄4 מההכנסה פטור.",
+    ):
+        assert _hebrew_recall(text) == {10.0, 0.25}, text
+        grounded = extract_numbers_from_text(text)
+        assert {10.0, 0.25} <= grounded and 10.25 not in grounded, text
+    for text in ("The threshold is 10 1⁄4 percent.", "הסף הוא 10 1⁄4 נקודות זיכוי."):
+        assert 10.25 in _hebrew_recall(text), text
+        assert 10.25 in extract_numbers_from_text(text), text
+
+
+def test_a_predicate_after_the_unit_is_the_consequent():
+    # Review round 109 on #1585: a future verb or a plural participle after
+    # the unit is the clause running on; an adjective, definite or not, is
+    # a modifier of the unit.
+    rates = {0.1, 0.2, 0.3}
+    amounts = {1_000_000.0, 2_000_000.0, 3_000_000.0}
+    for text, expected in (
+        (
+            "כאשר התשלומים הם 500, 2 או 3 מיליון שקלים משולמים כמענק.",
+            {500.0, 2_000_000.0, 3_000_000.0},
+        ),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים מנוכים מהשכר.", {1.0, 2.0, 3_000_000.0}),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה חייבת, תחול ההוראה.", rates),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה החייבת, תחול ההוראה.", rates),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים לפחות, ישולם מענק.", amounts),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים אשר נקבעו בצו, ישולם מענק.", amounts),
+        (
+            "אם הסכומים הם 1, 2 ו־3 מיליון שקלים המעסיק ישלם מענק.",
+            {1.0, 2.0, 3_000_000.0},
+        ),
+        ("אם התשלומים הם 500, 2 או 3% מהם ינוכו כמס.", {500.0, 2.0, 0.03}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
+def test_a_stop_inside_a_subject_parenthetical_keeps_the_heading():
+    # Review round 109 on #1585: a colon or semicolon inside a defined-term
+    # parenthetical is no clause stop.
+    rates = {0.1, 0.2, 0.3}
+    amounts = {1_000_000.0, 2_000_000.0, 3_000_000.0}
+    for text, expected in (
+        ("השיעורים שנקבעו בצו (להלן: הצו) הם 10, 20 ו־30 אחוזים.", rates),
+        ("הסכומים לפי הצו (להלן: הצו; כנוסחו) הם 1, 2 ו־3 מיליון שקלים.", amounts),
+        ("הסכומים לפי הצו (להלן: הצו) הם 1, 2 ו־3 מיליון שקלים.", amounts),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
+def test_unicode_indentation_after_a_wrap_is_whitespace():
+    # Review round 109 on #1585: a no-break or em space indents a wrapped
+    # list like an ASCII space; a line holding only such spaces is blank.
+    rates = {0.1, 0.2, 0.3}
+    amounts = {1_000_000.0, 2_000_000.0, 3_000_000.0}
+    for text, expected in (
+        ("השיעורים הם 10,\n  20 ו־30 אחוזים.", rates),
+        ("הסכומים הם 1, \n 2 ו־3 מיליון שקלים.", amounts),
+        ("השיעורים הם 10,\n \n20 ו־30 אחוזים.", {10.0, 20.0, 0.3}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

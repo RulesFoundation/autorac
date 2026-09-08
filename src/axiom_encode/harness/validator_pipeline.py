@@ -1512,11 +1512,13 @@ _CONTEXTUAL_ASCII_FRACTION_PATTERN = re.compile(
 # set against the numerator (or the whole number of a mixed number) belongs to
 # the value.
 # A hyphen after a Hebrew letter joins a prefix to the fraction ("כ-1⁄4")
-# and is no sign; only a sign that no Hebrew letter precedes negates.
+# and is no sign; only a sign that no Hebrew letter precedes negates. The
+# whole number of a mixed number stands on the fraction's own line: "10
+# 1⁄4" is ten and a quarter, "10\n\n1⁄4" is ten, then a quarter.
 _FRACTION_SLASH_PATTERN = re.compile(
     "(?<![\\d\u2044.,])"
     "(?:(?<![\u05d0-\u05ea])(?P<sign>[-\u2212]))?"
-    "(?:(?P<whole>\\d+)\\s+)?"
+    "(?:(?P<whole>\\d+)[^\\S\\r\\n]+)?"
     "(?P<numerator>\\d+)\\s*\u2044\\s*(?P<denominator>\\d+)"
     "(?![\\d\u2044])(?![.,]\\d)"
 )
@@ -4799,8 +4801,8 @@ _HEBREW_CONDITIONAL_CLAUSE_PATTERN = re.compile(
 )
 _HEBREW_SENTENCE_STOP_CHARACTERS = frozenset(".;:\n")
 _HEBREW_LIST_TAIL_PATTERN = re.compile(
-    "[ \\t]*(?:(?<![\u0590-\u05ff])(?:בהתאמה|לפחות|בלבד|ומעלה|לכל\\s+היותר"
-    "|לפי\\s+העניין|בקירוב)[ \\t]*)?(?:[,.;:\\n)]|$)"
+    "[^\\S\\r\\n]*(?:(?<![\u0590-\u05ff])(?:בהתאמה|לפחות|בלבד|ומעלה|לכל\\s+היותר"
+    "|לפי\\s+העניין|בקירוב)[^\\S\\r\\n]*)?(?:[,.;:\\n)]|$)"
 )
 # A line wrap inside a list -- after a comma, a join or the heading's copula
 # ("הסכומים הם 1,\n2 ו־3 מיליון", "הסכומים הם\n1, 2 ו־3 מיליון") -- is
@@ -4808,7 +4810,7 @@ _HEBREW_LIST_TAIL_PATTERN = re.compile(
 # table rows and numbered paragraphs stay apart.
 _HEBREW_SOFT_WRAP_BEFORE_PATTERN = re.compile(
     "(?:,|\u05d5\u05be|(?<![\u0590-\u05ff])(?:או|עד|ועד|לבין|"
-    "הם|הן|יהיו|תהיינה|הינם|הינן|של|כדלקמן:?|הבאים:?|הבאות:?)|:)[ \\t]*$"
+    "הם|הן|יהיו|תהיינה|הינם|הינן|של|כדלקמן:?|הבאים:?|הבאות:?)|:)[^\\S\\r\\n]*$"
 )
 
 
@@ -4896,30 +4898,51 @@ def _hebrew_list_body_end(text: str, start: int) -> int:
     return end
 
 
-# A modifier phrase of the unit after the list -- a prepositional
-# complement with its adjectives and construct nouns ("אחוזים מההכנסה
-# החייבת", "שקלים חדשים לשנת המס", "3% מהם", "אחוזים של ההכנסה"), "כאמור",
-# a relative clause ("שקלים שנקבעו בצו") -- is no consequent; a verb or a
-# bare noun running on is. The words of such a phrase carry a preposition,
-# the article, כ or ש; the consequent's verb carries none.
-_HEBREW_UNIT_MODIFIER_PATTERN = re.compile(
-    "[ \\t]*(?:(?:של|על|לפי|לכל|בעד|לגבי|מן)[ \\t]+[\u0590-\u05ff]+"
-    "|[\u05d1\u05dc\u05de\u05d4\u05db\u05e9][\u0590-\u05ff]{2,}|חדשים|חדש)"
+# Within a condition the clause runs on past the unit when a predicate of
+# the list's subject follows it: a future verb ("שקלים ישולמו כמענק", "3%
+# מהם ינוכו", "המעסיק ישלם") or a plural participle ("שקלים משולמים
+# כמענק"). Every other word after the unit -- a prepositional complement,
+# an adjective, definite or not ("מההכנסה החייבת", "מהכנסה חייבת"), a
+# construct noun ("לשנת המס"), "כאמור", a relative clause ("שנקבעו בצו") --
+# modifies the unit and belongs to the list. A function word that begins
+# like a verb (אשר, את, או) is none, and a relative clause ("שקלים אשר
+# נקבעו בצו", "שקלים שהמעסיק ישלם") modifies the unit, its verb included.
+_HEBREW_RELATIVE_MARKER_PATTERN = re.compile(
+    "[^\\S\\r\\n]*(?:אשר|(?!של(?![\u0590-\u05ff]))\u05e9[\u0590-\u05ff]{2,})"
     "(?![\u0590-\u05ff])"
+)
+_HEBREW_PREDICATE_WORD_PATTERN = re.compile(
+    "[^\\S\\r\\n]*(?:"
+    "(?!(?:אשר|את|אם|או|אל|אף|אך|אינו|אינה|אינם|אינן|יותר|יחד|נגד|תוך|תחת|נוסף)"
+    "(?![\u0590-\u05ff]))\u05d5?[\u05d9\u05ea\u05e0\u05d0][\u0590-\u05ff]{2,}"
+    "|\u05de[\u0590-\u05d3\u05d5-\u05ff][\u0590-\u05ff]*(?:ים|ות))(?![\u0590-\u05ff])"
+)
+_HEBREW_UNIT_MODIFIER_PATTERN = re.compile(
+    "[^\\S\\r\\n]*(?:(?:של|על|לפי|לכל|בעד|לגבי|מן)[^\\S\\r\\n]+[\u0590-\u05ff]+"
+    "|[\u0590-\u05ff]+)(?![\u0590-\u05ff])"
 )
 
 
 def _hebrew_list_ends_within_clause(text: str, body_end: int) -> bool:
     """Whether a comma, a stop or a list tail follows the list body.
 
-    Unit modifiers between them belong to the list ("אחוזים מההכנסה
-    החייבת, תחול ההוראה", "שקלים חדשים לשנת המס, ישולם"); any other word is
-    the clause running on ("שקלים ישולמו כמענק", "3% מהם ינוכו").
+    Unit modifiers between them belong to the list ("אחוזים מהכנסה חייבת,
+    תחול ההוראה", "שקלים חדשים לשנת המס, ישולם"); a predicate is the clause
+    running on ("שקלים ישולמו כמענק", "שקלים משולמים כמענק", "3% מהם
+    ינוכו").
     """
     position = body_end
+    relative = False
     for _ in range(8):
         if _HEBREW_LIST_TAIL_PATTERN.match(text, position) is not None:
             return True
+        if _HEBREW_RELATIVE_MARKER_PATTERN.match(text, position) is not None:
+            relative = True
+        elif (
+            not relative
+            and _HEBREW_PREDICATE_WORD_PATTERN.match(text, position) is not None
+        ):
+            return False
         modifier = _HEBREW_UNIT_MODIFIER_PATTERN.match(text, position)
         if modifier is None:
             return False
@@ -4940,6 +4963,11 @@ _HEBREW_LIST_COLON_WORDS = (
 )
 
 
+def _is_horizontal_space(character: str) -> bool:
+    """A space of any width that is no line break (U+00A0, U+2003 included)."""
+    return character.isspace() and character not in "\n\r\x0b\x0c\u2028\u2029"
+
+
 def _hebrew_list_heading_end(text: str, start: int, rate: bool) -> int | None:
     """Where the heading of the list the number at ``start`` belongs to ends, or None.
 
@@ -4950,12 +4978,18 @@ def _hebrew_list_heading_end(text: str, start: int, rate: bool) -> int | None:
     runs on.
     """
     clause_start = start
+    depth = 0
     while clause_start > 0 and start - clause_start < 160:
         character = text[clause_start - 1]
-        if character in _HEBREW_SENTENCE_STOP_CHARACTERS:
+        if character == ")":
+            depth += 1
+        elif character == "(" and depth > 0:
+            depth -= 1
+        elif character in _HEBREW_SENTENCE_STOP_CHARACTERS and depth == 0:
+            # A stop inside a parenthetical ("(להלן: הצו)") is none.
             if character == "\n":
                 resumed = clause_start
-                while resumed < len(text) and text[resumed] in " \t":
+                while resumed < len(text) and _is_horizontal_space(text[resumed]):
                     resumed += 1
                 if (
                     resumed < len(text)
