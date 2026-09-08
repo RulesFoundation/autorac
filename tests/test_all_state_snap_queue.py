@@ -500,7 +500,10 @@ def test_all_state_queue_repin_is_regenerated_from_authenticated_inputs() -> Non
     assert ".release != $previous[0].release" in workflow
     assert "cmp --silent" in workflow
     assert '"$QUEUE_PATH" "$generated_queue"' in workflow
-    assert "rulespec-us/git/ref/heads/hard-cut/canonical-layout-us" in workflow
+    assert (
+        "rulespec-us/git/ref/heads/${{ steps.transition.outputs.pr_base_branch }}"
+        in workflow
+    )
     assert "initial-axiom-rules-engine merge-base --is-ancestor" in workflow
     assert "rules-engine-check-runs.json" in workflow
     assert "($checks | length) > 0" in workflow
