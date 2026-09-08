@@ -4996,33 +4996,25 @@ def _hebrew_list_body_end(text: str, start: int) -> int:
 # swallowed runs on to the sentence end with words between and no comma
 # ("שקלים משולמים כמענק.") or shows the consequent's verb before the comma
 # ("שקלים ישולמו כמענק, והיתרה תוחזר", "שקלים חדשים ישלם המעסיק, והיתרה
-# תוחזר", "שקלים ישית בית המשפט כקנס, והיתרה תוחזר"). Right after the unit
-# a verb of any person is read: an adjective there agrees with the plural
-# unit and ends in ים or ות ("שקלים נוספים"), a verb does not, and a unit
-# adverb or a demonstrative (נטו, אלה) is neither. After a modifier only
-# the third-person future a statute writes its consequents in is read: a
-# word beginning in י that ends in neither ים, ות nor י, the י-initial
-# nouns and adjectives a statute uses (ישראל, ישיר, יבוא) excepted; no
-# other word is classified by its letters, and a relative clause ("אשר
-# נקבעו בצו") carries its own verb.
+# תוחזר", "שקלים חדשים תשלם הרשות, והיתרה תוחזר"). Agreement tells the verb
+# from an adjective: an adjective agrees with the noun before it in gender
+# and number ("שקלים נוספים", "מהכנסה יומית", "ממס ישיר"), while the
+# consequent's verb agrees with its own subject, not with the word before
+# it ("חדשים ישלם", "חדשים תשלם", "שקלים ישית"), and a plural future verb
+# ends in ו, as no adjective does ("שקלים ישולמו", "לעובד ישולמו"). Only a
+# verb-shaped word -- beginning in י, ת, נ or א -- is read at all, an
+# indeclinable adverb, a demonstrative, a function word or a proper noun
+# (נטו, אלה, אשר, ישראל) never, and a relative clause ("אשר נקבעו בצו")
+# carries its own verb.
 _HEBREW_RELATIVE_MARKER_PATTERN = re.compile(
     "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?:אשר|(?!של(?![\u0590-\u05ff]))\u05e9[\u0590-\u05ff]{2,})"
     "(?![\u0590-\u05ff])"
 )
-_HEBREW_VERB_AFTER_UNIT_PATTERN = re.compile(
-    "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?!(?:נטו|ברוטו|נומינלי|נומינליים|אלו|אלה|אותם|אותן|אותו|אותה"
-    "|יחד|יחדיו|יותר|נוסף|אחר|אחרת|אחד|אחת|או|את|אם|אשר|אף|אך|אל|אפילו|אילו|איפוא"
-    "|אולי|תוך|תחת|נגד)(?![\u0590-\u05ff]))"
-    "\u05d5?[\u05d9\u05ea\u05e0\u05d0]"
-    "(?![\u0590-\u05ff]*(?:ים|ות)(?![\u0590-\u05ff]))[\u0590-\u05ff]{2,}"
-    "(?![\u0590-\u05ff])"
-)
-_HEBREW_THIRD_PERSON_FUTURE_PATTERN = re.compile(
-    "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?!(?:ישראל|ישיר|ישירה|ישן|ישנה|יקר|יקרה|יחיד|יחידה|יחידת|ידוע"
-    "|ידועה|יעיל|יציב|יבוא|יצוא|יתרה|יתרת|יצרן|יבואן|יועץ|יזם|יין|יער|יום|יומו"
-    "|ילדו|ילדיו|ידיו|יחדיו|יורשו|יורשיו|יותר|יחד|יהודה|ירושלים)(?![\u0590-\u05ff]))"
-    "\u05d5?\u05d9(?![\u0590-\u05ff]*(?:ים|ות|\u05d9)(?![\u0590-\u05ff]))[\u0590-\u05ff]{2,}"
-    "(?![\u0590-\u05ff])"
+_HEBREW_VERB_SHAPED_WORD_PATTERN = re.compile(
+    "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?!(?:נטו|ברוטו|נומינלי|נומינלית|נומינליים|אלו|אלה|אותם|אותן|אותו"
+    "|אותה|יחד|יחדיו|יותר|נוסף|נוספת|אחר|אחרת|אחד|אחת|או|את|אם|אשר|אף|אך|אל|אפילו"
+    "|אילו|איפוא|אולי|תוך|תחת|נגד|ישראל|ירושלים|יהודה|יבוא|יצוא)(?![\u0590-\u05ff]))"
+    "\u05d5?(?P<word>[\u05d9\u05ea\u05e0\u05d0][\u0590-\u05ff]{2,})(?![\u0590-\u05ff])"
 )
 _HEBREW_LIST_TAIL_WORD_PATTERN = re.compile(
     "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?<![\u0590-\u05ff])(?:בהתאמה|לפחות|בלבד|ומעלה|לכל\\s+היותר"
@@ -5040,6 +5032,33 @@ _HEBREW_UNIT_MODIFIER_PATTERN = re.compile(
     "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?:(?:של|על|לפי|לכל|בעד|לגבי|מן)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]+[\u0590-\u05ff]+"
     "|[\u0590-\u05ff]+)(?![\u0590-\u05ff])"
 )
+_HEBREW_LAST_WORD_PATTERN = re.compile("([\u0590-\u05ff]+)[^\u0590-\u05ff]*$")
+
+
+def _hebrew_agreement_class(word: str) -> str:
+    """The gender-and-number class a word's ending shows: mp, fp, fs or ms."""
+    if word.endswith("ים"):
+        return "mp"
+    if word.endswith("ות"):
+        return "fp"
+    if word.endswith(("\u05d4", "\u05ea")):
+        return "fs"
+    return "ms"
+
+
+def _hebrew_is_consequent_verb(word: str, previous: str | None) -> bool:
+    """Whether a verb-shaped ``word`` is the consequent's verb after ``previous``.
+
+    A plural future verb ends in ו, as no adjective does; a plural ending
+    (ים, ות) is agreement with a plural noun, never a verb; otherwise the
+    verb disagrees with the word before it, the adjective agrees.
+    """
+    if word.endswith("\u05d5"):
+        return True
+    word_class = _hebrew_agreement_class(word)
+    if word_class in ("mp", "fp"):
+        return False
+    return previous is None or word_class != _hebrew_agreement_class(previous)
 
 
 def _hebrew_list_ends_within_clause(text: str, body_end: int) -> bool:
@@ -5049,10 +5068,14 @@ def _hebrew_list_ends_within_clause(text: str, body_end: int) -> bool:
     modifiers between, ends it there ("אחוזים מהכנסה נמוכה, תחול ההוראה");
     the sentence ending with words between and no comma ("שקלים משולמים
     כמענק.") or the consequent's verb ("שקלים ישולמו כמענק", "שקלים חדשים
-    ישלם המעסיק") is the clause running on.
+    תשלם הרשות") is the clause running on.
     """
     position = body_end
     relative = False
+    previous_match = _HEBREW_LAST_WORD_PATTERN.search(
+        text, max(0, body_end - 40), body_end
+    )
+    previous = previous_match.group(1) if previous_match else None
     for _ in range(12):
         if _HEBREW_LIST_TAIL_WORD_PATTERN.match(text, position) is not None:
             return True
@@ -5062,18 +5085,16 @@ def _hebrew_list_ends_within_clause(text: str, body_end: int) -> bool:
             return position == body_end
         if _HEBREW_RELATIVE_MARKER_PATTERN.match(text, position) is not None:
             relative = True
-        elif not relative and (
-            (
-                _HEBREW_VERB_AFTER_UNIT_PATTERN
-                if position == body_end
-                else _HEBREW_THIRD_PERSON_FUTURE_PATTERN
-            ).match(text, position)
-            is not None
-        ):
-            return False
+        elif not relative:
+            verb = _HEBREW_VERB_SHAPED_WORD_PATTERN.match(text, position)
+            if verb is not None and _hebrew_is_consequent_verb(
+                verb.group("word"), previous
+            ):
+                return False
         modifier = _HEBREW_UNIT_MODIFIER_PATTERN.match(text, position)
         if modifier is None:
             return False
+        previous = _HEBREW_WORD_TOKEN_PATTERN.findall(modifier.group(0))[-1]
         position = modifier.end()
     return False
 

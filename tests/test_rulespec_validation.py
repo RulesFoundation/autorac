@@ -19271,6 +19271,43 @@ def test_a_printed_number_joins_its_unit_across_a_wrap_only():
             assert apart not in grounded, text
 
 
+def test_agreement_tells_an_adjective_from_the_consequents_verb():
+    # Review round 114 on #1585: an adjective agrees with the noun before
+    # it; the consequent's verb, feminine or masculine, does not, and a
+    # plural future verb ends in ו as no adjective does.
+    rates = {0.1, 0.2, 0.3}
+    amounts = {1_000_000.0, 2_000_000.0, 3_000_000.0}
+    split = {500.0, 2_000_000.0, 3_000_000.0}
+    for text, expected in (
+        (
+            "אם התשלומים הם 500, 2 או 3 מיליון שקלים חדשים תשלם הרשות, והיתרה תוחזר.",
+            split,
+        ),
+        (
+            "אם התשלומים הם 500, 2 או 3 מיליון שקלים חדשים ישלם המעסיק, והיתרה תוחזר.",
+            split,
+        ),
+        (
+            "אם התשלומים הם 500, 2 או 3 מיליון שקלים ישית בית המשפט כקנס, והיתרה תוחזר.",
+            split,
+        ),
+        (
+            "אם הסכומים הם 1, 2 ו־3 מיליון שקלים לעובד ישולמו כמענק, והיתרה תוחזר.",
+            {1.0, 2.0, 3_000_000.0},
+        ),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה יומית, תחול ההוראה.", rates),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה יציבה, תחול ההוראה.", rates),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה ידועה, תחול ההוראה.", rates),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה תקינה, תחול ההוראה.", rates),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים ממס ישיר, תחול ההוראה.", rates),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה נטו, תחול ההוראה.", rates),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים לתושב ישראל, ישולם מענק.", amounts),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים נוספים, ישולם מענק.", amounts),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
