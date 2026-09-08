@@ -3672,7 +3672,7 @@ _HEBREW_SHARED_SCALE_WORD_PATTERN = re.compile(
 # beside another ("הקנס הוא 500 או 3 מיליון"), which nothing in the text
 # tells apart. Bounded and explicit ranges remain.
 _HEBREW_SHARED_SCALE_JOIN_BEFORE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?P<join>לבין|ועד|עד|או|ל)(?:[\u05be-]\\s*|\\s+)$"
+    "(?<![\u0590-\u05ff])(?P<join>לבין|ועד|עד|או|ל|\u05d5)(?:[\u05be-]\\s*|\\s+)$"
 )
 # A noun that numbers the lower endpoint rather than counting it: "תוספת 2
 # עד מאה ועשרים אלף" is supplement 2, up to 120,000, and shares nothing.
@@ -3865,10 +3865,12 @@ def _iter_hebrew_shared_scale_range_matches(
             _HEBREW_SHARED_SCALE_JOIN_BEFORE_PATTERN, text, upper_start, 12
         )
         needs_bound = False
+        vav_join = False
         if join is not None:
             lower_end = len(text[: join.start()].rstrip())
             if lower_end == join.start():
                 continue
+            vav_join = join.group("join") == "\u05d5"
         else:
             # A ל prefix on a spelled upper endpoint joins under "בין" or
             # "מ־" before the lower endpoint: "בין שלושה לחמישה מיליון".
@@ -3877,7 +3879,7 @@ def _iter_hebrew_shared_scale_range_matches(
                 continue
             head = upper_word.group(0)
             if (
-                not head.startswith("\u05dc")
+                head[:1] not in ("\u05dc", "\u05d5")
                 or _strip_hebrew_number_prefix(
                     head[1:].lstrip("\u05be"), _HEBREW_RUN_START_VOCABULARY
                 )
@@ -3887,7 +3889,8 @@ def _iter_hebrew_shared_scale_range_matches(
             lower_end = len(text[:upper_start].rstrip())
             if lower_end == upper_start:
                 continue
-            needs_bound = True
+            vav_join = head.startswith("\u05d5")
+            needs_bound = not vav_join
         printed_lower = _search_before(
             _HEBREW_DIGITS_BEFORE_PATTERN, text, lower_end, 32
         )
@@ -3948,14 +3951,27 @@ def _iter_hebrew_shared_scale_range_matches(
             continue
         # "2 עד 3 אלפים אחוזים": the shared scale word carries a percent unit
         # too, and both endpoints are rates.
+        if vav_join and not (
+            unit_word_after
+            and _hebrew_vav_pair_is_coordinated(text, lower_span[0], upper_end_whole)
+        ):
+            # "הסכומים הם 2 ו־3 מיליון שקלים, בהתאמה" shares; "ההכנסה עומדת על
+            # 500 ו־2 ו־3 מיליון ישולמו" joins clauses.
+            continue
         if join is not None and join.group("join") == "או" and not unit_word_after:
             # "הקנס הוא 500 או 3 מיליון.", "סכום של 500 או 3 מיליון": a bare
             # scale word does not distribute; "2 או 3 מיליון שקלים" and "1
             # או 2 או 3 אלפים אחוזים" share.
             continue
-        if (join is None or join.group("join") != "או") and lower_value >= upper_value:
-            # A range ascends: "בין 500 ל־3 מיליון" runs from 500 shekels,
-            # not from five hundred million.
+        if (
+            (join is None or join.group("join") != "או")
+            and not vav_join
+            and lower_value >= upper_value
+            and _search_before(_HEBREW_BETWEEN_BEFORE_PATTERN, text, lower_span[0], 16)
+            is not None
+        ):
+            # A "בין" range ascends: "בין 500 ל־3 מיליון" runs from 500
+            # shekels; "יופחת מ־5 ל־3 מיליון" decreases and shares.
             continue
         matches.append(
             (
@@ -3964,7 +3980,7 @@ def _iter_hebrew_shared_scale_range_matches(
                 is_rate,
             )
         )
-        if join is None or join.group("join") != "או":
+        if not vav_join and (join is None or join.group("join") != "או"):
             continue
         # Earlier alternatives share the unit too: "1 או 2 או 3 מיליון
         # שקלים". The walk back stops at a reference, a label noun, a
@@ -3974,11 +3990,23 @@ def _iter_hebrew_shared_scale_range_matches(
             earlier_join = _search_before(
                 _HEBREW_RANGE_WALK_JOIN_PATTERN, text, cursor, 12
             )
-            if earlier_join is None or not earlier_join.group(0).lstrip().startswith(
-                "או"
+            if earlier_join is not None:
+                earlier_flush = len(text[: earlier_join.start()].rstrip())
+                vav_crossing = earlier_join.group("vav") is not None
+            elif (
+                vav_join
+                and cursor > 0
+                and text[cursor] == "\u05d5"
+                and text[cursor - 1].isspace()
+            ):
+                earlier_flush = len(text[:cursor].rstrip())
+                vav_crossing = True
+            else:
+                break
+            if vav_crossing != vav_join or (
+                not vav_crossing and not earlier_join.group(0).lstrip().startswith("או")
             ):
                 break
-            earlier_flush = len(text[: earlier_join.start()].rstrip())
             earlier_printed = _search_before(
                 _HEBREW_DIGITS_BEFORE_PATTERN, text, earlier_flush, 32
             )
@@ -4605,9 +4633,12 @@ def _hebrew_printed_endpoint_value(match: "re.Match[str]") -> float | None:
 # remain.
 _HEBREW_RANGE_JOIN_BEFORE_PATTERN = re.compile(
     "(?:(?<![\u0590-\u05ff])(?P<free>עד|ועד|לבין|או)\\s+"
-    "|(?<![\u0590-\u05ff])(?P<bound>\u05dc)(?:\u05be|[-\u2013]|\\s)\\s*)$"
+    "|(?<![\u0590-\u05ff])(?P<bound>[\u05dc\u05d5])(?:\u05be|[-\u2013]|\\s)\\s*)$"
 )
-_HEBREW_RANGE_WALK_JOIN_PATTERN = re.compile("(?<![\u0590-\u05ff])(?:עד|ועד|או)\\s+$")
+_HEBREW_RANGE_WALK_JOIN_PATTERN = re.compile(
+    "(?:(?<![\u0590-\u05ff])(?:עד|ועד|או)\\s+"
+    "|(?<![\u0590-\u05ff])(?P<vav>\u05d5)(?:\u05be|-)?\\s*)$"
+)
 # An earlier number the walk must not scale: an age, a year, a form number,
 # a grade ("לילד עד גיל 5, 2 או 3 אחוזים"). A reference ("לפי סעיף קטן 5, 2
 # או 3 אחוזים") is stopped at by its structural span.
@@ -4617,6 +4648,7 @@ _HEBREW_RANGE_WALK_STOP_PATTERN = re.compile(
     # A possessive suffix on the label ("שגילו 5", "גילה 5") is the same label.
     "(?:[\u05d5\u05d4\u05dd\u05df\u05d9\u05da]|כם|כן|נו)?\\s*$"
 )
+_HEBREW_BETWEEN_BEFORE_PATTERN = re.compile("(?<![\u0590-\u05ff])בין\\s*$")
 _HEBREW_RANGE_LOWER_BOUND_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])(?:בין|\u05de(?:\u05be|-)?|החל \u05de(?:\u05be|-)?)\\s*$"
 )
@@ -4665,9 +4697,9 @@ def _hebrew_currency_gap_character(character: str) -> bool:
 # signed pair share too.
 _HEBREW_RATE_WORD_BEFORE_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])(?:[\u05d1\u05d4\u05d5\u05dc\u05e9]{0,2}שיעור(?:ים|י)?|אחוז(?:ים)?|ה?ריבית)"
-    "(?:\\s+[^\\s.;:\\n]+){0,6}\\s*$"
+    "(?:\\s+[^\\s.;:,\\n]+){0,6}\\s*$"
 )
-_HEBREW_CLAUSE_STOP_CHARACTERS = frozenset(".;:\n")
+_HEBREW_CLAUSE_STOP_CHARACTERS = frozenset(".;:,\n")
 
 
 def _hebrew_rate_word_before(text: str, start: int) -> bool:
@@ -4683,6 +4715,33 @@ def _hebrew_rate_word_before(text: str, start: int) -> bool:
     return (
         _HEBREW_RATE_WORD_BEFORE_PATTERN.search(text, clause_start, start) is not None
     )
+
+
+# A plural heading in the clause before a vav pair ("שיעורי המס הם", "הסכומים
+# הם", "בסכומים של") and "בהתאמה" after the unit establish coordination:
+# "שיעורי המס הם 2 ו־3 אחוזים, בהתאמה" shares. A singular predicate ("ההכנסה
+# עומדת על 500 ו־2 ו־3% ... בהתאמה") does not, and the vav joins clauses.
+_HEBREW_PLURAL_HEADING_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])(?:הם|הן|יהיו|תהיינה|הינם|הינן|השיעורים|שיעורי|בשיעורים"
+    "|הסכומים|סכומי|בסכומים|התשלומים|תשלומי|הריביות|המענקים|הקנסות)(?![\u0590-\u05ff])"
+)
+
+
+def _hebrew_vav_pair_is_coordinated(text: str, start: int, unit_end: int) -> bool:
+    """A plural heading in the clause before ``start`` and "בהתאמה" within reach after ``unit_end``."""
+    clause_start = start
+    while (
+        clause_start > 0
+        and text[clause_start - 1] not in _HEBREW_CLAUSE_STOP_CHARACTERS
+        and start - clause_start < 64
+    ):
+        clause_start -= 1
+    if _HEBREW_PLURAL_HEADING_PATTERN.search(text, clause_start, start) is None:
+        return False
+    tail = text[unit_end : unit_end + 40]
+    if "בהתאמה" not in tail:
+        return False
+    return not any(stop in tail[: tail.index("בהתאמה")] for stop in ".;\n")
 
 
 def _hebrew_unit_word_after(text: str, end: int) -> bool:
@@ -4822,22 +4881,28 @@ def _iter_hebrew_percent_range_lower_matches(
             upper_start -= 1
         # The join before it.
         join = _search_before(_HEBREW_RANGE_JOIN_BEFORE_PATTERN, text, upper_start, 12)
+        vav_join = False
         if join is not None:
             lower_end = join.start()
-            # "ל־" needs "בין" or "מ־" before the lower endpoint.
-            needs_bound = join.group("free") is None
+            # "ל־" needs "בין" or "מ־" before the lower endpoint; "ו־" joins
+            # a coordinated pair only ("שיעורי המס הם 2 ו־3 אחוזים, בהתאמה").
+            vav_join = join.group("bound") == "\u05d5"
+            needs_bound = join.group("free") is None and not vav_join
         elif (
             upper_first is not None
-            and upper_first.startswith("\u05dc")
+            and upper_first[:1] in ("\u05dc", "\u05d5")
             and _strip_hebrew_number_prefix(
                 upper_first[1:].lstrip("\u05be"), _HEBREW_RUN_START_VOCABULARY
             )
             is not None
         ):
             # The whitespace before the upper endpoint stays, so a printed
-            # lower endpoint ("בין 2 לשלושה אחוזים") ends flush before it.
+            # lower endpoint ("בין 2 לשלושה אחוזים") ends flush before it. A
+            # vav prefix joins a coordinated pair only ("שניים ושלושה
+            # אחוזים, בהתאמה").
             lower_end = upper_start
-            needs_bound = True
+            vav_join = upper_first.startswith("\u05d5")
+            needs_bound = not vav_join
         else:
             continue
         # The lower endpoint, printed or spelled, right before the join.
@@ -4908,6 +4973,10 @@ def _iter_hebrew_percent_range_lower_matches(
         if _hebrew_operand_is_denominated(text, lower_span[0], lower_span[1]):
             # "$500 או 2% מהמחזור": a denominated amount shares no unit.
             continue
+        if vav_join and not _hebrew_vav_pair_is_coordinated(
+            text, lower_span[0], noun.end()
+        ):
+            continue
         if (
             join is not None
             and join.group("free") == "או"
@@ -4922,10 +4991,14 @@ def _iter_hebrew_percent_range_lower_matches(
         if (
             join is not None
             and join.group("free") != "או"
+            and not vav_join
             and upper_percent is not None
             and lower_value >= upper_percent
+            and _search_before(_HEBREW_BETWEEN_BEFORE_PATTERN, text, lower_span[0], 16)
+            is not None
         ):
-            # A range ascends: "בין 500 ל־3 אחוזים" is no range of rates.
+            # A "בין" range ascends: "בין 500 ל־3 אחוזים" is no range of
+            # rates; "יופחת מ־5 ל־3 אחוזים" decreases and is one.
             continue
         if (
             needs_bound
@@ -4978,9 +5051,24 @@ def _iter_hebrew_percent_range_lower_matches(
             earlier_join = _search_before(
                 _HEBREW_RANGE_WALK_JOIN_PATTERN, text, cursor, 12
             )
-            if earlier_join is None:
+            if earlier_join is not None:
+                earlier_end = earlier_join.start()
+                vav_crossing = earlier_join.group("vav") is not None
+            elif (
+                vav_join
+                and cursor > 0
+                and text[cursor] == "\u05d5"
+                and text[cursor - 1].isspace()
+            ):
+                # A vav on the endpoint itself ("אחד ושניים ושלושה אחוזים").
+                earlier_end = cursor
+                vav_crossing = True
+            else:
                 break
-            earlier_end = earlier_join.start()
+            if vav_crossing != vav_join:
+                # A list keeps one conjunction: a vav list under its plural
+                # heading and "בהתאמה", or an "או" list.
+                break
             earlier_digits = _search_before(
                 _HEBREW_DIGITS_BEFORE_PATTERN, text, earlier_end, 32
             )
