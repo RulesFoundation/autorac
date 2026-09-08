@@ -3953,7 +3953,7 @@ def _iter_hebrew_shared_scale_range_matches(
         # too, and both endpoints are rates.
         if vav_join and not (
             unit_word_after
-            and _hebrew_vav_pair_is_coordinated(text, lower_span[0], upper_end_whole)
+            and _hebrew_vav_pair_is_coordinated(text, lower_span[0], is_rate)
         ):
             # "הסכומים הם 2 ו־3 מיליון שקלים, בהתאמה" shares; "ההכנסה עומדת על
             # 500 ו־2 ו־3 מיליון ישולמו" joins clauses.
@@ -4717,18 +4717,23 @@ def _hebrew_rate_word_before(text: str, start: int) -> bool:
     )
 
 
-# A plural heading in the clause before a vav pair ("שיעורי המס הם", "הסכומים
-# הם", "בסכומים של") and "בהתאמה" after the unit establish coordination:
-# "שיעורי המס הם 2 ו־3 אחוזים, בהתאמה" shares. A singular predicate ("ההכנסה
-# עומדת על 500 ו־2 ו־3% ... בהתאמה") does not, and the vav joins clauses.
-_HEBREW_PLURAL_HEADING_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?:הם|הן|יהיו|תהיינה|הינם|הינן|השיעורים|שיעורי|בשיעורים"
-    "|הסכומים|סכומי|בסכומים|התשלומים|תשלומי|הריביות|המענקים|הקנסות)(?![\u0590-\u05ff])"
+# A plural noun naming the kind of quantity the unit gives, in the clause
+# before a vav pair, establishes coordination: "שיעורי המס הם 2 ו־3 אחוזים"
+# lists two rates, "הסכומים הם 2 ו־3 מיליון שקלים" two amounts, with or
+# without "בהתאמה". A bare plural copula ("ההכנסות הן 500 ו־2 ו־3% מהן") and
+# a singular predicate ("ההכנסה עומדת על 500 ו־2 ו־3%") are no such noun,
+# and the vav joins clauses.
+_HEBREW_PLURAL_RATE_HEADING_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])(?:השיעורים|שיעורי|בשיעורים|שיעורים|הריביות|ריביות)(?![\u0590-\u05ff])"
+)
+_HEBREW_PLURAL_AMOUNT_HEADING_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])(?:הסכומים|סכומי|בסכומים|סכומים|התשלומים|תשלומי|תשלומים"
+    "|המענקים|מענקי|הקנסות|קנסות|הקצבאות|קצבאות)(?![\u0590-\u05ff])"
 )
 
 
-def _hebrew_vav_pair_is_coordinated(text: str, start: int, unit_end: int) -> bool:
-    """A plural heading in the clause before ``start`` and "בהתאמה" within reach after ``unit_end``."""
+def _hebrew_vav_pair_is_coordinated(text: str, start: int, rate: bool) -> bool:
+    """A plural noun of the unit's kind in the clause before ``start``: rates for a percent unit, amounts for a scale."""
     clause_start = start
     while (
         clause_start > 0
@@ -4736,12 +4741,27 @@ def _hebrew_vav_pair_is_coordinated(text: str, start: int, unit_end: int) -> boo
         and start - clause_start < 64
     ):
         clause_start -= 1
-    if _HEBREW_PLURAL_HEADING_PATTERN.search(text, clause_start, start) is None:
-        return False
-    tail = text[unit_end : unit_end + 40]
-    if "בהתאמה" not in tail:
-        return False
-    return not any(stop in tail[: tail.index("בהתאמה")] for stop in ".;\n")
+    pattern = (
+        _HEBREW_PLURAL_RATE_HEADING_PATTERN
+        if rate
+        else _HEBREW_PLURAL_AMOUNT_HEADING_PATTERN
+    )
+    return pattern.search(text, clause_start, start) is not None
+
+
+# A colon-terminated currency heading ("הסכומים בשקלים:") denominates the
+# bare numbers of the clauses after it: "הקנס יהיה 50 או 2 אחוזים" under it
+# keeps 50, while a rate word in the clause still makes a pair rates.
+_HEBREW_CURRENCY_HEADING_PATTERN = re.compile(
+    '(?<![\u0590-\u05ff])(?:כל\\s+)?ה?סכומים\\s+ב(?:שקלים(?:\\s+חדשים)?|ש"ח|ש״ח|דולרים|דולר|יורו|אירו|לירות)\\s*:'
+)
+
+
+def _hebrew_currency_heading_before(text: str, start: int) -> bool:
+    window_start = max(0, start - 240)
+    return (
+        _HEBREW_CURRENCY_HEADING_PATTERN.search(text, window_start, start) is not None
+    )
 
 
 def _hebrew_unit_word_after(text: str, end: int) -> bool:
@@ -4973,14 +4993,15 @@ def _iter_hebrew_percent_range_lower_matches(
         if _hebrew_operand_is_denominated(text, lower_span[0], lower_span[1]):
             # "$500 או 2% מהמחזור": a denominated amount shares no unit.
             continue
-        if vav_join and not _hebrew_vav_pair_is_coordinated(
-            text, lower_span[0], noun.end()
-        ):
+        if vav_join and not _hebrew_vav_pair_is_coordinated(text, lower_span[0], True):
             continue
         if (
             join is not None
             and join.group("free") == "או"
-            and "%" in noun.group(0)
+            and (
+                "%" in noun.group(0)
+                or _hebrew_currency_heading_before(text, lower_span[0])
+            )
             and not _hebrew_rate_word_before(text, lower_span[0])
         ):
             # "קנס של 50 או 2% מהמחזור", "הקנס יהיה 50 או 2%": a sign does not
@@ -5108,7 +5129,10 @@ def _iter_hebrew_percent_range_lower_matches(
                 break
             if (
                 earlier_join.group(0).lstrip().startswith("או")
-                and "%" in noun.group(0)
+                and (
+                    "%" in noun.group(0)
+                    or _hebrew_currency_heading_before(text, earlier_span[0])
+                )
                 and not _hebrew_rate_word_before(text, earlier_span[0])
             ):
                 break
