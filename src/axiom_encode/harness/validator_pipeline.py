@@ -5003,13 +5003,18 @@ def _hebrew_list_body_end(text: str, start: int) -> int:
 # "יוענק") and the plural ("ישולמו", "יחולו", "יקבלו"); any other word
 # after the unit modifies it. A relative clause carries its own verb --
 # "אשר", or ש before the article ("שהמעסיק"), a preposition with its
-# suffix ("שעליה", "שבגינה", "שממנה"), a verb-shaped word ("שנקבע") or a
-# past plural ("ששולמו"), the lexical ש-words (שכיר, שוטף, שנתי) excepted.
+# suffix ("שעליה", "שבגינה", "שממנה"), a construct subject with its
+# definite complement ("שפקיד השומה"), a verb-shaped word ("שנקבע") or a
+# past plural ("ששולמו"), the lexical ש-words (שכיר, שוטף, שנתי)
+# excepted. A word after a construct-state noun -- a head ending in ת or
+# in the plural י ("הכנסת", "דמי", "תשלומי") -- is its complement, a
+# noun, whatever the lexicon says of its spelling ("מהכנסת תושב ישראל").
 _HEBREW_RELATIVE_MARKER_PATTERN = re.compile(
     "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?:אשר|(?!(?:של|שכיר|שכירה|שכירים|שוטף|שוטפת|שוטפים|שנתי|שנתית"
     "|שנתיים|שקל|שקלים|שיעור|שיעורי|שיעורים|שכר|שלם|שלמה|שלמים|שנה|שנת|שני|שתי"
     "|שלושה|שלוש|שבעה|שבע|שמונה|שישה|שש|שירות|שירותי)(?![\u0590-\u05ff]))"
     "\u05e9(?:\u05d4[\u0590-\u05ff]+"
+    "|[\u0590-\u05ff]{2,}(?=[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]+\u05d4[\u0590-\u05ff])"
     "|(?:על|ב|בגינ|ממנ|מ|ממ|לגבי|בשל|בעד|כנגד|כלפי|אל|אצל|תחת|לפי|בתוכ|מתוכ)"
     "(?:ו|ה|הם|הן|ם|ן|נו|יו|יה|יהם|יהן)"
     "|[\u05d9\u05ea\u05e0\u05d0][\u0590-\u05ff]{2,}"
@@ -5019,7 +5024,8 @@ _HEBREW_WORD_AFTER_PATTERN = re.compile(
     "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*\u05d5?(?P<word>[\u0590-\u05ff]{2,})(?![\u0590-\u05ff])"
 )
 # The third-person singular future forms a statute writes its consequents
-# in, masculine and feminine; the plural is derived from the masculine.
+# in, masculine and feminine; the plural is derived from the masculine. A
+# form that is also a noun (תושב, תורה, תעלה, יוסף, תוסף) is left out.
 _HEBREW_CONSEQUENT_VERB_STEMS = (
     "ישלם תשלם ישולם תשולם ינכה תנכה ינוכה תנוכה יחול תחול יהיה תהיה ייתן תיתן "
     "יינתן תינתן ינתן תנתן ישית תשית יטיל תטיל יוטל תוטל יחייב תחייב יחויב תחויב "
@@ -5027,21 +5033,21 @@ _HEBREW_CONSEQUENT_VERB_STEMS = (
     "יפחית תפחית יופחת תופחת יחזיר תחזיר יוחזר תוחזר יקבע תקבע ייקבע תיקבע יאשר "
     "תאשר יאושר תאושר יישא תישא ישא תשא יגבה תגבה ייגבה תיגבה יקזז תקזז יקוזז תקוזז "
     "יעביר תעביר יועבר תועבר ישמש תשמש ימסור תמסור יימסר תימסר ידחה תדחה יידחה "
-    "תידחה יקטן תקטן יגדל תגדל יעלה תעלה יירד תרד ייזקף תיזקף יזקוף תזקוף יצורף "
-    "תצורף יצרף תצרף יוסף תוסף יוסיף תוסיף ייווסף תיווסף יחלט תחלט יחולט תחולט "
-    "יורה תורה יחליט תחליט יוחלט תוחלט יפרע תפרע ייפרע תיפרע יעמוד תעמוד יעמיד "
+    "תידחה יקטן תקטן יגדל תגדל יעלה יירד תרד ייזקף תיזקף יזקוף תזקוף יצורף "
+    "תצורף יצרף תצרף יוסיף תוסיף ייווסף תיווסף יחלט תחלט יחולט תחולט "
+    "יורה יחליט תחליט יוחלט תוחלט יפרע תפרע ייפרע תיפרע יעמוד תעמוד יעמיד "
     "תעמיד יועמד תועמד יקבל תקבל יתקבל תתקבל יוענק תוענק יעניק תעניק יגרע תגרע "
     "ייגרע תיגרע ייעשה תיעשה יעשה תעשה יבוצע תבוצע יתבצע תתבצע יורשה תורשה יאפשר "
-    "תאפשר יימנע תימנע יופסק תופסק יבוטל תבוטל יחודש תחודש יוארך תוארך יושב תושב "
+    "תאפשר יימנע תימנע יופסק תופסק יבוטל תבוטל יחודש תחודש יוארך תוארך "
     "יושלם תושלם יימחק תימחק יוגש תוגש יגיש תגיש ישולב תשולב יוכר תוכר יכיר תכיר "
     "יוקצה תוקצה יוסדר תוסדר יפצה תפצה יפוצה תפוצה ישפה תשפה ישופה תשופה יימשך "
-    "תימשך ימשיך תמשיך יחדל תחדל יפסיק תפסיק יוצא תוצא יוציא תוציא יביא תביא יובא "
+    "תימשך ימשיך תמשיך יחדל תחדל יפסיק תפסיק תוצא יוציא תוציא יביא תביא יובא "
     "תובא ייכלל תיכלל יכלול תכלול יחיל תחיל יוחל תוחל ישמור תשמור יישמר תישמר "
     "יפקיד תפקיד יופקד תופקד ישחרר תשחרר ישוחרר תשוחרר יעכב תעכב יעוכב תעוכב ינהג "
     "תנהג ינהל תנהל ינוהל תנוהל יפעל תפעל יופעל תופעל יתחייב תתחייב יתווסף תתווסף "
     "יגיע תגיע יובהר תובהר יראו ישלח תשלח יישלח תישלח יודיע תודיע יוזמן תוזמן "
     "יעריך תעריך יוערך תוערך יחשוב תחשוב יחסיר תחסיר יופחתו יעודכן תעודכן יעדכן "
-    "תעדכן יצמיד תצמיד יוצמד תוצמד ישונה תשונה ישנה תשנה"
+    "תעדכן יצמיד תצמיד יוצמד תוצמד ישונה תשונה תשנה"
 ).split()
 
 
@@ -5064,6 +5070,7 @@ _HEBREW_CONSEQUENT_VERBS = frozenset(_HEBREW_CONSEQUENT_VERB_STEMS) | frozenset(
     for stem in _HEBREW_CONSEQUENT_VERB_STEMS
     if stem.startswith("\u05d9")
 )
+_HEBREW_LAST_WORD_PATTERN = re.compile("([\u0590-\u05ff]+)[^\u0590-\u05ff]*$")
 _HEBREW_LIST_TAIL_WORD_PATTERN = re.compile(
     "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?<![\u0590-\u05ff])(?:בהתאמה|לפחות|בלבד|ומעלה|לכל\\s+היותר"
     "|לפי\\s+העניין|בקירוב)(?![\u0590-\u05ff])"
@@ -5082,6 +5089,23 @@ _HEBREW_UNIT_MODIFIER_PATTERN = re.compile(
 )
 
 
+_HEBREW_CONSTRUCT_HEAD_PATTERN = re.compile(
+    "(?:(?<!\u05d5)\u05ea|(?<![\u0590-\u05ff])(?!(?:לפי|כפי|אחרי|לגבי|בפני|מפני|כלפי"
+    "|ידי|בלי|מבלי|אולי|כי|מי|אי)(?![\u0590-\u05ff]))[\u0590-\u05ff]{2,}\u05d9)$"
+)
+
+
+def _hebrew_is_construct_head(word: str | None) -> bool:
+    """Whether ``word`` is a construct-state head whose complement follows.
+
+    A feminine construct ends in ת ("הכנסת", "שנת"), not in ות or ית; a
+    plural one in י ("דמי", "תשלומי"); the function words in י are none.
+    """
+    if word is None or word.endswith(("ות", "ית")):
+        return False
+    return _HEBREW_CONSTRUCT_HEAD_PATTERN.search(word) is not None
+
+
 def _hebrew_list_ends_within_clause(text: str, body_end: int) -> bool:
     """Whether the list ends inside its condition.
 
@@ -5093,6 +5117,10 @@ def _hebrew_list_ends_within_clause(text: str, body_end: int) -> bool:
     """
     position = body_end
     relative = False
+    previous_match = _HEBREW_LAST_WORD_PATTERN.search(
+        text, max(0, body_end - 40), body_end
+    )
+    previous = previous_match.group(1) if previous_match else None
     for _ in range(12):
         if _HEBREW_LIST_TAIL_WORD_PATTERN.match(text, position) is not None:
             return True
@@ -5102,13 +5130,14 @@ def _hebrew_list_ends_within_clause(text: str, body_end: int) -> bool:
             return position == body_end
         if _HEBREW_RELATIVE_MARKER_PATTERN.match(text, position) is not None:
             relative = True
-        elif not relative:
+        elif not relative and not _hebrew_is_construct_head(previous):
             word = _HEBREW_WORD_AFTER_PATTERN.match(text, position)
             if word is not None and word.group("word") in _HEBREW_CONSEQUENT_VERBS:
                 return False
         modifier = _HEBREW_UNIT_MODIFIER_PATTERN.match(text, position)
         if modifier is None:
             return False
+        previous = _HEBREW_WORD_TOKEN_PATTERN.findall(modifier.group(0))[-1]
         position = modifier.end()
     return False
 
