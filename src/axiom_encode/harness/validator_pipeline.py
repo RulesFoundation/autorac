@@ -5006,13 +5006,21 @@ def _hebrew_list_body_end(text: str, start: int) -> int:
 # suffix ("שעליה", "שבגינה", "שממנה"), a construct subject with its
 # definite complement ("שפקיד השומה"), a verb-shaped word ("שנקבע") or a
 # past plural ("ששולמו"), the lexical ש-words (שכיר, שוטף, שנתי)
-# excepted. A word after a construct-state noun -- a head ending in ת or
-# in the plural י ("הכנסת", "דמי", "תשלומי") -- is its complement, a
-# noun, whatever the lexicon says of its spelling ("מהכנסת תושב ישראל").
+# excepted. A relative clause on any subject, definite or not ("שבית
+# דין יקבע"), shows itself by its own verb within a few words.
+# The ש-initial words a statute uses that open no relative clause.
+_HEBREW_LEXICAL_SHIN_WORDS = (
+    "(?:של|שכיר|שכירה|שכירים|שוטף|שוטפת|שוטפים|שנתי|שנתית|שנתיים|שקל|שקלים|שיעור"
+    "|שיעורי|שיעורים|שכר|שלם|שלמה|שלמים|שנה|שנת|שני|שתי|שלושה|שלוש|שבעה|שבע|שמונה"
+    "|שישה|שש|שירות|שירותי|שווי|שוק|שער|שערי|שטח|שטחי|שם|שמות|שלב|שלבי|שעה|שעות"
+    "|שיטה|שיטת|שינוי|שינויים|שימוש|שאלה|שבוע|שבועות|שאר|שומה|שומת|שומות|שיפוי"
+    "|שיקום|שיקול|שיקולים|שיפור|שילוב|שיתוף|שליטה|שלטון|שמירה|שטר|שטרות|שיווק"
+    "|שדה|שדות|שבח|שגיאה|שאירים|שאיר|שביתה|שהות|שעבוד|שיעבוד|שותף|שותפות|שותפים)"
+)
 _HEBREW_RELATIVE_MARKER_PATTERN = re.compile(
-    "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?:אשר|(?!(?:של|שכיר|שכירה|שכירים|שוטף|שוטפת|שוטפים|שנתי|שנתית"
-    "|שנתיים|שקל|שקלים|שיעור|שיעורי|שיעורים|שכר|שלם|שלמה|שלמים|שנה|שנת|שני|שתי"
-    "|שלושה|שלוש|שבעה|שבע|שמונה|שישה|שש|שירות|שירותי)(?![\u0590-\u05ff]))"
+    "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?:אשר|(?!"
+    + _HEBREW_LEXICAL_SHIN_WORDS
+    + "(?![\u0590-\u05ff]))"
     "\u05e9(?:\u05d4[\u0590-\u05ff]+"
     "|[\u0590-\u05ff]{2,}(?=[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]+\u05d4[\u0590-\u05ff])"
     "|(?:על|ב|בגינ|ממנ|מ|ממ|לגבי|בשל|בעד|כנגד|כלפי|אל|אצל|תחת|לפי|בתוכ|מתוכ)"
@@ -5070,7 +5078,6 @@ _HEBREW_CONSEQUENT_VERBS = frozenset(_HEBREW_CONSEQUENT_VERB_STEMS) | frozenset(
     for stem in _HEBREW_CONSEQUENT_VERB_STEMS
     if stem.startswith("\u05d9")
 )
-_HEBREW_LAST_WORD_PATTERN = re.compile("([\u0590-\u05ff]+)[^\u0590-\u05ff]*$")
 _HEBREW_LIST_TAIL_WORD_PATTERN = re.compile(
     "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?<![\u0590-\u05ff])(?:בהתאמה|לפחות|בלבד|ומעלה|לכל\\s+היותר"
     "|לפי\\s+העניין|בקירוב)(?![\u0590-\u05ff])"
@@ -5089,21 +5096,34 @@ _HEBREW_UNIT_MODIFIER_PATTERN = re.compile(
 )
 
 
-_HEBREW_CONSTRUCT_HEAD_PATTERN = re.compile(
-    "(?:(?<!\u05d5)\u05ea|(?<![\u0590-\u05ff])(?!(?:לפי|כפי|אחרי|לגבי|בפני|מפני|כלפי"
-    "|ידי|בלי|מבלי|אולי|כי|מי|אי)(?![\u0590-\u05ff]))[\u0590-\u05ff]{2,}\u05d9)$"
+_HEBREW_RELATIVE_SUBJECT_PATTERN = re.compile(
+    "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?!"
+    + _HEBREW_LEXICAL_SHIN_WORDS
+    + "(?![\u0590-\u05ff]))"
+    "\u05e9[\u0590-\u05ff]{2,}(?![\u0590-\u05ff])"
 )
 
 
-def _hebrew_is_construct_head(word: str | None) -> bool:
-    """Whether ``word`` is a construct-state head whose complement follows.
+def _hebrew_opens_relative_clause(text: str, position: int) -> bool:
+    """Whether a relative clause opens at ``position``.
 
-    A feminine construct ends in ת ("הכנסת", "שנת"), not in ות or ית; a
-    plural one in י ("דמי", "תשלומי"); the function words in י are none.
+    A relative marker, or ש on a subject whose clause shows its own verb
+    within the next three words ("שבית דין יקבע", "שפקיד השומה יקבע").
     """
-    if word is None or word.endswith(("ות", "ית")):
+    if _HEBREW_RELATIVE_MARKER_PATTERN.match(text, position) is not None:
+        return True
+    subject = _HEBREW_RELATIVE_SUBJECT_PATTERN.match(text, position)
+    if subject is None:
         return False
-    return _HEBREW_CONSTRUCT_HEAD_PATTERN.search(word) is not None
+    cursor = subject.end()
+    for _ in range(3):
+        word = _HEBREW_WORD_AFTER_PATTERN.match(text, cursor)
+        if word is None:
+            return False
+        if word.group("word") in _HEBREW_CONSEQUENT_VERBS:
+            return True
+        cursor = word.end()
+    return False
 
 
 def _hebrew_list_ends_within_clause(text: str, body_end: int) -> bool:
@@ -5117,10 +5137,6 @@ def _hebrew_list_ends_within_clause(text: str, body_end: int) -> bool:
     """
     position = body_end
     relative = False
-    previous_match = _HEBREW_LAST_WORD_PATTERN.search(
-        text, max(0, body_end - 40), body_end
-    )
-    previous = previous_match.group(1) if previous_match else None
     for _ in range(12):
         if _HEBREW_LIST_TAIL_WORD_PATTERN.match(text, position) is not None:
             return True
@@ -5128,16 +5144,15 @@ def _hebrew_list_ends_within_clause(text: str, body_end: int) -> bool:
             return True
         if _HEBREW_SENTENCE_END_PATTERN.match(text, position) is not None:
             return position == body_end
-        if _HEBREW_RELATIVE_MARKER_PATTERN.match(text, position) is not None:
+        if _hebrew_opens_relative_clause(text, position):
             relative = True
-        elif not relative and not _hebrew_is_construct_head(previous):
+        elif not relative:
             word = _HEBREW_WORD_AFTER_PATTERN.match(text, position)
             if word is not None and word.group("word") in _HEBREW_CONSEQUENT_VERBS:
                 return False
         modifier = _HEBREW_UNIT_MODIFIER_PATTERN.match(text, position)
         if modifier is None:
             return False
-        previous = _HEBREW_WORD_TOKEN_PATTERN.findall(modifier.group(0))[-1]
         position = modifier.end()
     return False
 

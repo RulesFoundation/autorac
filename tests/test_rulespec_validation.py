@@ -19478,6 +19478,48 @@ def test_a_construct_complement_is_a_noun_whatever_its_spelling():
         assert extract_numbers_from_text(text) == expected, text
 
 
+def test_a_feminine_noun_hides_no_verb_and_a_relative_subject_shows_its_own():
+    # Review round 119 on #1585: no ending marks a construct head, so a verb
+    # after a feminine noun still splits the list; a relative clause on an
+    # indefinite construct subject shows its own verb.
+    rates = {0.1, 0.2, 0.3}
+    split = {500.0, 2_000_000.0, 3_000_000.0}
+    for text, expected in (
+        (
+            "אם התשלומים הם 500, 2 או 3 מיליון שקלים לעובדת ישלם המעסיק, והיתרה תוחזר.",
+            split,
+        ),
+        (
+            "אם התשלומים הם 500, 2 או 3 מיליון שקלים למבוטחת ישלם המוסד, והיתרה תוחזר.",
+            split,
+        ),
+        (
+            "אם התשלומים הם 500, 2 או 3 מיליון שקלים הביטוח הלאומי ישלם, והיתרה תוחזר.",
+            split,
+        ),
+        (
+            "אם התשלומים הם 500, 2 או 3 מיליון שקלים שטח המפעל ישלם המעסיק, והיתרה תוחזר.",
+            split,
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה שבית דין יקבע, תחול ההוראה.",
+            rates,
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה שבית משפט מחוזי יקבע, תחול ההוראה.",
+            rates,
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה שפקיד השומה יקבע, תחול ההוראה.",
+            rates,
+        ),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסת תושב ישראל, תחול ההוראה.", rates),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה נוספת, תחול ההוראה.", rates),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
