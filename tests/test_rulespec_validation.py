@@ -19404,6 +19404,46 @@ def test_the_consequents_verb_is_known_by_word():
         assert extract_numbers_from_text(text) == expected, text
 
 
+def test_the_consequents_verb_is_a_closed_lexicon():
+    # Review round 117 on #1585: an unlisted verb must not head the list and
+    # an unlisted possessive must, so the verb is a closed lexicon, singular
+    # and plural, and no spelling counts as a verb.
+    rates = {0.1, 0.2, 0.3}
+    amounts = {1_000_000.0, 2_000_000.0, 3_000_000.0}
+    split = {500.0, 2_000_000.0, 3_000_000.0}
+    for text, expected in (
+        ("אם התשלומים הם 500, 2 או 3 מיליון שקלים יקבל העובד, והיתרה תוחזר.", split),
+        ("אם התשלומים הם 500, 2 או 3 מיליון שקלים יוענק לעובד, והיתרה תוחזר.", split),
+        ("אם התשלומים הם 500, 2 או 3 מיליון שקלים יקבלו העובדים, והיתרה תוחזר.", split),
+        (
+            "אם התשלומים הם 500, 2 או 3 מיליון שקלים לעובד יזכו בהם, והיתרה תוחזר.",
+            split,
+        ),
+        (
+            "אם הסכומים הם 1, 2 ו־3 מיליון שקלים לעובד ישולמו כמענק, והיתרה תוחזר.",
+            {1.0, 2.0, 3_000_000.0},
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה שממנה ישולם המס, תחול ההוראה.",
+            rates,
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה שממנו ינוכה המס, תחול ההוראה.",
+            rates,
+        ),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מערך יבולו, תחול ההוראה.", rates),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מערך ייצורו, תחול ההוראה.", rates),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מערך יבולו של החקלאי, תחול ההוראה.", rates),
+        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים לילדיו, ישולם מענק.", amounts),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסת יחיד החייב במס, תחול ההוראה.",
+            rates,
+        ),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

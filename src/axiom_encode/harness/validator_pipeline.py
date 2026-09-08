@@ -4991,36 +4991,36 @@ def _hebrew_list_body_end(text: str, start: int) -> int:
 # Within a condition the comma before the consequent is the one after the
 # condition, so a headed list inside the condition is followed by that
 # comma, a clause separator or a list tail, with at most modifiers of the
-# unit between ("אחוזים מהכנסה נמוכה, תחול ההוראה", "אחוזים מהכנסת יחיד
-# החייב במס, תחול ההוראה", "שקלים מסוימים, ישולם מענק"); a list the
-# consequent swallowed runs on to the sentence end with words between and
-# no comma ("שקלים משולמים כמענק.") or shows the consequent's verb before
-# the comma ("שקלים ישולמו כמענק, והיתרה תוחזר", "שקלים לעובד ישלם מעסיק,
-# והיתרה תוחזר"). No shape tells "ישלם" from "יחיד" or "אבטלה": the verb
-# is known by word. A statute writes its consequents in the third-person
-# future, a closed list of forms ("ישלם", "תשלם", "ישולם", "תחול",
-# "יינתן", "ישית", "יוטל", "יוחזר"), and in the plural, which begins in י
-# and ends in ו ("ישולמו", "יחולו"), the י-initial possessives ("ילדיו",
-# "יורשיו") excepted; any other word after the unit modifies it. A
-# relative clause carries its own verb -- "אשר", or ש before the article
-# ("שהמעסיק"), a preposition with its suffix ("שעליה", "שבגינה"), a
-# verb-shaped word ("שנקבע") or a past plural ("ששולמו"), the lexical
-# ש-words (שכיר, שוטף, שנתי) excepted.
+# unit between ("אחוזים מהכנסה נמוכה, תחול ההוראה", "אחוזים מערך יבולו,
+# תחול ההוראה", "שקלים מסוימים, ישולם מענק"); a list the consequent
+# swallowed runs on to the sentence end with words between and no comma
+# ("שקלים משולמים כמענק.") or shows the consequent's verb before the comma
+# ("שקלים ישולמו כמענק, והיתרה תוחזר", "שקלים יקבל העובד, והיתרה תוחזר").
+# No shape tells "ישלם" from "יחיד", nor "ישולמו" from the possessive
+# "יבולו": the verb is known by word alone. A statute writes its
+# consequents in the third-person future of a closed list of verbs, in
+# the singular ("ישלם", "תשלם", "ישולם", "תחול", "יינתן", "יקבל",
+# "יוענק") and the plural ("ישולמו", "יחולו", "יקבלו"); any other word
+# after the unit modifies it. A relative clause carries its own verb --
+# "אשר", or ש before the article ("שהמעסיק"), a preposition with its
+# suffix ("שעליה", "שבגינה", "שממנה"), a verb-shaped word ("שנקבע") or a
+# past plural ("ששולמו"), the lexical ש-words (שכיר, שוטף, שנתי) excepted.
 _HEBREW_RELATIVE_MARKER_PATTERN = re.compile(
     "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?:אשר|(?!(?:של|שכיר|שכירה|שכירים|שוטף|שוטפת|שוטפים|שנתי|שנתית"
     "|שנתיים|שקל|שקלים|שיעור|שיעורי|שיעורים|שכר|שלם|שלמה|שלמים|שנה|שנת|שני|שתי"
     "|שלושה|שלוש|שבעה|שבע|שמונה|שישה|שש|שירות|שירותי)(?![\u0590-\u05ff]))"
     "\u05e9(?:\u05d4[\u0590-\u05ff]+"
-    "|(?:על|ב|בגינ|מ|ממ|לגבי|בשל|בעד|כנגד|אל|אצל|תחת|לפי|בתוכ|מתוכ)"
+    "|(?:על|ב|בגינ|ממנ|מ|ממ|לגבי|בשל|בעד|כנגד|כלפי|אל|אצל|תחת|לפי|בתוכ|מתוכ)"
     "(?:ו|ה|הם|הן|ם|ן|נו|יו|יה|יהם|יהן)"
     "|[\u05d9\u05ea\u05e0\u05d0][\u0590-\u05ff]{2,}"
     "|[\u0590-\u05ff]{2,}\u05d5))(?![\u0590-\u05ff])"
 )
-_HEBREW_VERB_SHAPED_WORD_PATTERN = re.compile(
-    "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*\u05d5?(?P<word>[\u05d9\u05ea\u05e0\u05d0][\u0590-\u05ff]{2,})(?![\u0590-\u05ff])"
+_HEBREW_WORD_AFTER_PATTERN = re.compile(
+    "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*\u05d5?(?P<word>[\u0590-\u05ff]{2,})(?![\u0590-\u05ff])"
 )
-# The third-person future forms a statute writes its consequents in.
-_HEBREW_CONSEQUENT_VERBS = frozenset(
+# The third-person singular future forms a statute writes its consequents
+# in, masculine and feminine; the plural is derived from the masculine.
+_HEBREW_CONSEQUENT_VERB_STEMS = (
     "ישלם תשלם ישולם תשולם ינכה תנכה ינוכה תנוכה יחול תחול יהיה תהיה ייתן תיתן "
     "יינתן תינתן ינתן תנתן ישית תשית יטיל תטיל יוטל תוטל יחייב תחייב יחויב תחויב "
     "יזכה תזכה יזוכה תזוכה יראה תראה ייראה תיראה יחשב תחשב ייחשב תיחשב יחושב תחושב "
@@ -5028,12 +5028,41 @@ _HEBREW_CONSEQUENT_VERBS = frozenset(
     "תאשר יאושר תאושר יישא תישא ישא תשא יגבה תגבה ייגבה תיגבה יקזז תקזז יקוזז תקוזז "
     "יעביר תעביר יועבר תועבר ישמש תשמש ימסור תמסור יימסר תימסר ידחה תדחה יידחה "
     "תידחה יקטן תקטן יגדל תגדל יעלה תעלה יירד תרד ייזקף תיזקף יזקוף תזקוף יצורף "
-    "תצורף יצרף תצרף ייחשבו יוסף תוסף יוסיף תוסיף ייווסף תיווסף יחלט תחלט יחולט "
-    "תחולט יורה תורה יחליט תחליט יוחלט תוחלט יפרע תפרע ייפרע תיפרע יעמוד תעמוד "
-    "יעמיד תעמיד יועמד תועמד".split()
-)
-_HEBREW_POSSESSIVE_NOUNS = frozenset(
-    "ילדו ילדיו ידו ידיו יורשו יורשיו יומו ימיו יחדיו יתרתו".split()
+    "תצורף יצרף תצרף יוסף תוסף יוסיף תוסיף ייווסף תיווסף יחלט תחלט יחולט תחולט "
+    "יורה תורה יחליט תחליט יוחלט תוחלט יפרע תפרע ייפרע תיפרע יעמוד תעמוד יעמיד "
+    "תעמיד יועמד תועמד יקבל תקבל יתקבל תתקבל יוענק תוענק יעניק תעניק יגרע תגרע "
+    "ייגרע תיגרע ייעשה תיעשה יעשה תעשה יבוצע תבוצע יתבצע תתבצע יורשה תורשה יאפשר "
+    "תאפשר יימנע תימנע יופסק תופסק יבוטל תבוטל יחודש תחודש יוארך תוארך יושב תושב "
+    "יושלם תושלם יימחק תימחק יוגש תוגש יגיש תגיש ישולב תשולב יוכר תוכר יכיר תכיר "
+    "יוקצה תוקצה יוסדר תוסדר יפצה תפצה יפוצה תפוצה ישפה תשפה ישופה תשופה יימשך "
+    "תימשך ימשיך תמשיך יחדל תחדל יפסיק תפסיק יוצא תוצא יוציא תוציא יביא תביא יובא "
+    "תובא ייכלל תיכלל יכלול תכלול יחיל תחיל יוחל תוחל ישמור תשמור יישמר תישמר "
+    "יפקיד תפקיד יופקד תופקד ישחרר תשחרר ישוחרר תשוחרר יעכב תעכב יעוכב תעוכב ינהג "
+    "תנהג ינהל תנהל ינוהל תנוהל יפעל תפעל יופעל תופעל יתחייב תתחייב יתווסף תתווסף "
+    "יגיע תגיע יובהר תובהר יראו ישלח תשלח יישלח תישלח יודיע תודיע יוזמן תוזמן "
+    "יעריך תעריך יוערך תוערך יחשוב תחשוב יחסיר תחסיר יופחתו יעודכן תעודכן יעדכן "
+    "תעדכן יצמיד תצמיד יוצמד תוצמד ישונה תשונה ישנה תשנה"
+).split()
+
+
+_HEBREW_MEDIAL_FORMS = str.maketrans("ךםןףץ", "כמנפצ")
+
+
+def _hebrew_plural_future(stem: str) -> str:
+    """The third-person plural of a masculine singular future form.
+
+    The ו suffix moves a final letter to its medial form ("ישולם" becomes
+    "ישולמו"), and replaces a final ה ("יזכה" becomes "יזכו").
+    """
+    if stem.endswith("\u05d4"):
+        return stem[:-1] + "\u05d5"
+    return stem[:-1] + stem[-1].translate(_HEBREW_MEDIAL_FORMS) + "\u05d5"
+
+
+_HEBREW_CONSEQUENT_VERBS = frozenset(_HEBREW_CONSEQUENT_VERB_STEMS) | frozenset(
+    _hebrew_plural_future(stem)
+    for stem in _HEBREW_CONSEQUENT_VERB_STEMS
+    if stem.startswith("\u05d9")
 )
 _HEBREW_LIST_TAIL_WORD_PATTERN = re.compile(
     "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?<![\u0590-\u05ff])(?:בהתאמה|לפחות|בלבד|ומעלה|לכל\\s+היותר"
@@ -5053,30 +5082,14 @@ _HEBREW_UNIT_MODIFIER_PATTERN = re.compile(
 )
 
 
-def _hebrew_is_consequent_verb(word: str) -> bool:
-    """Whether ``word`` is a third-person future verb a consequent is written in.
-
-    The closed list of singular forms, or the plural that begins in י and
-    ends in ו, the י-initial possessives excepted.
-    """
-    if word in _HEBREW_CONSEQUENT_VERBS:
-        return True
-    return (
-        word.startswith("\u05d9")
-        and word.endswith("\u05d5")
-        and len(word) >= 4
-        and word not in _HEBREW_POSSESSIVE_NOUNS
-    )
-
-
 def _hebrew_list_ends_within_clause(text: str, body_end: int) -> bool:
     """Whether the list ends inside its condition.
 
     A comma, a clause separator or a list tail after the unit, at most
     modifiers between, ends it there ("אחוזים מהכנסה נמוכה, תחול ההוראה");
     the sentence ending with words between and no comma ("שקלים משולמים
-    כמענק.") or the consequent's verb ("שקלים ישולמו כמענק", "שקלים לעובד
-    ישלם מעסיק") is the clause running on.
+    כמענק.") or the consequent's verb, known by word ("שקלים ישולמו
+    כמענק", "שקלים יקבל העובד"), is the clause running on.
     """
     position = body_end
     relative = False
@@ -5090,8 +5103,8 @@ def _hebrew_list_ends_within_clause(text: str, body_end: int) -> bool:
         if _HEBREW_RELATIVE_MARKER_PATTERN.match(text, position) is not None:
             relative = True
         elif not relative:
-            verb = _HEBREW_VERB_SHAPED_WORD_PATTERN.match(text, position)
-            if verb is not None and _hebrew_is_consequent_verb(verb.group("word")):
+            word = _HEBREW_WORD_AFTER_PATTERN.match(text, position)
+            if word is not None and word.group("word") in _HEBREW_CONSEQUENT_VERBS:
                 return False
         modifier = _HEBREW_UNIT_MODIFIER_PATTERN.match(text, position)
         if modifier is None:
