@@ -1552,6 +1552,69 @@ def test_provision_inherits_document_identifiers_for_de_amendment_discovery(tmp_
     assert provision.amendment_documents == document.amendment_documents
 
 
+@pytest.mark.parametrize(
+    ("amendment_metadata", "select_amendment_scope", "expected"),
+    [
+        ({"amendment_targets": ["de/statute/bgb"]}, True, True),
+        ({"amendment_targets": ["de/statute/bgb/1591"]}, True, True),
+        ({"amendment_targets": ["de/statute/bgbeg"]}, True, False),
+        ({"amends": "Bürgerliches Gesetzbuch"}, True, False),
+        ({"amendment_targets": ["de/statute/bgb"]}, False, False),
+    ],
+)
+def test_explicit_amendment_targets_cross_only_selected_release_scopes(
+    tmp_path, amendment_metadata, select_amendment_scope, expected
+):
+    target = "de/statute/bgb/1591"
+    amendment = "de/statute/kindrg/document-1"
+    target_scope = ("de", "statute", "civil-capture")
+    amendment_scope = ("de", "statute", "historical-capture")
+    release = _write_test_corpus_release(
+        tmp_path,
+        [
+            {
+                "citation_path": "de/statute/bgb",
+                "body": "Bürgerliches Gesetzbuch",
+                "heading": "Bürgerliches Gesetzbuch",
+                "source_path": "sources/de/bgb.xml",
+                "version": target_scope[2],
+            },
+            {
+                "citation_path": target,
+                "body": "Mutter eines Kindes ist die Frau, die es geboren hat.",
+                "source_path": "sources/de/bgb.xml",
+                "version": target_scope[2],
+            },
+            {
+                "citation_path": amendment,
+                "body": "Dieses Gesetz tritt am 1. Juli 1998 in Kraft.",
+                "source_path": "sources/de/kindrg.pdf",
+                "version": amendment_scope[2],
+                "metadata": {
+                    "document_type": "amendment act",
+                    **amendment_metadata,
+                },
+            },
+        ],
+        selected_scopes=(
+            [target_scope, amendment_scope]
+            if select_amendment_scope
+            else [target_scope]
+        ),
+    )
+
+    source = resolve_corpus_source_unit(target, release)
+
+    assert [item.citation_path for item in source.amendment_documents] == (
+        [amendment] if expected else []
+    )
+    if expected:
+        assert source.amendment_documents[0].match_tier == "structured"
+        assert source.amendment_documents[0].body == (
+            "Dieses Gesetz tritt am 1. Juli 1998 in Kraft."
+        )
+
+
 def test_dk_full_parity_structured_amendment_timelines_are_exhaustive(tmp_path):
     """Pin every relevant structured match among the live 48+3 amendment acts."""
 
