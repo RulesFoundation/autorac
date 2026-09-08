@@ -4746,43 +4746,59 @@ def _hebrew_rate_word_before(text: str, start: int) -> bool:
 # nothing, a bare plural copula ("ההכנסות הן 500 ו־2 ו־3%") is no such noun,
 # and a conditional clause ("אם התשלומים הם 500, 2 או 3%") states a condition.
 _HEBREW_LIST_COPULAS = "הם|הן|יהיו|תהיינה|הינם|הינן|של|כדלקמן:?|הבאים:?|הבאות:?"
-# Between the plural noun and its copula only a construct chain may stand:
-# definite nouns ("שיעורי המס", "סכומי הקנס") and the construct nouns of the
-# unit's kind ("שיעורי מס הכנסה", "שיעורי דמי הביטוח", "סכומי דמי ביטוח
-# לאומי") -- never a verb or a preposition, so "הקנסות ייגזרו מתשלום של",
-# "השיעורים יחושבו מהכנסה של" and "השיעורים יחולו על ההכנסה של" head
-# nothing.
+# Before a true copula the whole subject phrase stands between the plural
+# noun and the copula -- a construct chain ("שיעורי מס ערך מוסף הם", "סכומי
+# שכר העבודה הם"), a relative clause ("השיעורים שנקבעו בצו הם") -- since no
+# predicate can; up to three words, any of them. Before the genitive "של"
+# a predicate can intervene ("הקנסות ייגזרו מתשלום של", "השיעורים יחולו על
+# ההכנסה של"), so only a nominal chain may stand there: definite nouns
+# ("סכומי הקנס של") and the construct nouns of the unit's kind ("שיעורי מס
+# הכנסה של").
 _HEBREW_HEADING_CONSTRUCT_NOUNS = (
     "מס|מסי|הכנסה|הכנסת|ביטוח|לאומי|בריאות|דמי|תשלומי|מענקי|סכומי|שיעורי|ריבית|היטל"
 )
-_HEBREW_HEADING_COMPLEMENT = (
+_HEBREW_HEADING_NOMINAL_COMPLEMENT = (
     "(?:\\s+(?:\u05d4[\u0590-\u05ff]+|" + _HEBREW_HEADING_CONSTRUCT_NOUNS + ")){0,3}"
+)
+_HEBREW_HEADING_SUBJECT_COMPLEMENT = (
+    '(?:\\s+[\u0590-\u05ff]+(?:[\u05f4"][\u0590-\u05ff]+)?){0,3}'
+)
+_HEBREW_LIST_TRUE_COPULAS = "הם|הן|יהיו|תהיינה|הינם|הינן|כדלקמן:?|הבאים:?|הבאות:?"
+_HEBREW_HEADING_TAIL = (
+    "(?:"
+    + _HEBREW_HEADING_SUBJECT_COMPLEMENT
+    + "\\s+(?:"
+    + _HEBREW_LIST_TRUE_COPULAS
+    + ")|"
+    + _HEBREW_HEADING_NOMINAL_COMPLEMENT
+    + "\\s+של)(?![\u0590-\u05ff])"
 )
 _HEBREW_PLURAL_RATE_HEADING_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])(?:השיעורים|שיעורי|בשיעורים|שיעורים|הריביות|ריביות)"
-    + _HEBREW_HEADING_COMPLEMENT
-    + "\\s+(?:"
-    + _HEBREW_LIST_COPULAS
-    + ")(?![\u0590-\u05ff])"
+    + _HEBREW_HEADING_TAIL
 )
 _HEBREW_PLURAL_AMOUNT_HEADING_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])(?:הסכומים|סכומי|בסכומים|סכומים|התשלומים|תשלומי|תשלומים"
-    "|המענקים|מענקי|הקנסות|קנסות|הקצבאות|קצבאות)"
-    + _HEBREW_HEADING_COMPLEMENT
-    + "\\s+(?:"
-    + _HEBREW_LIST_COPULAS
-    + ")(?![\u0590-\u05ff])"
+    "|המענקים|מענקי|הקנסות|קנסות|הקצבאות|קצבאות)" + _HEBREW_HEADING_TAIL
 )
 # A conditional marker in the heading's own comma segment, after a preamble
-# ("לעניין זה, כאשר התשלומים הם") or with a vav ("וכאשר"), states a
+# ("לעניין זה, כאשר התשלומים הם") or with a vav ("וכאשר"), opens a
 # condition; "כש" is a prefix on the next word. A condition completed before
 # the segment ("אם ההכנסה נמוכה, השיעורים הם 10, 20 ו־30 אחוזים") leaves the
-# list headed.
+# list headed. Within a condition the list is headed when it lies wholly
+# inside it -- a comma, a stop or a list tail such as "בהתאמה" follows the
+# unit ("אם השיעורים הם 10, 20 ו־30 אחוזים בהתאמה, תחול ההוראה") -- and
+# heads nothing when the clause runs on past the unit into the consequent
+# ("כאשר התשלומים הם 500, 2 או 3 מיליון שקלים ישולמו כמענק").
 _HEBREW_CONDITIONAL_CLAUSE_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])\u05d5?(?:אם|כאשר|ככל\\s+ש|במקרה\\s+ש|אילו|לכשיהיה)(?![\u0590-\u05ff])"
     "|(?<![\u0590-\u05ff])\u05d5?כש(?=[\u0590-\u05ff])"
 )
 _HEBREW_SENTENCE_STOP_CHARACTERS = frozenset(".;:\n")
+_HEBREW_LIST_TAIL_PATTERN = re.compile(
+    "[ \\t]*(?:(?<![\u0590-\u05ff])(?:בהתאמה|לפחות|בלבד|ומעלה|לכל\\s+היותר"
+    "|לפי\\s+העניין|בקירוב)[ \\t]*)?(?:[,.;:\\n)]|$)"
+)
 # A line wrap inside a list -- after a comma, a join or the heading's copula
 # ("הסכומים הם 1,\n2 ו־3 מיליון", "הסכומים הם\n1, 2 ו־3 מיליון") -- is
 # whitespace; any other newline, a blank line included, ends the clause, so
@@ -4838,6 +4854,45 @@ def _hebrew_list_body_only(text: str, start: int, end: int) -> bool:
     return True
 
 
+def _hebrew_list_body_end(text: str, start: int) -> int:
+    """Where the list body running from ``start`` ends.
+
+    The end of its last number, join, scale word, percent noun or currency
+    word: "10, 20 ו־30 אחוזים בהתאמה" ends after the noun.
+    """
+    position = start
+    end = start
+    limit = min(len(text), start + 240)
+    while position < limit:
+        filler = _HEBREW_LIST_BODY_FILLER_PATTERN.match(text, position, limit)
+        consumed = text[position : filler.end()].rstrip(" \t\n,.;:")
+        if consumed:
+            end = position + len(consumed)
+        position = filler.end()
+        if position >= limit:
+            break
+        word_match = _HEBREW_WORD_TOKEN_PATTERN.match(text, position, limit)
+        if word_match is None:
+            break
+        word = word_match.group(0).rstrip("\u05be")
+        bare = word[1:] if len(word) > 1 and word.startswith("\u05d5") else word
+        if not (
+            word in _HEBREW_LIST_JOIN_WORDS
+            or _strip_hebrew_number_prefix(word, _HEBREW_RUN_START_VOCABULARY)
+            is not None
+            or word in _HEBREW_PRINTED_SCALE_VALUES
+            or bare in _HEBREW_PRINTED_SCALE_VALUES
+            or _hebrew_is_percent_noun(word)
+            or _hebrew_is_percent_noun(bare)
+            or word in _HEBREW_CURRENCY_WORDS
+            or bare in _HEBREW_CURRENCY_WORDS
+        ):
+            break
+        end = word_match.end()
+        position = end
+    return end
+
+
 _HEBREW_LIST_COLON_WORDS = (
     "כדלקמן",
     "הבאים",
@@ -4855,29 +4910,33 @@ def _hebrew_list_heading_end(text: str, start: int, rate: bool) -> int | None:
     """Where the heading of the list the number at ``start`` belongs to ends, or None.
 
     The clause runs back to a sentence stop, except the colon that
-    introduces a list ("כדלקמן:"); a conditional clause heads nothing; the
-    last plural noun of the unit's kind with its copula heads the list, and
-    only list items may stand between it and the number.
+    introduces a list ("כדלקמן:"); the last plural noun of the unit's kind
+    with its copula heads the list, and only list items may stand between it
+    and the number; within a condition the list must end before the clause
+    runs on.
     """
     clause_start = start
     while clause_start > 0 and start - clause_start < 160:
         character = text[clause_start - 1]
         if character in _HEBREW_SENTENCE_STOP_CHARACTERS:
-            if (
-                character == "\n"
-                and clause_start < len(text)
-                and (
-                    text[clause_start].isdigit()
-                    or "\u0590" <= text[clause_start] <= "\u05ff"
-                )
-                and _HEBREW_SOFT_WRAP_BEFORE_PATTERN.search(
-                    text, max(0, clause_start - 24), clause_start - 1
-                )
-                is not None
-            ):
-                # A soft wrap inside the list ("1,\n2 ו־3", "הם\n1, 2").
-                clause_start -= 1
-                continue
+            if character == "\n":
+                resumed = clause_start
+                while resumed < len(text) and text[resumed] in " \t":
+                    resumed += 1
+                if (
+                    resumed < len(text)
+                    and (
+                        text[resumed].isdigit() or "\u0590" <= text[resumed] <= "\u05ff"
+                    )
+                    and _HEBREW_SOFT_WRAP_BEFORE_PATTERN.search(
+                        text, max(0, clause_start - 24), clause_start - 1
+                    )
+                    is not None
+                ):
+                    # A soft wrap inside the list, indented or not ("1,\n2
+                    # ו־3", "הם\n  1, 2").
+                    clause_start -= 1
+                    continue
             if (
                 character == "."
                 and clause_start >= 2
@@ -4911,6 +4970,8 @@ def _hebrew_list_heading_end(text: str, start: int, rate: bool) -> int | None:
             text, max(clause_start, segment_start), heading.start()
         )
         is not None
+        and _HEBREW_LIST_TAIL_PATTERN.match(text, _hebrew_list_body_end(text, start))
+        is None
     ):
         return None
     return heading.end()

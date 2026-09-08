@@ -18793,6 +18793,69 @@ def test_headed_thousand_plus_rate_multipliers_share_the_scale():
         assert extract_numbers_from_text(text) == expected, text
 
 
+def test_the_subject_phrase_stands_before_a_true_copula():
+    # Review round 106 on #1585: before a true copula the whole subject
+    # phrase heads the list; before "של" only a nominal chain does.
+    rates = {0.1, 0.2, 0.3}
+    amounts = {1_000_000.0, 2_000_000.0, 3_000_000.0}
+    for text, expected in (
+        ("שיעורי מס ערך מוסף הם 10, 20 ו־30 אחוזים.", rates),
+        ("סכומי שכר העבודה הם 1, 2 ו־3 מיליון שקלים.", amounts),
+        ("השיעורים שנקבעו בצו הם 10, 20 ו־30 אחוזים.", rates),
+        ("הסכומים ששולמו לעובדים הם 1, 2 ו־3 מיליון שקלים.", amounts),
+        ("השיעורים יחולו על ההכנסה של 500 ו־2% ממנה ינוכו.", {500.0, 0.02}),
+        (
+            "הקנסות ייגזרו מתשלום של 500, 2 או 3 מיליון שקלים ישולמו כמענק.",
+            {500.0, 2_000_000.0, 3_000_000.0},
+        ),
+        ("השיעורים יחושבו מהכנסה של 500 ו־2% ממנה ינוכו כמס.", {500.0, 0.02}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
+def test_an_indented_soft_wrap_is_whitespace():
+    # Review round 106 on #1585: indentation after the wrap is whitespace
+    # too; a blank line, spaces on it or not, still ends the clause.
+    amounts = {1_000_000.0, 2_000_000.0, 3_000_000.0}
+    for text, expected in (
+        ("הסכומים הם 1,\n  2 ו־3 מיליון שקלים.", amounts),
+        ("הסכומים הם\n\t1, 2 ו־3 מיליון שקלים.", amounts),
+        ("השיעורים הם 10,\n    20 ו־30 אחוזים.", {0.1, 0.2, 0.3}),
+        ("הסכומים הם 1,\n  \n2 ו־3 מיליון שקלים.", {1.0, 2.0, 3_000_000.0}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
+def test_a_list_wholly_within_a_condition_is_headed():
+    # Review round 106 on #1585: a comma, a stop or a list tail after the
+    # unit keeps the list inside the condition; a clause running on past the
+    # unit into the consequent crosses a clause transition at the comma.
+    rates = {0.1, 0.2, 0.3}
+    for text, expected in (
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים בהתאמה, תחול ההוראה.", rates),
+        (
+            "אם הסכומים הם 1, 2 ו־3 מיליון שקלים בהתאמה, ישולם מענק.",
+            {1_000_000.0, 2_000_000.0, 3_000_000.0},
+        ),
+        (
+            "אם התשלומים הם 500, 2 או 3 מיליון שקלים, ישולם מענק.",
+            {500_000_000.0, 2_000_000.0, 3_000_000.0},
+        ),
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים.", rates),
+        ("כאשר השיעורים הם 10, 20 ו־30 אחוזים לפחות; תחול ההוראה.", rates),
+        (
+            "כאשר התשלומים הם 500, 2 או 3 מיליון שקלים ישולמו כמענק.",
+            {500.0, 2_000_000.0, 3_000_000.0},
+        ),
+        ("אם התשלומים הם 500, 2 או 3% מהם ינוכו כמס.", {500.0, 2.0, 0.03}),
+        ("לעניין זה, כשהשיעורים הם 500, 2 או 3% מהם ינוכו.", {500.0, 2.0, 0.03}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
