@@ -19550,6 +19550,42 @@ def test_a_relative_subject_needs_two_words_before_its_verb():
         assert extract_numbers_from_text(text) == expected, text
 
 
+def test_shin_before_vav_is_a_root_letter():
+    # Review round 121 on #1585: ש before ו is a root letter, so "שותפה" and
+    # "שוכרת הדירה" hide no verb; the relative ש on any subject, one word or
+    # titled, shows its verb within six words; the ועדה family is the
+    # exception.
+    rates = {0.1, 0.2, 0.3}
+    split = {500.0, 2_000_000.0, 3_000_000.0}
+    for text, expected in (
+        ("אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה ששופט יקבע, תחול ההוראה.", rates),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה ששר האוצר יקבע, תחול ההוראה.",
+            rates,
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה שבית דין יקבע, תחול ההוראה.",
+            rates,
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה שועדת הערר תקבע, תחול ההוראה.",
+            rates,
+        ),
+        (
+            "אם התשלומים הם 500, 2 או 3 מיליון שקלים שוכרת הדירה תשלם, והיתרה תוחזר.",
+            split,
+        ),
+        (
+            "אם התשלומים הם 500, 2 או 3 מיליון שקלים שוכר הדירה ישלם, והיתרה תוחזר.",
+            split,
+        ),
+        ("אם התשלומים הם 500, 2 או 3 מיליון שקלים שותפה תשלם, והיתרה תוחזר.", split),
+        ("אם התשלומים הם 500, 2 או 3 מיליון שקלים שוכרת תשלם, והיתרה תוחזר.", split),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

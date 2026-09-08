@@ -5003,13 +5003,13 @@ def _hebrew_list_body_end(text: str, start: int) -> int:
 # "יוענק") and the plural ("ישולמו", "יחולו", "יקבלו"); any other word
 # after the unit modifies it. A relative clause carries its own verb --
 # "אשר", or ש before the article ("שהמעסיק"), a preposition with its
-# suffix ("שעליה", "שבגינה", "שממנה"), a construct subject with its
-# definite complement ("שפקיד השומה"), a verb-shaped word ("שנקבע") or a
+# suffix ("שעליה", "שבגינה", "שממנה"), a verb-shaped word ("שנקבע") or a
 # past plural ("ששולמו"), the lexical ש-words (שכיר, שוטף, שנתי)
-# excepted. A relative clause on any subject, definite or not ("שבית
-# דין יקבע", "שבית דין אזורי לעבודה יקבע"), shows itself by its own verb
-# within a few words; a ש-word the verb follows at once ("שותפה תשלם") is
-# a one-word subject and no evidence of a relative prefix.
+# excepted. A relative clause on any subject, definite or not ("ששופט
+# יקבע", "שבית דין אזורי לעבודה יקבע"), shows itself by its own verb
+# within a few words. A Hebrew word almost never begins in ו, so ש before
+# ו is a root letter ("שותפה", "שוכרת", "שווי", "שומה"), never the relative
+# prefix, the ועדה family excepted ("שועדת הערר תקבע").
 # The ש-initial words a statute uses that open no relative clause.
 _HEBREW_LEXICAL_SHIN_WORDS = (
     "(?:של|שכיר|שכירה|שכירים|שוטף|שוטפת|שוטפים|שנתי|שנתית|שנתיים|שקל|שקלים|שיעור"
@@ -5025,7 +5025,6 @@ _HEBREW_RELATIVE_MARKER_PATTERN = re.compile(
     + _HEBREW_LEXICAL_SHIN_WORDS
     + "(?![\u0590-\u05ff]))"
     "\u05e9(?:\u05d4[\u0590-\u05ff]+"
-    "|[\u0590-\u05ff]{2,}(?=[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]+\u05d4[\u0590-\u05ff])"
     "|(?:על|ב|בגינ|ממנ|מ|ממ|לגבי|בשל|בעד|כנגד|כלפי|אל|אצל|תחת|לפי|בתוכ|מתוכ)"
     "(?:ו|ה|הם|הן|ם|ן|נו|יו|יה|יהם|יהן)"
     "|[\u05d9\u05ea\u05e0\u05d0][\u0590-\u05ff]{2,}"
@@ -5103,17 +5102,18 @@ _HEBREW_RELATIVE_SUBJECT_PATTERN = re.compile(
     "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?!"
     + _HEBREW_LEXICAL_SHIN_WORDS
     + "(?![\u0590-\u05ff]))"
-    "\u05e9[\u0590-\u05ff]{2,}(?![\u0590-\u05ff])"
+    "\u05e9(?!\u05d5(?!(?:עדה|עדת|עד|תק|תיק|תיקה)(?![\u0590-\u05ff])))"
+    "[\u0590-\u05ff]{2,}(?![\u0590-\u05ff])"
 )
 
 
 def _hebrew_opens_relative_clause(text: str, position: int) -> bool:
     """Whether a relative clause opens at ``position``.
 
-    A relative marker, or ש on a subject of two words or more whose clause
-    shows its own verb within the next six words ("שבית דין יקבע", "שבית
-    דין אזורי לעבודה יקבע"); a ש-word the verb follows at once ("שותפה
-    תשלם") is a one-word subject and no evidence of a relative prefix.
+    A relative marker, or the relative ש on a subject whose clause shows
+    its own verb within the next six words ("ששופט יקבע", "שבית דין אזורי
+    לעבודה יקבע"); ש before ו is a root letter ("שותפה תשלם", "שוכרת הדירה
+    תשלם"), the ועדה family excepted.
     """
     if _HEBREW_RELATIVE_MARKER_PATTERN.match(text, position) is not None:
         return True
@@ -5121,12 +5121,12 @@ def _hebrew_opens_relative_clause(text: str, position: int) -> bool:
     if subject is None:
         return False
     cursor = subject.end()
-    for index in range(6):
+    for _ in range(6):
         word = _HEBREW_WORD_AFTER_PATTERN.match(text, cursor)
         if word is None:
             return False
         if word.group("word") in _HEBREW_CONSEQUENT_VERBS:
-            return index >= 1
+            return True
         cursor = word.end()
     return False
 
