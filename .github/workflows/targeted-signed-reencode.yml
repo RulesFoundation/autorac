@@ -1159,6 +1159,7 @@ jobs:
           REPAIR_TESTS_ONLY: ${{ steps.repair_candidate.outputs.tests_only }}
           REPAIR_RUN_ID: ${{ inputs.repair_run_id }}
           REPAIR_RUN_LANE: ${{ inputs.repair_run_lane }}
+          REPAIR_RULESPEC_PATH: ${{ inputs.repair_rulespec_path }}
           REPLACE_RULESPEC_PATH: ${{ inputs.replace_rulespec_path }}
           REPLACE_LEGACY_RULESPEC_PATH: ${{ inputs.replace_legacy_rulespec_path }}
           LEGACY_EXACT_DEPENDENT_RULESPEC_PATH: ${{ inputs.legacy_exact_dependent_rulespec_path }}
@@ -1177,6 +1178,7 @@ jobs:
           set -euo pipefail
           : "${REPAIR_TESTS_ONLY:=false}"
           : "${REPAIR_RUN_LANE:=target}"
+          : "${REPAIR_RULESPEC_PATH:=}"
           : "${QUEUE_ID:=}"
           : "${REPLACE_RULESPEC_PATH:=}"
           : "${REPLACE_LEGACY_RULESPEC_PATH:=}"
@@ -1510,6 +1512,12 @@ jobs:
           if [ -n "$DEPENDENT_CITATION" ]; then
             dependent_rulespec_path="$("$workflow_python" "$backfill_helper" \
               citation-rulespec-path "$DEPENDENT_CITATION")"
+          fi
+          if [ -n "${REPAIR_CANDIDATE_ROOT:-}" ] && \
+             [ "$REPAIR_RUN_LANE" = "dependent" ] && \
+             [ "$dependent_rulespec_path" != "$REPAIR_RULESPEC_PATH" ]; then
+            echo "dependent repair RuleSpec path does not match its citation" >&2
+            exit 1
           fi
           if [ -n "$SECOND_DEPENDENT_CITATION" ]; then
             second_dependent_rulespec_path="$("$workflow_python" "$backfill_helper" \
@@ -1853,9 +1861,15 @@ jobs:
               if [ -n "$SECOND_DEPENDENT_CITATION" ]; then
                 dependent_target_only=true
               fi
+              dependent_replacement_path=""
+              if [ -n "${REPAIR_CANDIDATE_ROOT:-}" ] && \
+                 [ "$REPAIR_RUN_LANE" = "dependent" ]; then
+                dependent_replacement_path="$dependent_rulespec_path"
+              fi
               run_signed_encode \
                 "$DEPENDENT_CITATION" "$DEPENDENT_REVIEW_FINDING" \
-                "$dependent_target_only" dependent "" "" false
+                "$dependent_target_only" dependent \
+                "$dependent_replacement_path" "" false
               if [ -n "$SECOND_DEPENDENT_CITATION" ]; then
                 run_signed_encode \
                   "$SECOND_DEPENDENT_CITATION" \
