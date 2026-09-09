@@ -1832,6 +1832,7 @@ _HEBREW_NUMBER_WORD_VALUES = {
     "שתים": 2.0,
     "שתי": 2.0,
     "שלוש": 3.0,
+    "שלש": 3.0,
     "שלושה": 3.0,
     "שלשה": 3.0,
     "שלושת": 3.0,
@@ -1840,6 +1841,7 @@ _HEBREW_NUMBER_WORD_VALUES = {
     "ארבעת": 4.0,
     "חמש": 5.0,
     "חמישה": 5.0,
+    "חמשה": 5.0,
     "חמשת": 5.0,
     "שש": 6.0,
     "שישה": 6.0,
@@ -1890,12 +1892,14 @@ _HEBREW_TEEN_UNIT_VALUES = {
     "שתים": 2.0,
     "שתיים": 2.0,
     "שלוש": 3.0,
+    "שלש": 3.0,
     "שלושה": 3.0,
     "שלשה": 3.0,
     "ארבע": 4.0,
     "ארבעה": 4.0,
     "חמש": 5.0,
     "חמישה": 5.0,
+    "חמשה": 5.0,
     "שש": 6.0,
     "שישה": 6.0,
     "ששה": 6.0,
@@ -5017,19 +5021,153 @@ def _hebrew_list_body_end(text: str, start: int) -> int:
 # תקבע"). Before another letter the lexical ש-nouns a statute uses
 # (שליח, שכן, שמאי) are listed; every other ש-word is the prefix.
 # The ש-initial words a statute uses that open no relative clause.
-_HEBREW_LEXICAL_SHIN_WORDS = (
-    "(?:של|שכיר|שכירה|שכירים|שוטף|שוטפת|שוטפים|שנתי|שנתית|שנתיים|שקל|שקלים|שיעור"
-    "|שיעורי|שיעורים|שכר|שלם|שלמה|שלמים|שנה|שנת|שני|שתי|שלושה|שלוש|שבעה|שבע|שמונה"
-    "|שישה|שש|שירות|שירותי|שווי|שוק|שער|שערי|שטח|שטחי|שם|שמות|שלב|שלבי|שעה|שעות"
-    "|שיטה|שיטת|שינוי|שינויים|שימוש|שאלה|שבוע|שבועות|שאר|שומה|שומת|שומות|שיפוי"
-    "|שיקום|שיקול|שיקולים|שיפור|שילוב|שיתוף|שליטה|שלטון|שמירה|שטר|שטרות|שיווק"
-    "|שדה|שדות|שבח|שגיאה|שאירים|שאיר|שביתה|שהות|שעבוד|שיעבוד|שותף|שותפה|שותפת|שותפות"
-    "|שותפים|שליח|שליחה|שליחי|שלוח|שלוחה|שלוחות|שכן|שכנה|שכנים|שמאי|שמאים|שמאות"
-    "|שוכר|שוכרת|שוכרים|שולח|שולחת|שולחים"
-    "|שמש|שוער|שגריר|שגרירות|שחקן|שדרן|שרת|שלט|שלטים|שלד|שריפה|שרשרת|שביל|שבוי"
-    "|שגרה|שיר|שירה|שדרה|שעון|שפה|שפע|שקט|שקע|שכונה|שכונת|שמחה|שאלות|שאילתה"
-    "|שדרות|שלוחת|שליטת|שמות|שמי|שמו|שמה|שמם|שרה|שרון|שמעון|שאול|שלומית|שולה)"
+_HEBREW_LEXICAL_SHIN_STEMS = (
+    "של",
+    "שכיר",
+    "שכירה",
+    "שכירים",
+    "שוטף",
+    "שוטפת",
+    "שוטפים",
+    "שנתי",
+    "שנתית",
+    "שנתיים",
+    "שקל",
+    "שקלים",
+    "שיעור",
+    "שיעורי",
+    "שיעורים",
+    "שכר",
+    "שלם",
+    "שלמה",
+    "שלמים",
+    "שנה",
+    "שנת",
+    "שני",
+    "שתי",
+    "שלושה",
+    "שלוש",
+    "שבעה",
+    "שבע",
+    "שמונה",
+    "שישה",
+    "שש",
+    "שירות",
+    "שירותי",
+    "שווי",
+    "שוק",
+    "שער",
+    "שערי",
+    "שטח",
+    "שטחי",
+    "שם",
+    "שמות",
+    "שלב",
+    "שלבי",
+    "שעה",
+    "שעות",
+    "שיטה",
+    "שיטת",
+    "שינוי",
+    "שינויים",
+    "שימוש",
+    "שאלה",
+    "שבוע",
+    "שבועות",
+    "שאר",
+    "שומה",
+    "שומת",
+    "שומות",
+    "שיפוי",
+    "שיקום",
+    "שיקול",
+    "שיקולים",
+    "שיפור",
+    "שילוב",
+    "שיתוף",
+    "שליטה",
+    "שלטון",
+    "שמירה",
+    "שטר",
+    "שטרות",
+    "שיווק",
+    "שדה",
+    "שדות",
+    "שבח",
+    "שגיאה",
+    "שאירים",
+    "שאיר",
+    "שביתה",
+    "שהות",
+    "שעבוד",
+    "שיעבוד",
+    "שותף",
+    "שותפה",
+    "שותפת",
+    "שותפות",
+    "שותפים",
+    "שליח",
+    "שליחה",
+    "שליחי",
+    "שלוח",
+    "שלוחה",
+    "שלוחות",
+    "שכן",
+    "שכנה",
+    "שכנים",
+    "שמאי",
+    "שמאים",
+    "שמאות",
+    "שוכר",
+    "שוכרת",
+    "שוכרים",
+    "שולח",
+    "שולחת",
+    "שולחים",
+    "שמש",
+    "שוער",
+    "שגריר",
+    "שגרירות",
+    "שחקן",
+    "שדרן",
+    "שרת",
+    "שלט",
+    "שלטים",
+    "שלד",
+    "שריפה",
+    "שרשרת",
+    "שביל",
+    "שבוי",
+    "שגרה",
+    "שיר",
+    "שירה",
+    "שדרה",
+    "שעון",
+    "שפה",
+    "שפע",
+    "שקט",
+    "שקע",
+    "שכונה",
+    "שכונת",
+    "שמחה",
+    "שאלות",
+    "שאילתה",
+    "שדרות",
+    "שלוחת",
+    "שליטת",
+    "שמות",
+    "שמי",
+    "שמו",
+    "שמה",
+    "שמם",
+    "שרה",
+    "שרון",
+    "שמעון",
+    "שאול",
+    "שלומית",
+    "שולה",
 )
+_HEBREW_LEXICAL_SHIN_WORDS = "(?:" + "|".join(_HEBREW_LEXICAL_SHIN_STEMS) + ")"
 _HEBREW_RELATIVE_MARKER_PATTERN = re.compile(
     "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?:אשר|(?!"
     + _HEBREW_LEXICAL_SHIN_WORDS
@@ -5110,20 +5248,44 @@ _HEBREW_UNIT_MODIFIER_PATTERN = re.compile(
 
 
 # The inflections of a listed ש-noun ("שליחים", "שליחיו", "שליחי") are the
-# noun too.
+# noun too; a suffix moves the stem's final letter to its medial form
+# ("שכן" becomes "שכנו", "שחקן" becomes "שחקניו").
 _HEBREW_LEXICAL_SHIN_WORD_PATTERN = re.compile(
-    _HEBREW_LEXICAL_SHIN_WORDS + "(?:ים|ות|יו|יה|יהם|יהן|נו|י|ו|ה|ם|ן|ת)?$"
+    "(?:"
+    + "|".join(
+        stem
+        + "|"
+        + stem[:-1]
+        + stem[-1].translate(_HEBREW_MEDIAL_FORMS)
+        + "(?:ים|ות|יו|יה|יהם|יהן|נו|י|ו|ה|ם|ן|ת)"
+        for stem in _HEBREW_LEXICAL_SHIN_STEMS
+    )
+    + ")$"
+)
+
+
+# The markers whose form is unmistakable: ש before the article, a suffixed
+# preposition ("שממנו", "שעליה") or the ועדה family. They are read before
+# the lexical nouns, which are read before the generic markers.
+_HEBREW_SPECIFIC_RELATIVE_MARKER_PATTERN = re.compile(
+    "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?:אשר|\u05e9(?:\u05d4[\u0590-\u05ff]+"
+    "|\u05d5?\u05d5(?:עדה|עדת|עד|תק|תיק|תיקה)"
+    "|(?:על|ב|בגינ|ממנ|מ|ממ|לגבי|בשל|בעד|כנגד|כלפי|אל|אצל|תחת|לפי|בתוכ|מתוכ)"
+    "(?:ו|ה|הם|הן|ם|ן|נו|יו|יה|יהם|יהן)))(?![\u0590-\u05ff])"
 )
 
 
 def _hebrew_opens_relative_clause(text: str, position: int) -> bool:
     """Whether a relative marker opens a clause at ``position``.
 
-    "אשר", or ש before the article, a suffixed preposition, the ועדה family,
-    a verb-shaped word or a past plural; a listed ש-noun in any inflection
-    ("שליחים ישלמו") is no marker, and neither is a possessive on a ש-root
-    ("שוכריו ישלמו"), ש before ו being a root letter.
+    "אשר", ש before the article, a suffixed preposition ("שממנו") or the
+    ועדה family are markers whatever the lexicon says; then a listed ש-noun
+    in any inflection ("שליחים ישלמו", "שכנו ישלם") is no marker, and
+    neither is a possessive on a ש-root ("שוכריו ישלמו"), ש before ו being a
+    root letter; then a verb-shaped word or a past plural is one.
     """
+    if _HEBREW_SPECIFIC_RELATIVE_MARKER_PATTERN.match(text, position) is not None:
+        return True
     word = _HEBREW_WORD_AFTER_PATTERN.match(text, position)
     if word is not None and _HEBREW_LEXICAL_SHIN_WORD_PATTERN.match(
         word.group(0).strip()

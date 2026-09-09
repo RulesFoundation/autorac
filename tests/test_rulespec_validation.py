@@ -19868,6 +19868,33 @@ def test_possessive_shin_roots_and_traditional_tens():
         assert extract_numbers_from_text(text) == expected, text
 
 
+def test_inflection_moves_a_final_letter_and_the_traditional_units():
+    # Review round 126 on #1585: a suffix moves a listed noun's final letter
+    # to its medial form ("שכנו", "שחקניו"); "חמשה", "ששה", "שלשה" and
+    # "שלש" are the traditional units.
+    split = {500.0, 2_000_000.0, 3_000_000.0}
+    for text in (
+        "אם התשלומים הם 500, 2 או 3 מיליון שקלים שכנו ישלם, והיתרה תוחזר.",
+        "אם התשלומים הם 500, 2 או 3 מיליון שקלים שכניו ישלמו, והיתרה תוחזר.",
+        "אם התשלומים הם 500, 2 או 3 מיליון שקלים שחקניו ישלמו, והיתרה תוחזר.",
+    ):
+        assert _hebrew_recall(text) == split, text
+        assert extract_numbers_from_text(text) == split, text
+        assert hebrew_ambiguous_reading_groups(text) == [], text
+    for text, expected in (
+        ("בתום חמשה עשר ימים", {15.0}),
+        ("בתום חמשה ימים", {5.0}),
+        ("סכום הקצבה חמשה מיליון שקלים", {5_000_000.0}),
+        ("המס יהיה חמשה אחוזים מההכנסה", {0.05}),
+        ("בתום ששה עשר ימים", {16.0}),
+        ("בתום שלשה עשר ימים", {13.0}),
+        ("בתום שלש שנים", {3.0}),
+        ("בתום חמישה עשר ימים", {15.0}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
