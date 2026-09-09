@@ -5162,7 +5162,28 @@ def _hebrew_word_is_definite(word: str) -> bool:
 
 
 _HEBREW_RATE_NEUTRAL_WORDS = frozenset(
-    {"לא", "אינה", "אינו", "אינם", "אינן", "גם", "רק", "אף", "כן", "בלבד", "אך"}
+    {
+        "לא",
+        "אינה",
+        "אינו",
+        "אינם",
+        "אינן",
+        "גם",
+        "רק",
+        "אף",
+        "כן",
+        "בלבד",
+        "אך",
+        # Clause adverbs and conjunctions that hold no phrase of their own.
+        "אז",
+        "לכן",
+        "לפיכך",
+        "אולם",
+        "אבל",
+        "אלא",
+        "כי",
+        "וכן",
+    }
 )
 
 
@@ -5243,15 +5264,55 @@ def _hebrew_rate_expression_governs(words: list[str], construct: bool) -> bool:
             ):
                 continue
             return False
-    # Before it: which words a phrase holds.
+    # Before it: which words a phrase holds. A phrase is a preposition with
+    # its object and the construct and attributives after it, a prefixed
+    # word, a relative clause up to its verb, a known predicate of a
+    # relative clause, or an attributive of the noun before it. The last
+    # word no phrase holds begins the noun phrase the main predicate is
+    # predicated of; when an amount noun heads it, the pair is that
+    # amount's ("אז הקנס יהיה", "מן המותר הקנס יהיה", "הקנס לפי הוראת בנק
+    # ישראל יהיה", "קנס הפיגורים יהיה", "הקנס שבנק ישראל יקבע יהיה").
     subject = bares[:main] if main is not None else bares
     held: list[bool] = []
     in_phrase = False
     expect_object = construct
     last_definite = False
+    relative = False
+    # A bare noun no phrase holds heads a construct: the bare words after
+    # it are its complements ("קנס פיגורים").
+    construct_head = False
     for bare in subject:
-        if bare in _HEBREW_RATE_NEUTRAL_WORDS or bare == "אשר":
+        if bare in _HEBREW_RATE_NEUTRAL_WORDS:
             held.append(True)
+            continue
+        if not (
+            bare[:1] not in "\u05d1\u05dc\u05de\u05db\u05d4\u05e9"
+            and bare not in _HEBREW_RATE_PREPOSITIONS
+            and not _known_predicate(bare)
+            and bare != "אשר"
+            and not relative
+            and not expect_object
+        ):
+            construct_head = False
+        if _known_predicate(bare):
+            held.append(True)
+            relative = False
+            continue
+        if bare == "אשר" or bare.startswith("\u05e9"):
+            # A clause whose verb is inside its opening word ("שנקבעה", ש
+            # before a verb's first letter) is complete; one whose subject
+            # is ("שהבנק", "שבנק ישראל", "אשר הבנק") runs to its verb.
+            held.append(True)
+            relative = bare == "אשר" or bare[1:2] not in "\u05d9\u05ea\u05e0\u05d0"
+            continue
+        if relative:
+            held.append(True)
+            if not (
+                bare in _HEBREW_RATE_PREPOSITIONS
+                or _prefixed(bare)
+                or bare.startswith("\u05d4")
+            ):
+                relative = False
             continue
         if bare in _HEBREW_RATE_PREPOSITIONS:
             in_phrase = True
@@ -5264,47 +5325,38 @@ def _hebrew_rate_expression_governs(words: list[str], construct: bool) -> bool:
             last_definite = _hebrew_word_is_definite(bare)
             held.append(True)
             continue
-        if bare.startswith("\u05e9") or _known_predicate(bare):
-            held.append(True)
-            continue
         if _prefixed(bare):
             in_phrase = True
             last_definite = False
             held.append(True)
             continue
         if bare.startswith("\u05d4"):
-            # A definite noun after a definite object is a new phrase; after
-            # a bare object it is the construct's complement.
-            held.append(in_phrase and not last_definite)
+            if not _hebrew_word_governs_an_amount(bare):
+                # An attributive of the noun before it.
+                held.append(True)
+            else:
+                # A definite noun after a definite object is a new phrase;
+                # after a bare object it is the construct's complement.
+                held.append(in_phrase and not last_definite)
             last_definite = _hebrew_word_is_definite(bare)
             continue
         # A bare word after a definite object ends the phrase ("מן המותר אז").
         if last_definite:
             in_phrase = False
         last_definite = False
+        if construct_head:
+            held.append(True)
+            continue
         held.append(in_phrase)
-    # The subject's head: the word its modifiers modify.
-    index = len(subject) - 1
-    while index >= 0:
-        bare = subject[index]
-        if (
-            bare in _HEBREW_RATE_NEUTRAL_WORDS
-            or _attributive(bare)
-            or _prefixed(bare)
-            or _known_predicate(bare)
-        ):
-            index -= 1
-            continue
-        if index >= 1 and subject[index - 1] in _HEBREW_RATE_PREPOSITIONS:
-            index -= 2
-            continue
-        break
+        construct_head = not in_phrase
+        continue
+    start_index = max(
+        (index for index, flag in enumerate(held) if not flag), default=None
+    )
     if (
-        index >= 0
-        and not (construct and index == 0)
-        and _hebrew_word_is_definite(subject[index])
-        and _hebrew_word_governs_an_amount(subject[index])
-        and not held[index]
+        start_index is not None
+        and not (construct and start_index == 0)
+        and _hebrew_word_governs_an_amount(subject[start_index])
     ):
         return False
     if words and _hebrew_word_governs_an_amount(words[-1]):

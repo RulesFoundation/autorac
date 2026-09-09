@@ -21072,6 +21072,34 @@ def test_the_main_predicate_is_the_last_one_and_the_subject_head_is_walked_to():
         ), (text[:40], issue)
 
 
+def test_the_subject_is_the_last_phrase_no_earlier_phrase_holds():
+    # Review round 154 on #1585: the noun phrase a predicate is predicated
+    # of begins at the last word no earlier phrase holds, its modifiers of
+    # any length held with it; an amount noun heading it takes the pair,
+    # definite in form, through its complement, or not at all.
+    fine = {50.0, 0.02}
+    heading = "הסכומים בשקלים: אם הריבית גבוהה מן המותר "
+    for text in (
+        heading + "הקנס לפי הוראת בנק ישראל יהיה 50 או 2% מהמחזור",
+        heading + "הקנס שבנק ישראל יקבע יהיה 50 או 2% מהמחזור",
+        heading + "קנס הפיגורים יהיה 50 או 2% מהמחזור",
+        heading + "קנס פיגורים יהיה 50 או 2% מהמחזור",
+        heading + "לפיכך קנס פיגורים יהיה 50 או 2% מהמחזור",
+        "הסכומים בשקלים: אם הריבית שנקבעה בהסכם גבוהה מן המותר הקנס יהיה 50 או 2%"
+        " מהמחזור",
+        "הסכומים בשקלים: אם הריבית שהבנק גובה גבוהה מן המותר הקנס יהיה 50 או 2%"
+        " מהמחזור",
+    ):
+        assert _hebrew_recall(text) == fine, text[:50]
+        content = _danish_numeric_rulespec("50", citation_path="il/statute/example/1")
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text[
+            :50
+        ]
+        content = _danish_numeric_rulespec("0.5", citation_path="il/statute/example/1")
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith("Ungrounded generated numeric literal: 0.5 "), issue
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
