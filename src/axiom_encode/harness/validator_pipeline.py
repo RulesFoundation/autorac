@@ -28049,7 +28049,24 @@ class ValidatorPipeline:
         if actual_kind in numeric and expected_kind in numeric:
             actual_decimal = self._rulespec_decimal(actual.get("value"))
             expected_decimal = self._rulespec_decimal(expected.get("value"))
-            return abs(actual_decimal - expected_decimal) <= Decimal("1e-18")
+            if abs(actual_decimal - expected_decimal) <= Decimal("1e-18"):
+                return True
+            if actual_kind == expected_kind == "integer":
+                return False
+            binary64_exact_integer_limit = Decimal(2**53)
+            if (
+                abs(actual_decimal) >= binary64_exact_integer_limit
+                or abs(expected_decimal) >= binary64_exact_integer_limit
+            ):
+                return False
+            actual_float = float(actual_decimal)
+            expected_float = float(expected_decimal)
+            if not (math.isfinite(actual_float) and math.isfinite(expected_float)):
+                return False
+            return (
+                actual_float == expected_float
+                or math.nextafter(actual_float, expected_float) == expected_float
+            )
         if actual_kind == "bool" and expected_kind == "bool":
             return bool(actual.get("value")) == bool(expected.get("value"))
         if actual_kind != expected_kind:

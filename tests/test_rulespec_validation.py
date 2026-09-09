@@ -691,6 +691,71 @@ def test_rulespec_numeric_output_comparison_tolerates_decimal_residue(tmp_path):
     )
 
 
+@pytest.mark.parametrize(
+    ("actual", "expected"),
+    [
+        ("197.51000000000001", "197.51"),
+        ("100.48999999999999", "100.49"),
+        ("197.50000000000002", "197.5"),
+        ("100.49999999999998", "100.5"),
+    ],
+)
+def test_rulespec_numeric_output_comparison_tolerates_one_binary64_ulp(
+    tmp_path, actual, expected
+):
+    pipeline = ValidatorPipeline(
+        policy_repo_path=tmp_path / "rulespec-us",
+        axiom_rules_path=tmp_path / "axiom-rules-engine",
+        enable_oracles=False,
+    )
+
+    assert pipeline._rulespec_scalar_values_equal(
+        {"kind": "decimal", "value": Decimal(actual)},
+        {"kind": "decimal", "value": Decimal(expected)},
+    )
+
+
+def test_rulespec_numeric_output_comparison_rejects_more_than_one_binary64_ulp(
+    tmp_path,
+):
+    pipeline = ValidatorPipeline(
+        policy_repo_path=tmp_path / "rulespec-us",
+        axiom_rules_path=tmp_path / "axiom-rules-engine",
+        enable_oracles=False,
+    )
+
+    expected = 100.5
+    more_than_one_ulp = math.nextafter(math.nextafter(expected, math.inf), math.inf)
+    assert not pipeline._rulespec_scalar_values_equal(
+        {"kind": "decimal", "value": more_than_one_ulp},
+        {"kind": "decimal", "value": expected},
+    )
+
+
+@pytest.mark.parametrize(
+    ("actual", "actual_kind", "expected", "expected_kind"),
+    [
+        (2**53, "integer", 2**53 + 1, "integer"),
+        (Decimal(2**53), "decimal", 2**53 + 1, "integer"),
+        (Decimal("0.9999999999999998"), "decimal", 1, "integer"),
+        (Decimal("-1"), "decimal", Decimal("-0.9999999999999998"), "decimal"),
+    ],
+)
+def test_rulespec_numeric_output_comparison_rejects_unsafe_float_collapses(
+    tmp_path, actual, actual_kind, expected, expected_kind
+):
+    pipeline = ValidatorPipeline(
+        policy_repo_path=tmp_path / "rulespec-us",
+        axiom_rules_path=tmp_path / "axiom-rules-engine",
+        enable_oracles=False,
+    )
+
+    assert not pipeline._rulespec_scalar_values_equal(
+        {"kind": actual_kind, "value": actual},
+        {"kind": expected_kind, "value": expected},
+    )
+
+
 def test_rulespec_numeric_output_comparison_accepts_quoted_decimal(tmp_path):
     pipeline = ValidatorPipeline(
         policy_repo_path=tmp_path / "rulespec-us",
@@ -6427,7 +6492,7 @@ def test_packaged_dc_2026_registry_text_hash_runtime_and_precedence_are_exact():
     assert (
         (root / "src/axiom_encode/__init__.py")
         .read_text()
-        .startswith('__version__ = "0.2.1791"')
+        .startswith('__version__ = "0.2.1792"')
     )
 
 
@@ -6659,13 +6724,13 @@ def test_packaged_ca_2026_bhst_text_hash_runtime_and_precedence_are_exact():
     encoder_package = next(
         package for package in lock["package"] if package["name"] == "axiom-encode"
     )
-    assert encoder_package["version"] == "0.2.1791"
+    assert encoder_package["version"] == "0.2.1792"
     project = tomllib.loads((root / "pyproject.toml").read_text())
-    assert project["project"]["version"] == "0.2.1791"
+    assert project["project"]["version"] == "0.2.1792"
     assert (
         (root / "src/axiom_encode/__init__.py")
         .read_text()
-        .startswith('__version__ = "0.2.1791"')
+        .startswith('__version__ = "0.2.1792"')
     )
 
 
@@ -6927,13 +6992,13 @@ def test_packaged_ny_2026_text_hash_runtime_pin_and_precedence_are_exact():
     encoder_package = next(
         package for package in lock["package"] if package["name"] == "axiom-encode"
     )
-    assert encoder_package["version"] == "0.2.1791"
+    assert encoder_package["version"] == "0.2.1792"
     project = tomllib.loads((root / "pyproject.toml").read_text())
-    assert project["project"]["version"] == "0.2.1791"
+    assert project["project"]["version"] == "0.2.1792"
     assert (
         (root / "src/axiom_encode/__init__.py")
         .read_text()
-        .startswith('__version__ = "0.2.1791"')
+        .startswith('__version__ = "0.2.1792"')
     )
 
 
