@@ -20170,6 +20170,21 @@ def test_either_separator_after_a_prefix():
         assert extract_numbers_from_text(text) >= expected, text
 
 
+def test_either_separator_wherever_a_prefix_is_stripped():
+    # Review round 137 on #1585: a definite ordinal and a range endpoint
+    # keep their reading under an ASCII hyphen as under a maqaf.
+    for text, expected in (
+        ("ישולם בעד הילד ה-שני אחוז וחצי מהשכר", {2.0, 0.015}),
+        ("ישולם בעד הילד ה־שני אחוז וחצי מהשכר", {2.0, 0.015}),
+        ("השיעור יעלה משניים ל-שלושה אחוזים.", {0.02, 0.03}),
+        ("השיעור יעלה משניים ל־שלושה אחוזים.", {0.02, 0.03}),
+        ("בין שלושה ל-חמישה מיליון שקלים.", {3_000_000.0, 5_000_000.0}),
+        ("בין שלושה ל־חמישה מיליון שקלים.", {3_000_000.0, 5_000_000.0}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) >= expected, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

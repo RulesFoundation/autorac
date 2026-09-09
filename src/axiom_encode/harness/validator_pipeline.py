@@ -1862,9 +1862,9 @@ _HEBREW_NUMBER_WORD_VALUES = {
 # One-letter Hebrew prefixes bind to the following word: the definite article
 # he, the conjunction vav, and the prepositions bet, kaf, lamed, mem and shin.
 # Two of them can stack ("and the fourth"), and a maqaf may sit between the
-# prefix and the word.
+# prefix and the word, as may an ASCII hyphen.
 _HEBREW_WORD_PREFIX_PATTERN = (
-    "(?:[\u05d5\u05d4\u05d1\u05db\u05dc\u05de\u05e9]\u05be?){0,2}"
+    "(?:[\u05d5\u05d4\u05d1\u05db\u05dc\u05de\u05e9][\u05be-]?){0,2}"
 )
 # The alternation is longest-first so that a longer form is never shadowed by a
 # shorter one it contains, and the boundaries refuse a match that sits inside a
@@ -3238,7 +3238,7 @@ def _hebrew_definite_ordinal(word: str, bare: str) -> bool:
     """
     if bare not in _HEBREW_ORDINAL_WORDS or not word.endswith(bare):
         return False
-    return word[: len(word) - len(bare)].rstrip("\u05be").endswith("\u05d4")
+    return word[: len(word) - len(bare)].rstrip("\u05be-").endswith("\u05d4")
 
 
 def _hebrew_unary_sign_at(text: str, index: int) -> bool:
@@ -4016,7 +4016,7 @@ def _iter_hebrew_shared_scale_range_matches(
             if (
                 head[:1] not in ("\u05dc", "\u05d5")
                 or _strip_hebrew_number_prefix(
-                    head[1:].lstrip("\u05be"), _HEBREW_RUN_START_VOCABULARY
+                    head[1:].lstrip("\u05be-"), _HEBREW_RUN_START_VOCABULARY
                 )
                 is None
             ):
@@ -4068,7 +4068,7 @@ def _iter_hebrew_shared_scale_range_matches(
                 or lower_word is None
                 or not lower_word.group(0).startswith("\u05de")
                 or _strip_hebrew_number_prefix(
-                    lower_word.group(0)[1:].lstrip("\u05be"),
+                    lower_word.group(0)[1:].lstrip("\u05be-"),
                     _HEBREW_RUN_START_VOCABULARY,
                 )
                 is None
@@ -4841,7 +4841,7 @@ def _hebrew_spelled_span_carries_a_scale(text: str, start: int, end: int) -> boo
         return False
     parsed = _parse_hebrew_number_run(words)
     if parsed is None and words[0][:1] in "\u05dc\u05de\u05d1\u05db":
-        parsed = _parse_hebrew_number_run([words[0][1:].lstrip("\u05be")] + words[1:])
+        parsed = _parse_hebrew_number_run([words[0][1:].lstrip("\u05be-")] + words[1:])
     if parsed is not None and parsed[2] & _HEBREW_SCALE_KINDS:
         return True
     return any(
@@ -4994,7 +4994,7 @@ def _hebrew_list_body_only(text: str, start: int, end: int) -> bool:
         word_match = _HEBREW_WORD_TOKEN_PATTERN.match(text, position, end)
         if word_match is None:
             return False
-        word = word_match.group(0).rstrip("\u05be")
+        word = word_match.group(0).rstrip("\u05be-")
         bare = (
             word[1:].lstrip("\u05be-")
             if len(word) > 1 and word.startswith("\u05d5")
@@ -5041,7 +5041,7 @@ def _hebrew_list_body_end(text: str, start: int) -> int:
         word_match = _HEBREW_WORD_TOKEN_PATTERN.match(text, position, limit)
         if word_match is None:
             break
-        word = word_match.group(0).rstrip("\u05be")
+        word = word_match.group(0).rstrip("\u05be-")
         bare = (
             word[1:].lstrip("\u05be-")
             if len(word) > 1 and word.startswith("\u05d5")
@@ -5961,7 +5961,7 @@ def _iter_hebrew_percent_range_lower_matches(
             upper_first is not None
             and upper_first[:1] in ("\u05dc", "\u05d5")
             and _strip_hebrew_number_prefix(
-                upper_first[1:].lstrip("\u05be"), _HEBREW_RUN_START_VOCABULARY
+                upper_first[1:].lstrip("\u05be-"), _HEBREW_RUN_START_VOCABULARY
             )
             is not None
         ):
@@ -6094,7 +6094,7 @@ def _iter_hebrew_percent_range_lower_matches(
                     lower_first is not None
                     and lower_first.startswith("\u05de")
                     and _strip_hebrew_number_prefix(
-                        lower_first[1:].lstrip("\u05be"), _HEBREW_RUN_START_VOCABULARY
+                        lower_first[1:].lstrip("\u05be-"), _HEBREW_RUN_START_VOCABULARY
                     )
                     is not None
                 )
@@ -6117,7 +6117,7 @@ def _iter_hebrew_percent_range_lower_matches(
                 lower_first is not None
                 and lower_first.startswith("\u05de")
                 and _strip_hebrew_number_prefix(
-                    lower_first[1:].lstrip("\u05be"), _HEBREW_RUN_START_VOCABULARY
+                    lower_first[1:].lstrip("\u05be-"), _HEBREW_RUN_START_VOCABULARY
                 )
                 is not None
             )
@@ -7098,7 +7098,7 @@ _HEBREW_STRUCTURAL_NOT_A_QUANTITY_TAILED = (
 # After a spelled reference the number is complete, and a vav-bound word is
 # the conjunction ("התוספות השנייה ושלושה ילדים"): the unit must follow at once.
 _HEBREW_STRUCTURAL_NOT_A_QUANTITY = "(?!\\s*(?:" + _HEBREW_STRUCTURAL_UNIT_NOUNS + "))"
-_HEBREW_STRUCTURAL_LIST_JOIN = "(?:\u05d5\u05be?|או)"
+_HEBREW_STRUCTURAL_LIST_JOIN = "(?:\u05d5[\u05be-]?|או)"
 _HEBREW_STRUCTURAL_RANGE_JOIN = "(?:עד|[-\u2013\u2014])"
 # Nor the first half of a coordinated quantity or a range of amounts,
 # printed or spelled: in "1, 2, 4, 100 או 200 דולר", "1, 2, 4, 100 עד 200
@@ -7144,7 +7144,7 @@ _HEBREW_STRUCTURAL_BELOW_THOUSAND = (
 # a thousand -- and a vav-bound fractional tail. The first word may carry a
 # vav.
 _HEBREW_STRUCTURAL_SPELLED_ENDPOINT = (
-    "(?>(?:[\u05d5\u05db\u05de\u05d1\u05dc\u05e9]\u05be?){0,2}(?:"
+    "(?>(?:[\u05d5\u05db\u05de\u05d1\u05dc\u05e9][\u05be-]?){0,2}(?:"
     + _HEBREW_STRUCTURAL_FRACTION_TAIL
     + "|(?:"
     + _HEBREW_STRUCTURAL_BELOW_THOUSAND
@@ -7167,7 +7167,7 @@ _HEBREW_STRUCTURAL_COORDINATED_ENDPOINT = (
 # number, or the whitespace before a vav-bound word the endpoint grammar
 # left unread.
 _HEBREW_STRUCTURAL_CONJUNCTION = (
-    "(?:\\s*(?:או|עד|ועד|לבין)\\s+|\\s*\u05d5\u05be?\\s*(?=\\d)|\\s*[-\u2013]\\s*"
+    "(?:\\s*(?:או|עד|ועד|לבין)\\s+|\\s*\u05d5[\u05be-]?\\s*(?=\\d)|\\s*[-\u2013]\\s*"
     "|\\s+(?=\u05d5[\u0590-\u05ff]))"
 )
 # One or more endpoints after a conjunction, then the unit ("1 או 2 או 3
