@@ -12009,6 +12009,18 @@ def authoritative_numeric_recall_text(source_text: str) -> str:
     """Remove structural/citation ordinals, never substantive source values."""
 
     cleaned = _strip_terminal_session_law_history(source_text)
+    if _GLUED_SECTION_SENTENCE_MARKER.search(cleaned):
+        # Strip only authenticated sentence labels, before removing the section
+        # citation that distinguishes `2§ 64` from a substantive number 2.
+        marker_spans = []
+        for branch in recognize_source_structure(cleaned):
+            if branch.kind != "sentence":
+                continue
+            match = _GLUED_SECTION_SENTENCE_MARKER.match(cleaned, branch.start)
+            if match is not None:
+                marker_spans.append(match.span("label"))
+        for start, end in sorted(set(marker_spans), reverse=True):
+            cleaned = cleaned[:start] + " " * (end - start) + cleaned[end:]
     footnote_definition = re.compile(
         r"(?P<boundary>(?:^|[.!?])\s*)(?P<marker>[1-9]\d?)"
         r"(?P<body>\s+[A-Z][^.!?]{0,640}\b"

@@ -4429,6 +4429,60 @@ def test_section_sign_sentence_can_begin_a_paragraph(source: str):
     assert sentences[0].label == "Satz 1"
 
 
+@pytest.mark.parametrize("separator", [" ", "", "\n"])
+def test_numeric_recall_ignores_glued_section_sentence_labels(separator: str):
+    source = (
+        "(5) 1Die Zahlung beträgt 73 Euro."
+        f"{separator}2§ 64 Absatz 2 und 3 ist anzuwenden."
+    )
+    cleaned = authoritative_numeric_recall_text(source)
+    values = [item.value for item in DE_NUMERIC_OCCURRENCE_EXTRACTOR(cleaned)]
+    assert values == [73]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "(1) 1§ 64 gilt bei 73 Euro.",
+        "(1) Eine Regel gilt.\n(2) 2§ 64 gilt bei 73 Euro.",
+        "1§§ 64 und 65 gelten bei 73 Euro.",
+    ],
+)
+def test_numeric_recall_handles_section_sentence_at_paragraph_start(source: str):
+    cleaned = authoritative_numeric_recall_text(source)
+    assert [item.value for item in DE_NUMERIC_OCCURRENCE_EXTRACTOR(cleaned)] == [73]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "(1) 1Es gelten 2 Euro.2§ 64 gilt zusätzlich.",
+        "(1) 1Die Regel gilt.2§ 64 gilt bei 2 Euro.",
+        "(1) Die Zahlung beträgt 2 Euro nach § 64.",
+        "(1) Die Zahl 2§ 64 ist hier kein Satzanfang.",
+        "(1) Die Zahl 2 § 64 ist hier kein geklebter Satzanfang.",
+    ],
+)
+def test_numeric_recall_retains_substantive_two_near_section_sign(source: str):
+    cleaned = authoritative_numeric_recall_text(source)
+    assert [item.value for item in DE_NUMERIC_OCCURRENCE_EXTRACTOR(cleaned)] == [2]
+
+
+def test_glued_section_sentence_label_does_not_require_a_dummy_parameter():
+    content = "format: rulespec/v1\nmodule: {}\nrules: []\n"
+    source = "(5) 1Die Zahlung beträgt 73 Euro.2§ 64 ist anzuwenden."
+    result = _analyze(content, source, artifact_numeric_values=(73,), test_cases=[])
+    assert not _has_issue(result, "numeric-recall")
+
+    substantive = _analyze(
+        content,
+        source.replace("ist anzuwenden", "gilt bei 2 Euro"),
+        artifact_numeric_values=(73,),
+        test_cases=[],
+    )
+    assert _has_issue(substantive, "numeric-recall", "numeric value 2")
+
+
 @pytest.mark.parametrize(
     "reference",
     [
