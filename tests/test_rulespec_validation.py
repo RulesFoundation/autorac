@@ -19843,6 +19843,31 @@ def test_inflected_shin_nouns_and_traditional_numeral_spellings():
         assert extract_numbers_from_text(text) == expected, text
 
 
+def test_possessive_shin_roots_and_traditional_tens():
+    # Review round 125 on #1585: a possessive on a ש-root ("שוכריו",
+    # "שולחיו") is no past-plural relative marker; "שלשים", "חמשים" and
+    # "ששים" are the traditional tens.
+    split = {500.0, 2_000_000.0, 3_000_000.0}
+    for text in (
+        "אם התשלומים הם 500, 2 או 3 מיליון שקלים שוכריו ישלמו, והיתרה תוחזר.",
+        "אם התשלומים הם 500, 2 או 3 מיליון שקלים שוכרו ישלם, והיתרה תוחזר.",
+        "אם התשלומים הם 500, 2 או 3 מיליון שקלים שולחיו ישלמו, והיתרה תוחזר.",
+        "אם התשלומים הם 500, 2 או 3 מיליון שקלים שוכרי הדירה ישלמו, והיתרה תוחזר.",
+    ):
+        assert _hebrew_recall(text) == split, text
+        assert extract_numbers_from_text(text) == split, text
+        assert hebrew_ambiguous_reading_groups(text) == [], text
+    for text, expected in (
+        ("בתום שלשים וחמש שנים", {35.0}),
+        ("בתום שלושים וחמש שנים", {35.0}),
+        ("המס יהיה ששים אחוזים מההכנסה", {0.6}),
+        ("המס יהיה שישים אחוזים מההכנסה", {0.6}),
+        ("סכום של חמשים שקלים", {50.0}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

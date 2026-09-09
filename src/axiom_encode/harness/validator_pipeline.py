@@ -1959,9 +1959,12 @@ _HEBREW_TEEN_PATTERN = re.compile(
 _HEBREW_TENS_VALUES = {
     "עשרים": 20.0,
     "שלושים": 30.0,
+    "שלשים": 30.0,
     "ארבעים": 40.0,
     "חמישים": 50.0,
+    "חמשים": 50.0,
     "שישים": 60.0,
+    "ששים": 60.0,
     "שבעים": 70.0,
     "שמונים": 80.0,
     "תשעים": 90.0,
@@ -5022,6 +5025,7 @@ _HEBREW_LEXICAL_SHIN_WORDS = (
     "|שיקום|שיקול|שיקולים|שיפור|שילוב|שיתוף|שליטה|שלטון|שמירה|שטר|שטרות|שיווק"
     "|שדה|שדות|שבח|שגיאה|שאירים|שאיר|שביתה|שהות|שעבוד|שיעבוד|שותף|שותפה|שותפת|שותפות"
     "|שותפים|שליח|שליחה|שליחי|שלוח|שלוחה|שלוחות|שכן|שכנה|שכנים|שמאי|שמאים|שמאות"
+    "|שוכר|שוכרת|שוכרים|שולח|שולחת|שולחים"
     "|שמש|שוער|שגריר|שגרירות|שחקן|שדרן|שרת|שלט|שלטים|שלד|שריפה|שרשרת|שביל|שבוי"
     "|שגרה|שיר|שירה|שדרה|שעון|שפה|שפע|שקט|שקע|שכונה|שכונת|שמחה|שאלות|שאילתה"
     "|שדרות|שלוחת|שליטת|שמות|שמי|שמו|שמה|שמם|שרה|שרון|שמעון|שאול|שלומית|שולה)"
@@ -5035,7 +5039,7 @@ _HEBREW_RELATIVE_MARKER_PATTERN = re.compile(
     "|(?:על|ב|בגינ|ממנ|מ|ממ|לגבי|בשל|בעד|כנגד|כלפי|אל|אצל|תחת|לפי|בתוכ|מתוכ)"
     "(?:ו|ה|הם|הן|ם|ן|נו|יו|יה|יהם|יהן)"
     "|[\u05d9\u05ea\u05e0\u05d0][\u0590-\u05ff]{2,}"
-    "|[\u0590-\u05ff]{2,}\u05d5))(?![\u0590-\u05ff])"
+    "|(?!\u05d5)[\u0590-\u05ff]{2,}\u05d5))(?![\u0590-\u05ff])"
 )
 _HEBREW_WORD_AFTER_PATTERN = re.compile(
     "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*\u05d5?(?P<word>[\u0590-\u05ff]{2,})(?![\u0590-\u05ff])"
@@ -5117,7 +5121,8 @@ def _hebrew_opens_relative_clause(text: str, position: int) -> bool:
 
     "אשר", or ש before the article, a suffixed preposition, the ועדה family,
     a verb-shaped word or a past plural; a listed ש-noun in any inflection
-    ("שליחים ישלמו") is no marker.
+    ("שליחים ישלמו") is no marker, and neither is a possessive on a ש-root
+    ("שוכריו ישלמו"), ש before ו being a root letter.
     """
     word = _HEBREW_WORD_AFTER_PATTERN.match(text, position)
     if word is not None and _HEBREW_LEXICAL_SHIN_WORD_PATTERN.match(
