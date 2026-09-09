@@ -3144,7 +3144,7 @@ _HEBREW_PERCENT_PHRASE_PATTERN = re.compile(
     "(?P<noun>\u05d4?אחוז(?:ים)?)"
     "(?:"
     + _WRAP_SPACE_FRAGMENT
-    + "+\u05d5(?:(?P<tail>"
+    + "+\u05d5[\u05be-]?(?:(?P<tail>"
     + "|".join(
         re.escape(w)
         for w in sorted(_HEBREW_MIXED_FRACTION_VALUES, key=len, reverse=True)
@@ -3589,7 +3589,7 @@ _HEBREW_PRINTED_SCALE_PATTERN = re.compile(
     # ("3 וחצי מיליון") or a counted fraction ("3 ושלושה רבעים מיליון").
     "(?:"
     + _WRAP_SPACE_FRAGMENT
-    + "+\u05d5(?:(?P<tail>"
+    + "+\u05d5[\u05be-]?(?:(?P<tail>"
     + _HEBREW_PRINTED_SCALE_FRACTIONS
     + ")(?![\u0590-\u05ff])|(?P<tail_count>"
     + _HEBREW_PRINTED_SCALE_COUNTS
@@ -3608,7 +3608,7 @@ _HEBREW_PRINTED_SCALE_PATTERN = re.compile(
     # construct with an amount noun).
     "(?:"
     + _WRAP_SPACE_FRAGMENT
-    + "+\u05d5(?:(?P<after_tail>"
+    + "+\u05d5[\u05be-]?(?:(?P<after_tail>"
     + _HEBREW_PRINTED_SCALE_FRACTIONS
     + ")(?![\u0590-\u05ff])|(?P<after_count>"
     + _HEBREW_PRINTED_SCALE_COUNTS
@@ -3700,7 +3700,7 @@ _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN = re.compile(
     + "+(?P<numerator>\\d+)\\s*[/\u2044]\\s*(?P<denominator>\\d+))?)"
     "(?>(?:"
     + _WRAP_SPACE_FRAGMENT
-    + "+\u05d5(?:(?P<tail>"
+    + "+\u05d5[\u05be-]?(?:(?P<tail>"
     + _HEBREW_PRINTED_SCALE_FRACTIONS
     + ")|(?P<tail_count>"
     + _HEBREW_PRINTED_SCALE_COUNTS
@@ -4663,7 +4663,7 @@ _HEBREW_PRINTED_MIXED_NUMBER_PATTERN = re.compile(
     "(?P<whole>(?:\\d{1,3}(?:,\\d{3})+|\\d+))(?![.,]\\d)"
     ""
     + _WRAP_SPACE_FRAGMENT
-    + "+\u05d5(?:(?P<tail>"
+    + "+\u05d5[\u05be-]?(?:(?P<tail>"
     + "|".join(
         re.escape(w)
         for w in sorted(_HEBREW_MIXED_FRACTION_VALUES, key=len, reverse=True)

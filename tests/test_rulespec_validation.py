@@ -20119,6 +20119,23 @@ def test_a_maqaf_bound_tail_after_a_percent_marker():
         assert extract_numbers_from_text(text) >= expected, text
 
 
+def test_maqaf_bound_tails_everywhere():
+    # Review round 134 on #1585: every vav-bound tail join accepts a maqaf
+    # after the conjunction.
+    for text, expected in (
+        ("השיעור הוא 2.5 אחוז ו־חצי.", {0.03}),
+        ("השיעור הוא 2.5 אחוז ו־שלושה רבעים.", {0.0325}),
+        ("השיעור הוא 2½ אחוז ו־חצי.", {0.03}),
+        ("השיעור הוא -2.5 אחוז ו־חצי.", {-0.03}),
+        ("השיעור הוא שני אחוזים ו־חצי.", {0.025}),
+        ("הסכום הוא 3 מיליון ו־חצי שקלים.", {3_500_000.0}),
+        ("הסכום הוא 3 ו־חצי מיליון שקלים.", {3_500_000.0}),
+        ("הסכום הוא 3 מיליון וחצי שקלים.", {3_500_000.0}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) >= expected, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
