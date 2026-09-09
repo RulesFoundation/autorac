@@ -2121,9 +2121,7 @@ def _strip_hebrew_number_prefix(word: str, vocabulary: "Iterable[str]") -> str |
         if candidate in known:
             return candidate
         if len(candidate) > 2 and candidate[0] in _HEBREW_NUMBER_PREFIX_LETTERS:
-            candidate = candidate[1:]
-            if candidate.startswith("\u05be"):
-                candidate = candidate[1:]
+            candidate = candidate[1:].lstrip("\u05be-")
             continue
         return None
     return candidate if candidate in known else None
@@ -2186,8 +2184,11 @@ def _parse_hebrew_number_run(
             return _strip_hebrew_number_prefix(raw, vocabulary)
         if raw in vocabulary:
             return raw
-        if raw.startswith("\u05d5") and raw[1:] in vocabulary:
-            return raw[1:]
+        if raw.startswith("\u05d5"):
+            # The conjunction's separator ("ו־שלושה") goes with it.
+            bound = raw[1:].lstrip("\u05be-")
+            if bound in vocabulary:
+                return bound
         return None
 
     def has_vav(position: int) -> bool:

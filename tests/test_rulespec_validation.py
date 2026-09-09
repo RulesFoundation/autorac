@@ -20153,6 +20153,23 @@ def test_a_maqaf_after_a_prefix_binds_it_to_its_word():
         assert extract_numbers_from_text(text) >= expected, text
 
 
+def test_either_separator_after_a_prefix():
+    # Review round 136 on #1585: a maqaf or an ASCII hyphen after a prefix
+    # or a conjunction is stripped with it.
+    for text, expected in (
+        ("המענק יוגדל ב-מיליון וחצי שקלים.", {1_500_000.0}),
+        ("המענק יוגדל ב־מיליון וחצי שקלים.", {1_500_000.0}),
+        ("בתום כ-עשרים ושלושה ימים", {23.0}),
+        ("בתום עשרים ו־שלושה ימים", {23.0}),
+        ("בתום עשרים ו-שלושה ימים", {23.0}),
+        ("השיעור הוא עשרים ו־שלושה אחוזים.", {0.23}),
+        ("הסכום הוא מאה ו־עשרים שקלים.", {120.0}),
+        ("הסכום הוא שלושת אלפים ו־מאה שקלים.", {3_100.0}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) >= expected, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
