@@ -1,4 +1,5 @@
 import copy
+import gc
 import hashlib
 import json
 import math
@@ -6426,7 +6427,7 @@ def test_packaged_dc_2026_registry_text_hash_runtime_and_precedence_are_exact():
     assert (
         (root / "src/axiom_encode/__init__.py")
         .read_text()
-        .startswith('__version__ = "0.2.1779"')
+        .startswith('__version__ = "0.2.1781"')
     )
 
 
@@ -6658,13 +6659,13 @@ def test_packaged_ca_2026_bhst_text_hash_runtime_and_precedence_are_exact():
     encoder_package = next(
         package for package in lock["package"] if package["name"] == "axiom-encode"
     )
-    assert encoder_package["version"] == "0.2.1779"
+    assert encoder_package["version"] == "0.2.1781"
     project = tomllib.loads((root / "pyproject.toml").read_text())
-    assert project["project"]["version"] == "0.2.1779"
+    assert project["project"]["version"] == "0.2.1781"
     assert (
         (root / "src/axiom_encode/__init__.py")
         .read_text()
-        .startswith('__version__ = "0.2.1779"')
+        .startswith('__version__ = "0.2.1781"')
     )
 
 
@@ -6926,13 +6927,13 @@ def test_packaged_ny_2026_text_hash_runtime_pin_and_precedence_are_exact():
     encoder_package = next(
         package for package in lock["package"] if package["name"] == "axiom-encode"
     )
-    assert encoder_package["version"] == "0.2.1779"
+    assert encoder_package["version"] == "0.2.1781"
     project = tomllib.loads((root / "pyproject.toml").read_text())
-    assert project["project"]["version"] == "0.2.1779"
+    assert project["project"]["version"] == "0.2.1781"
     assert (
         (root / "src/axiom_encode/__init__.py")
         .read_text()
-        .startswith('__version__ = "0.2.1779"')
+        .startswith('__version__ = "0.2.1781"')
     )
 
 
@@ -17276,6 +17277,8 @@ def test_rulespec_proof_reference_chain_resolution_is_bounded():
             f"({index})" for index in range(1, count + 1)
         )
         numeric_start = source_text.rfind(f"({count})")
+        # Exclude heap debt left by preceding tests from the resolver measurement.
+        gc.collect()
         started = monotonic()
         result = _source_top_level_marker_for_numeric_parent(source_text, numeric_start)
         elapsed = monotonic() - started
