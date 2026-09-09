@@ -20829,6 +20829,69 @@ def test_a_clause_is_the_scope_not_a_count_of_characters_or_words():
     assert _hebrew_recall("יינתנו 3 מיליון ו־30 ימי חופשה") == {3_000_030.0}
 
 
+def test_a_rate_word_governs_its_own_expression_and_a_money_noun_its_sentence():
+    # Review round 148 on #1585. A rate word reaches its pair across the
+    # modifiers of its own expression, not across a new predicate or an
+    # amount noun that governs the pair itself; a money noun reaches its
+    # amount across any spacing or wrap in its sentence; a single newline
+    # is a wrap inside either, a blank line a boundary.
+    fine = {50.0, 0.02}
+    for text, expected, grounded, ungrounded in (
+        (
+            "הסכומים בשקלים: אם הריבית שנקבעה בהסכם גבוהה מן המותר יוטל קנס של 50"
+            " או 2% מהמחזור",
+            fine,
+            "50",
+            "0.5",
+        ),
+        (
+            "אם הריבית שנקבעה בהסכם גבוהה מן המותר יוטל קנס של 50 או 2% מהמחזור",
+            fine,
+            "50",
+            "0.5",
+        ),
+        ("הריבית תהיה לפי הקנס של 50 או 2%", fine, "50", "0.5"),
+        ("הריבית תהיה\n    10 או 30%", {0.1, 0.3}, "0.1", "10"),
+        (
+            "הריבית השנתית החלה על יתרת ההלוואה הכוללת תהיה 10 או 30%",
+            {0.1, 0.3},
+            "0.1",
+            "10",
+        ),
+        (
+            "הקנס" + " " * 80 + "יהיה 3 מיליון ו־30 ימי מאסר",
+            {3_000_000.0, 30.0},
+            "30",
+            "3000030",
+        ),
+        (
+            "הקנס" + " " * 80 + "יהיה שלושה מיליון ושלושים ימי מאסר",
+            {3_000_000.0, 30.0},
+            "30",
+            "3000030",
+        ),
+        ("הקנס\n    יהיה 3 מיליון ו־30 ימי מאסר", {3_000_000.0, 30.0}, "30", "3000030"),
+    ):
+        assert _hebrew_recall(text) == expected, text[:40]
+        assert extract_numbers_from_text(text) == expected, text[:40]
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text[
+            :40
+        ]
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text[:40], issue)
+    # A blank line is a boundary for both.
+    assert _hebrew_recall("הריבית תהיה\n\n    10 או 30%") == {10.0, 0.3}
+    assert _hebrew_recall("הקנס\n\n    יהיה 3 מיליון ו־30 ימי מאסר") == {3_000_030.0}
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

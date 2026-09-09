@@ -2752,14 +2752,21 @@ _HEBREW_MONEY_CONTEXT_PATTERN = re.compile(
 )
 
 
-def _hebrew_money_context_before(text: str, position: int, window: int = 80) -> bool:
+def _hebrew_money_context_before(text: str, position: int) -> bool:
     """Whether an amount noun governs the number at ``position``.
 
-    The noun stands within ``window`` characters before it, with only
-    connectors between ("קנס של", "מחזור שנתי של", "הקנס לא יעלה על").
+    The noun stands in the same sentence before it, with only connectors
+    between ("קנס של", "מחזור שנתי של", "הקנס לא יעלה על"), however the
+    text is spaced or wrapped.
     """
     return (
-        _search_before(_HEBREW_MONEY_CONTEXT_PATTERN, text, position, window)
+        _HEBREW_MONEY_CONTEXT_PATTERN.search(
+            text,
+            _hebrew_clause_start_before(
+                text, position, _HEBREW_SENTENCE_STOP_ONLY_CHARACTERS
+            ),
+            position,
+        )
         is not None
     )
 
@@ -4922,25 +4929,95 @@ def _hebrew_currency_gap_character(character: str) -> bool:
 # word in the same clause before the pair ("בשיעור של 2 או 3%") makes a
 # signed pair share too.
 _HEBREW_RATE_WORD_BEFORE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?:(?:[\u05d1\u05d4\u05d5\u05dc\u05e9][\u05be-]?){0,2}שיעור(?:ים|י)?|אחוז(?:ים)?|(?:ה[\u05be-]?)?ריבית)"
+    "(?<![\u0590-\u05ff])(?P<rate>(?:[\u05d1\u05d4\u05d5\u05dc\u05e9][\u05be-]?){0,2}שיעור(?:ים|י)?|אחוז(?:ים)?|(?:ה[\u05be-]?)?ריבית)"
     # Any modifiers may stand between the rate word and the pair ("הריבית
     # השנתית החלה על יתרת ההלוואה הכוללת תהיה 10 או 30%"); a clause stop
     # ends the scope.
     "(?:\\s+[^\\s.;:,\\n]+)*\\s*$"
 )
 _HEBREW_CLAUSE_STOP_CHARACTERS = frozenset(".;:,\n")
+_HEBREW_SENTENCE_STOP_ONLY_CHARACTERS = frozenset(".;:")
+
+
+def _hebrew_clause_start_before(
+    text: str, start: int, stops: frozenset[str] = _HEBREW_CLAUSE_STOP_CHARACTERS
+) -> int:
+    """Where the clause holding ``start`` begins.
+
+    A stop character ends it, and so does a blank line or a paragraph
+    separator; a newline on its own is a line wrap inside the clause
+    ("הריבית תהיה\n    10 או 30%") and is whitespace.
+    """
+    position = start
+    while position > 0:
+        character = text[position - 1]
+        if character == "\n":
+            # A newline preceded, across horizontal space, by another is a
+            # blank line and ends the clause; alone it is a wrap.
+            gap_start = position - 1
+            while gap_start > 0 and _is_horizontal_space(text[gap_start - 1]):
+                gap_start -= 1
+            if gap_start > 0 and text[gap_start - 1] == "\n":
+                break
+            position -= 1
+            continue
+        if character in stops or character in "\u2028\u2029\x0b\x0c\x85":
+            break
+        position -= 1
+    return position
+
+
+_NON_SPACE_TOKEN_PATTERN = re.compile(r"\S+")
+_HEBREW_MONEY_NOUN_WORD_PATTERN: "re.Pattern[str] | None" = None
+
+
+def _hebrew_word_governs_an_amount(word: str) -> bool:
+    """Whether ``word`` is an amount noun, under a prefix or not ("קנס", "הסכום")."""
+    global _HEBREW_MONEY_NOUN_WORD_PATTERN
+    if _HEBREW_MONEY_NOUN_WORD_PATTERN is None:
+        _HEBREW_MONEY_NOUN_WORD_PATTERN = re.compile(
+            _HEBREW_PREPOSITION_OR_ARTICLE_PREFIXES + _HEBREW_MONEY_NOUN + "$"
+        )
+    return _HEBREW_MONEY_NOUN_WORD_PATTERN.match(word) is not None
 
 
 def _hebrew_rate_word_before(text: str, start: int) -> bool:
-    """An explicit rate word before ``start``, within the same clause."""
-    clause_start = start
-    while (
-        clause_start > 0
-        and text[clause_start - 1] not in _HEBREW_CLAUSE_STOP_CHARACTERS
-    ):
-        clause_start -= 1
-    return (
-        _HEBREW_RATE_WORD_BEFORE_PATTERN.search(text, clause_start, start) is not None
+    """An explicit rate word before ``start`` that governs the pair there.
+
+    The rate word stands in the same clause, any modifiers between
+    ("הריבית השנתית החלה על יתרת ההלוואה הכוללת תהיה 10 או 30%"). Its
+    reach ends where another expression takes the pair: a listed verb
+    with words after it opens a new predicate ("יוטל קנס של 50 או 2%",
+    "תהיה לפי הקנס של"), while the verb right before the pair is the rate's
+    own; and an amount noun right before the pair, or before its "של",
+    governs the pair itself ("קנס של 50 או 2%").
+    """
+    clause_start = _hebrew_clause_start_before(text, start)
+    rate = _HEBREW_RATE_WORD_BEFORE_PATTERN.search(text, clause_start, start)
+    if rate is None:
+        return False
+    # The words between the rate word and the list: the list itself, from
+    # its first member or join on ("1 עד 2 או 3%"), is not among them.
+    words: list[str] = []
+    for token_match in _NON_SPACE_TOKEN_PATTERN.finditer(text, rate.end("rate"), start):
+        token = token_match.group(0)
+        if (
+            any(character.isdigit() for character in token)
+            or "%" in token
+            or token in _HEBREW_LIST_JOIN_WORDS
+            or _strip_hebrew_number_prefix(token, _HEBREW_RUN_START_VOCABULARY)
+            is not None
+        ):
+            break
+        words.append(token)
+    if any(word in _HEBREW_CONSEQUENT_VERBS for word in words[:-1]):
+        return False
+    if words and _hebrew_word_governs_an_amount(words[-1]):
+        return False
+    return not (
+        len(words) >= 2
+        and words[-1] == "של"
+        and _hebrew_word_governs_an_amount(words[-2])
     )
 
 
