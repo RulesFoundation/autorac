@@ -38,18 +38,6 @@ on:
         description: Prior failed protected run whose final candidate is replayed as untrusted repair context
         required: false
         type: string
-      repair_run_lane:
-        description: Candidate lane to replay from the prior failed run
-        required: false
-        default: target
-        type: choice
-        options:
-          - target
-          - dependent
-      repair_rulespec_path:
-        description: Exact RuleSpec path of a non-target lane selected for repair replay
-        required: false
-        type: string
       source_bundle_json:
         description: JSON citation array, canonical_refresh_bundle object, or atomic-source-transaction/v2/v3 envelope for an independent refresh transaction
         required: false
@@ -428,8 +416,6 @@ jobs:
           LEGACY_RETAINED_SUCCESSOR_RULESPEC_PATHS_JSON: ${{ inputs.legacy_retained_successor_rulespec_paths_json }}
           QUEUE_ID: ${{ inputs.queue_id }}
           REPAIR_RUN_ID: ${{ inputs.repair_run_id }}
-          REPAIR_RUN_LANE: ${{ inputs.repair_run_lane }}
-          REPAIR_RULESPEC_PATH: ${{ inputs.repair_rulespec_path }}
           REPLACE_LEGACY_RULESPEC_PATH: ${{ inputs.replace_legacy_rulespec_path }}
           REPLACE_RULESPEC_PATH: ${{ inputs.replace_rulespec_path }}
           RULESPEC_CHECKOUT: rulespec-${{ inputs.country }}
@@ -439,7 +425,6 @@ jobs:
           SECOND_LEGACY_EXACT_DEPENDENT_RULESPEC_PATH: ${{ inputs.second_legacy_exact_dependent_rulespec_path }}
         run: |
           set -euo pipefail
-          : "${REPAIR_RUN_LANE:=target}"
           atomic_source_payload="$(
             python \
               axiom-encode/scripts/prepare_signed_backfill.py \
@@ -466,30 +451,20 @@ jobs:
             echo "repair_run_id must identify a different decimal workflow run" >&2
             exit 1
           fi
+          # The supported transaction determines the replay lane. Derive its
+          # canonical path rather than spending two additional dispatch inputs
+          # or trusting a separately supplied path (GitHub permits at most 25).
+          REPAIR_RUN_LANE=target
           repair_citation="$CITATION"
           repair_rulespec_path="$REPLACE_RULESPEC_PATH"
-          case "$REPAIR_RUN_LANE" in
-            target)
-              if [ -n "$DEPENDENT_CITATION" ] || \
-                 [ -n "$REPAIR_RULESPEC_PATH" ]; then
-                echo "target repair replay cannot select a dependent transaction" >&2
-                exit 1
-              fi
-              ;;
-            dependent)
-              if [ -z "$DEPENDENT_CITATION" ] || \
-                 [ -z "$REPAIR_RULESPEC_PATH" ]; then
-                echo "dependent repair replay requires its citation and exact RuleSpec path" >&2
-                exit 1
-              fi
-              repair_citation="$DEPENDENT_CITATION"
-              repair_rulespec_path="$REPAIR_RULESPEC_PATH"
-              ;;
-            *)
-              echo "repair_run_lane must be target or dependent" >&2
-              exit 1
-              ;;
-          esac
+          if [ -n "$DEPENDENT_CITATION" ]; then
+            REPAIR_RUN_LANE=dependent
+            repair_citation="$DEPENDENT_CITATION"
+            repair_rulespec_path="$(
+              python axiom-encode/scripts/prepare_signed_backfill.py \
+                citation-rulespec-path "$DEPENDENT_CITATION"
+            )"
+          fi
           if [ -z "$REPLACE_RULESPEC_PATH" ] || \
              [ -n "$REPLACE_LEGACY_RULESPEC_PATH" ] || \
              [ -n "$LEGACY_EXACT_DEPENDENT_RULESPEC_PATH" ] || \
@@ -602,6 +577,8 @@ jobs:
             --current-ref "$RULESPEC_REF" \
             --candidate-path "$repair_candidate_path" \
             --rulespec-path "$repair_rulespec_path"
+          echo "lane=$REPAIR_RUN_LANE" >> "$GITHUB_OUTPUT"
+          echo "rulespec_path=$repair_rulespec_path" >> "$GITHUB_OUTPUT"
           echo "root=$(jq -r '.root' "$RUNNER_TEMP/repair-candidate.json")" \
             >> "$GITHUB_OUTPUT"
           echo "path=$(jq -r '.path' "$RUNNER_TEMP/repair-candidate.json")" \
@@ -1158,8 +1135,8 @@ jobs:
           REPAIR_CANDIDATE_TESTS_SHA256: ${{ steps.repair_candidate.outputs.tests_sha256 }}
           REPAIR_TESTS_ONLY: ${{ steps.repair_candidate.outputs.tests_only }}
           REPAIR_RUN_ID: ${{ inputs.repair_run_id }}
-          REPAIR_RUN_LANE: ${{ inputs.repair_run_lane }}
-          REPAIR_RULESPEC_PATH: ${{ inputs.repair_rulespec_path }}
+          REPAIR_RUN_LANE: ${{ steps.repair_candidate.outputs.lane }}
+          REPAIR_RULESPEC_PATH: ${{ steps.repair_candidate.outputs.rulespec_path }}
           REPLACE_RULESPEC_PATH: ${{ inputs.replace_rulespec_path }}
           REPLACE_LEGACY_RULESPEC_PATH: ${{ inputs.replace_legacy_rulespec_path }}
           LEGACY_EXACT_DEPENDENT_RULESPEC_PATH: ${{ inputs.legacy_exact_dependent_rulespec_path }}
