@@ -2085,7 +2085,11 @@ _HEBREW_COUNTED_FRACTION_VALUES = {
 _HEBREW_NUMBER_PREFIX_LETTERS = "\u05d5\u05d4\u05d1\u05db\u05dc\u05de\u05e9"
 # A maqaf (U+05BE) joins words the way a hyphen does, so it is not a word
 # character here: "שנים־עשר" is two tokens, joined the way "שנים-עשר" is.
-_HEBREW_WORD_TOKEN_PATTERN = re.compile("[\u0590-\u05bd\u05bf-\u05ff]+")
+# A maqaf or hyphen after a one-letter prefix binds it to its word ("ו־חצי",
+# "ל־מיליון"), so the token carries it and the prefix readers strip both.
+_HEBREW_WORD_TOKEN_PATTERN = re.compile(
+    "(?:[\u05d5\u05d1\u05dc\u05de\u05db\u05e9\u05d4][\u05be-])?[\u0590-\u05bd\u05bf-\u05ff]+"
+)
 _HEBREW_TEEN_JOIN_PATTERN = re.compile("^\\s*[-\u05be]\\s*$")
 _HEBREW_PERCENT_WORD_PATTERN = re.compile(
     _WRAP_SPACE_FRAGMENT + "+\u05d4?אחוז(?:ים|י)?(?![\u0590-\u05ff])"
@@ -2357,7 +2361,7 @@ def _parse_hebrew_number_run(
             return True
         if not has_vav(position):
             return False
-        tail = words[position][1:]
+        tail = words[position][1:].lstrip("\u05be-")
         if (
             tail in _HEBREW_MIXED_FRACTION_VALUES
             and position + 1 < len(words)
@@ -2424,19 +2428,24 @@ def _parse_hebrew_number_run(
             elif (
                 count is not None
                 and has_vav(count[0])
-                and words[count[0]][1:] in _HEBREW_MIXED_FRACTION_VALUES
+                and words[count[0]][1:].lstrip("\u05be-")
+                in _HEBREW_MIXED_FRACTION_VALUES
                 and word_at(count[0] + 1) in scale_words
             ):
                 # A mixed multiplier: "שלושה וחצי מיליון" is 3,500,000.
                 count = (
                     count[0] + 1,
-                    count[1] + _HEBREW_MIXED_FRACTION_VALUES[words[count[0]][1:]],
+                    count[1]
+                    + _HEBREW_MIXED_FRACTION_VALUES[
+                        words[count[0]][1:].lstrip("\u05be-")
+                    ],
                     count[2] | {"fraction"},
                 )
             elif (
                 count is not None
                 and has_vav(count[0])
-                and words[count[0]][1:] in _HEBREW_FRACTION_COUNT_VALUES
+                and words[count[0]][1:].lstrip("\u05be-")
+                in _HEBREW_FRACTION_COUNT_VALUES
                 and count[0] + 1 < len(words)
                 and words[count[0] + 1] in _HEBREW_COUNTED_FRACTION_VALUES
                 and word_at(count[0] + 2) in scale_words
@@ -2446,7 +2455,9 @@ def _parse_hebrew_number_run(
                 count = (
                     count[0] + 2,
                     count[1]
-                    + _HEBREW_FRACTION_COUNT_VALUES[words[count[0]][1:]]
+                    + _HEBREW_FRACTION_COUNT_VALUES[
+                        words[count[0]][1:].lstrip("\u05be-")
+                    ]
                     * _HEBREW_COUNTED_FRACTION_VALUES[words[count[0] + 1]],
                     count[2] | {"fraction"},
                 )
@@ -2459,17 +2470,20 @@ def _parse_hebrew_number_run(
         if (
             following < len(words)
             and has_vav(following)
-            and words[following][1:] in _HEBREW_MIXED_FRACTION_VALUES
+            and words[following][1:].lstrip("\u05be-") in _HEBREW_MIXED_FRACTION_VALUES
             and not fraction_names_own_operand(following + 1)
             and not separate_quantity_at(following + 1)
         ):
-            amount += _HEBREW_MIXED_FRACTION_VALUES[words[following][1:]] * scale
+            amount += (
+                _HEBREW_MIXED_FRACTION_VALUES[words[following][1:].lstrip("\u05be-")]
+                * scale
+            )
             following += 1
             tail = True
         elif (
             following + 1 < len(words)
             and has_vav(following)
-            and words[following][1:] in _HEBREW_FRACTION_COUNT_VALUES
+            and words[following][1:].lstrip("\u05be-") in _HEBREW_FRACTION_COUNT_VALUES
             and words[following + 1] in _HEBREW_COUNTED_FRACTION_VALUES
             and not fraction_names_own_operand(following + 2)
             and not separate_quantity_at(following + 2)
@@ -2477,7 +2491,7 @@ def _parse_hebrew_number_run(
             # A counted fractional tail scales with the scale word too:
             # "מיליון ושני שלישים" is 1,666,666.67.
             amount += (
-                _HEBREW_FRACTION_COUNT_VALUES[words[following][1:]]
+                _HEBREW_FRACTION_COUNT_VALUES[words[following][1:].lstrip("\u05be-")]
                 * _HEBREW_COUNTED_FRACTION_VALUES[words[following + 1]]
                 * scale
             )
@@ -2513,7 +2527,7 @@ def _parse_hebrew_number_run(
         # word after it.
         candidate_end = rest[0]
         if candidate_end < len(words) and has_vav(candidate_end):
-            after_tail = words[candidate_end][1:]
+            after_tail = words[candidate_end][1:].lstrip("\u05be-")
             if after_tail in _HEBREW_MIXED_FRACTION_VALUES:
                 candidate_end += 1
             elif (
@@ -2540,7 +2554,7 @@ def _parse_hebrew_number_run(
         and start < cursor < len(words)
         and has_vav(cursor)
     ):
-        tail = words[cursor][1:]
+        tail = words[cursor][1:].lstrip("\u05be-")
         tail_value: float | None = None
         tail_end = cursor
         if tail in _HEBREW_MIXED_FRACTION_VALUES:
@@ -3239,7 +3253,7 @@ def _hebrew_vav_fraction_tail(words: "Sequence[str]") -> float | None:
     """The value of a vav-bound fractional tail: "וחצי", "ושלושה רבעים"."""
     if not words or not words[0].startswith("\u05d5"):
         return None
-    head = words[0][1:]
+    head = words[0][1:].lstrip("\u05be-")
     if len(words) == 1 and head in _HEBREW_MIXED_FRACTION_VALUES:
         return _HEBREW_MIXED_FRACTION_VALUES[head]
     if (
@@ -4980,7 +4994,11 @@ def _hebrew_list_body_only(text: str, start: int, end: int) -> bool:
         if word_match is None:
             return False
         word = word_match.group(0).rstrip("\u05be")
-        bare = word[1:] if len(word) > 1 and word.startswith("\u05d5") else word
+        bare = (
+            word[1:].lstrip("\u05be-")
+            if len(word) > 1 and word.startswith("\u05d5")
+            else word
+        )
         if not (
             word in _HEBREW_LIST_JOIN_WORDS
             or _strip_hebrew_number_prefix(word, _HEBREW_RUN_START_VOCABULARY)
@@ -5023,7 +5041,11 @@ def _hebrew_list_body_end(text: str, start: int) -> int:
         if word_match is None:
             break
         word = word_match.group(0).rstrip("\u05be")
-        bare = word[1:] if len(word) > 1 and word.startswith("\u05d5") else word
+        bare = (
+            word[1:].lstrip("\u05be-")
+            if len(word) > 1 and word.startswith("\u05d5")
+            else word
+        )
         if not (
             word in _HEBREW_LIST_JOIN_WORDS
             or _strip_hebrew_number_prefix(word, _HEBREW_RUN_START_VOCABULARY)

@@ -20136,6 +20136,23 @@ def test_maqaf_bound_tails_everywhere():
         assert extract_numbers_from_text(text) >= expected, text
 
 
+def test_a_maqaf_after_a_prefix_binds_it_to_its_word():
+    # Review round 135 on #1585: "ו־חצי" is the word "וחצי" with a maqaf,
+    # before a percent noun or a scale word as after a percent marker.
+    for text, expected in (
+        ("השיעור הוא 3 ו־חצי אחוזים.", {0.035}),
+        ("השיעור הוא 3 ו-חצי אחוזים.", {0.035}),
+        ("השיעור הוא 3 וחצי אחוזים.", {0.035}),
+        ("השיעור הוא 3 ו־שלושה רבעים אחוזים.", {0.0375}),
+        ("השיעור הוא -3 ו־חצי אחוזים.", {-0.035}),
+        ("הסכום הוא שלושה ו־חצי מיליון שקלים.", {3_500_000.0}),
+        ("הסכום הוא 3 ו־חצי מיליון שקלים.", {3_500_000.0}),
+        ("הסכום הוא שלושה וחצי מיליון שקלים.", {3_500_000.0}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) >= expected, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
