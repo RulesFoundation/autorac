@@ -2752,10 +2752,13 @@ _HEBREW_MONEY_NOUN = (
 # "מס" takes only its plural and construct ("מסים", "מסי"), so "המסומנת"
 # and "המספיקה" name no tax.
 _HEBREW_FRACTION_BASE_AMOUNT_PATTERN = re.compile(
-    "\\s+(?:\u05de[\u05be-]?(?:\u05d4[\u05be-]?)?|(?:מן|מתוך|של)\\s+(?:\u05d4[\u05be-]?)?"
-    # or nothing: "חמישית שכרו", "חמישית שכר המינימום" take the possessed or
-    # construct noun's amount.
-    "|\u05d4[\u05be-]?|)" + _HEBREW_MONEY_NOUN + "(?![\u0590-\u05ff])"
+    # A partitive the pattern names ("מהשכר", "משכרו", "מן השכר", "של השכר"),
+    # an article ("השכר"), or nothing ("שכרו", "שכר המינימום"): the amount
+    # noun the fraction is taken of, in any of its inflections.
+    "\\s+(?:(?P<partitive>\u05de[\u05be-]?(?:\u05d4[\u05be-]?)?|(?:מן|מתוך|של)\\s+"
+    "(?:\u05d4[\u05be-]?)?)|\u05d4[\u05be-]?|)"
+    + _HEBREW_MONEY_NOUN
+    + "(?![\u0590-\u05ff])"
 )
 # A money context: an amount noun ("קנס", "סכום", "מחזור", "שכר") shortly
 # before a scaled number says the number is money, so a unit or count noun
@@ -3077,6 +3080,10 @@ _HEBREW_UNAMBIGUOUS_FRACTION_WORDS = frozenset(
     {"מחצית", "חצי", "שליש", "רבע"}
 ) | frozenset(word for word in _HEBREW_FRACTION_VALUES if word.endswith(("ים", "יות")))
 _HEBREW_FRACTION_COUNT_VALUES = {
+    "שלשת": 3.0,
+    "עשר": 10.0,
+    "עשרה": 10.0,
+    "עשרת": 10.0,
     "שלש": 3.0,
     "חמשה": 5.0,
     "שני": 2.0,
@@ -3159,7 +3166,15 @@ _HEBREW_NOT_A_PARTITIVE_LOOKAHEAD = (
 _HEBREW_FRACTION_WORD_PATTERN = re.compile(
     "(?<![֐-׿])"
     "(?P<prefix>(?:[ובכלמש][־-]?){0,2})"
-    "(?:(?P<count>" + _hebrew_alternation(_HEBREW_FRACTION_COUNT_VALUES) + ")\\s+)?"
+    # A count word, joined to the fraction word across spaces or one line
+    # wrap, never a blank line; the reader extends it to the whole number
+    # the numeral grammar reads before the fraction word ("אחת עשרה
+    # עשיריות").
+    "(?:(?P<count>"
+    + _hebrew_alternation(_HEBREW_FRACTION_COUNT_VALUES)
+    + ")"
+    + _WRAP_SPACE_FRAGMENT
+    + "+)?"
     "(?P<article>(?:ה[־-]?)?)"
     "(?P<fraction>"
     + _hebrew_alternation(
@@ -3299,10 +3314,41 @@ def _hebrew_fraction_context_before(text: str, start: int) -> bool:
     return not before or before[-1] in _HEBREW_CLAUSE_BOUNDARY_CHARACTERS
 
 
-def _iter_hebrew_fraction_word_matches(
+def _hebrew_fraction_count_before(
+    text: str, match: "re.Match[str]", tokens: "_HebrewWordTokens"
+) -> tuple[float, int] | None:
+    """The count before a fraction word, as the numeral grammar reads it.
+
+    "שלוש עשיריות" is three tenths, "אחת עשרה עשיריות" eleven tenths and
+    "מאה עשיריות" a hundred: the longest run of words flush before the
+    fraction word that the grammar reads whole, short of a scale word, is
+    the count. A count word the grammar does not read on its own ("שני",
+    "שתי") stays the pattern's. Returns (count, start of the count) or None.
+    """
+    run = _hebrew_word_run_before(text, match.start("article"), tokens=tokens)
+    for width in range(len(run), 0, -1):
+        words = [token.group(0) for token in run[-width:]]
+        # A vav-bound last word makes the fraction word the tail of a mixed
+        # number ("עשרים ושלוש עשיריות" is twenty and three tenths), which
+        # the compound pass reads whole.
+        if words[-1].startswith("\u05d5"):
+            continue
+        parsed = _parse_hebrew_number_run(words)
+        if (
+            parsed is not None
+            and parsed[0] == width
+            and not parsed[2] & _HEBREW_SCALE_KINDS
+        ):
+            return parsed[1], run[-width].start()
+    return None
+
+
+def _iter_hebrew_fraction_word_readings(
     text: str,
-) -> list[tuple[tuple[int, int], float]]:
-    matches: list[tuple[tuple[int, int], float]] = []
+) -> list[tuple[tuple[int, int], float, bool]]:
+    """Fraction words with their values, flagged when a count precedes them."""
+    matches: list[tuple[tuple[int, int], float, bool]] = []
+    tokens: "_HebrewWordTokens | None" = None
     for match in _HEBREW_FRACTION_WORD_PATTERN.finditer(text):
         word = match.group("fraction")
         count = match.group("count")
@@ -3334,9 +3380,7 @@ def _iter_hebrew_fraction_word_matches(
                 names_an_amount = (
                     base is not None
                     and not (
-                        not base.group(0)
-                        .lstrip()
-                        .startswith(("\u05de", "מן", "מתוך", "של"))
+                        base.group("partitive") is None
                         and not _hebrew_fraction_context_before(text, match.start())
                         and not _hebrew_fraction_context_in_clause(text, match.start())
                         and _hebrew_word_before_can_be_feminine_singular(
@@ -3398,15 +3442,34 @@ def _iter_hebrew_fraction_word_matches(
                 if not count and not strict and not loose and not names_an_amount:
                     continue
             value = _HEBREW_FRACTION_VALUES[word]
+        start = match.start()
         if count:
             value *= _HEBREW_FRACTION_COUNT_VALUES[count]
-        matches.append(((match.start(), match.end("fraction")), value))
+        if tokens is None:
+            tokens = _HebrewWordTokens(text)
+        counted = _hebrew_fraction_count_before(text, match, tokens)
+        if counted is not None and (not count or counted[1] < start):
+            if count:
+                value /= _HEBREW_FRACTION_COUNT_VALUES[count]
+            value *= counted[0]
+            start = counted[1]
+        matches.append(
+            ((start, match.end("fraction")), value, bool(count) or counted is not None)
+        )
     # A vav-bound fraction word that is the tail of a rate before it ("שלושה%
     # וחצי") is read with the rate by the percent passes.
     return [
-        (span, value)
-        for span, value in matches
+        (span, value, counted)
+        for span, value, counted in matches
         if not _hebrew_fraction_word_is_percent_tail(text, span)
+    ]
+
+
+def _iter_hebrew_fraction_word_matches(
+    text: str,
+) -> list[tuple[tuple[int, int], float]]:
+    return [
+        (span, value) for span, value, _ in _iter_hebrew_fraction_word_readings(text)
     ]
 
 
@@ -3589,6 +3652,23 @@ def _hebrew_fractional_count(words: "Sequence[str]") -> float | None:
                 _HEBREW_FRACTION_COUNT_VALUES[bare]
                 * _HEBREW_COUNTED_FRACTION_VALUES[words[1]]
             )
+    if (
+        len(words) >= 2
+        and words[-1] in _HEBREW_COUNTED_FRACTION_VALUES
+        # A vav-bound word before the fraction word makes it a mixed
+        # number's tail ("מיליון ושלושה רבעים"), which the grammar reads.
+        and not words[-2].startswith("\u05d5")
+    ):
+        # The count is whatever number the grammar reads whole: "אחת עשרה
+        # עשיריות האחוז" is eleven tenths of a percent, "מאה עשיריות
+        # האחוז" a hundred.
+        parsed = _parse_hebrew_number_run(words[:-1])
+        if (
+            parsed is not None
+            and parsed[0] == len(words) - 1
+            and not parsed[2] & _HEBREW_SCALE_KINDS
+        ):
+            return parsed[1] * _HEBREW_COUNTED_FRACTION_VALUES[words[-1]]
     return None
 
 
@@ -10989,9 +11069,28 @@ def _iter_hebrew_number_word_matches(
     # Longest spans first: the caller drops a match whose span overlaps one
     # already taken, so a compound ("twenty and three"), a counted fraction
     # ("two fifths") and a teen (unit then ten) each claim their words before
-    # the single-word pass would read a constituent on its own.
-    matches.extend(_iter_hebrew_compound_number_matches(text))
-    matches.extend(_iter_hebrew_fraction_word_matches(text))
+    # the single-word pass would read a constituent on its own. A compound
+    # that lies inside a counted fraction is its count ("אחת עשרה עשיריות"
+    # is eleven tenths, not eleven); one that reaches past it is a mixed
+    # number whose tail the fraction is ("שלושה ושני שלישים").
+    fractions = _iter_hebrew_fraction_word_readings(text)
+    counted = sorted(span for span, _, is_counted in fractions if is_counted)
+    counted_starts = [span[0] for span in counted]
+
+    def inside_a_counted_fraction(span: tuple[int, int]) -> bool:
+        index = bisect_right(counted_starts, span[0]) - 1
+        while index >= 0 and counted[index][1] > span[0]:
+            if counted[index][1] >= span[1]:
+                return True
+            index -= 1
+        return False
+
+    matches.extend(
+        match
+        for match in _iter_hebrew_compound_number_matches(text)
+        if not inside_a_counted_fraction(match[0])
+    )
+    matches.extend((span, value) for span, value, _ in fractions)
     for match in _HEBREW_TEEN_PATTERN.finditer(text):
         unit = _HEBREW_TEEN_UNIT_VALUES.get(match.group("unit"))
         if unit is None:

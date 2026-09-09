@@ -21620,6 +21620,70 @@ def test_a_count_has_its_spellings_an_operand_its_bare_form_a_verb_its_tenses():
         ), (text, issue)
 
 
+def test_a_partitive_is_what_the_pattern_consumed_and_a_count_is_what_the_grammar_reads():
+    # Review round 171 on #1585: the bare-operand guard reads the partitive
+    # the base pattern consumed, not the operand's first letter, so an
+    # amount noun in a root מ ("משכורתו") is bare; the construct "שלשת"
+    # counts; and the count before a fraction word is the whole number the
+    # numeral grammar reads -- ten, a teen, a ten or a hundred -- while a
+    # vav-bound last word leaves the fraction word the tail of a mixed
+    # number, and a blank line separates a count from a fraction word.
+    import math
+
+    for text, expected in (
+        ("העובד זכאי לשלשת רבעי השכר", 0.75),
+        ("השיעור הוא עשר עשיריות האחוז", 0.01),
+        ("השיעור הוא אחת עשרה עשיריות האחוז", 0.011),
+        ("השיעור הוא שתים עשרה עשיריות האחוז", 0.012),
+        ("השיעור הוא ואחת עשרה עשיריות האחוז", 0.011),
+        ("השיעור הוא עשרים עשיריות האחוז", 0.02),
+        ("השיעור הוא מאה עשיריות האחוז", 0.1),
+        ("השיעור הוא עשרים ושלוש עשיריות האחוז", 0.203),
+        ("העובד זכאי לאחת עשרה עשיריות מהשכר", 1.1),
+        ("העובד זכאי לעשרים ושלוש עשיריות מהשכר", 20.3),
+        ("שלושה ושני שלישים", 3 + 2 / 3),
+        ("הוא קיבל אחד עשר שקלים", 11.0),
+    ):
+        (value,) = _hebrew_recall(text)
+        assert math.isclose(value, expected, rel_tol=1e-9), text
+        (value,) = extract_numbers_from_text(text)
+        assert math.isclose(value, expected, rel_tol=1e-9), text
+    for text, expected in (
+        ("בין אחת עשרה עשיריות האחוז לשתים עשרה עשיריות האחוז", [0.011, 0.012]),
+        ("השיעור הוא שלוש\nעשיריות האחוז", [0.003]),
+        ("השיעור הוא שלוש\n\nעשיריות האחוז", [0.001, 3.0]),
+    ):
+        values = sorted(extract_numbers_from_text(text))
+        assert len(values) == len(expected) and all(
+            math.isclose(value, want, rel_tol=1e-9)
+            for value, want in zip(values, expected, strict=True)
+        ), (text, values)
+    for text, expected, grounded, ungrounded in (
+        ("בדרגה חמישית משכורתו של העובד תעלה", 5.0, "5", "0.2"),
+        ("בדרגה חמישית משכרו", 0.2, "0.2", "5"),
+        ("ניכוי חמישית משכורתו", 0.2, "0.2", "5"),
+        ("העובד זכאי לשלשת רבעי השכר", 0.75, "0.75", "0.25"),
+        ("השיעור הוא עשר עשיריות האחוז", 0.01, "0.01", "10"),
+        ("השיעור הוא אחת עשרה עשיריות האחוז", 0.011, "0.011", "11"),
+        ("השיעור הוא שתים עשרה עשיריות האחוז", 0.012, "0.012", "12"),
+    ):
+        (value,) = _hebrew_recall(text)
+        assert math.isclose(value, expected, rel_tol=1e-9), text
+        (value,) = extract_numbers_from_text(text)
+        assert math.isclose(value, expected, rel_tol=1e-9), text
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
