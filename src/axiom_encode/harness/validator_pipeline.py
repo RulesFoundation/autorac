@@ -4714,12 +4714,21 @@ _HEBREW_PERCENT_NOUN_ANYWHERE_PATTERN = re.compile(
 _HEBREW_DIGITS_BEFORE_PATTERN = re.compile(
     "(?<![\\d.,/\u2044])(?:(?<![\u05d0-\u05ea])(?P<sign>[-\u2212]))?"
     "(?:(?:(?P<whole>\\d+)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]+)?(?P<numerator>\\d+)\\s*[/\u2044]\\s*(?P<denominator>\\d+)"
-    "|(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?))\\s*$"
+    "|(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
+    # A vulgar-fraction glyph, alone or after a whole ("½", "2½", "2 ½").
+    "|(?:(?P<glyph_whole>\\d+)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*)?"
+    "(?P<glyph>[\u00bc-\u00be\u2150-\u215e]))\\s*$"
 )
 
 
 def _hebrew_printed_endpoint_value(match: "re.Match[str]") -> float | None:
-    """The value a printed endpoint match states, sign and fraction included."""
+    """The value a printed endpoint match states, sign, fraction and glyph included."""
+    groups = match.groupdict()
+    if groups.get("glyph"):
+        value = unicodedata.numeric(groups["glyph"]) + float(
+            groups.get("glyph_whole") or 0
+        )
+        return -value if groups.get("sign") else value
     if match.group("numerator"):
         denominator = float(match.group("denominator"))
         if denominator == 0:
@@ -4919,7 +4928,7 @@ _HEBREW_LIST_INTRODUCERS = ("כדלקמן", "הבאים", "הבאות")
 # The colon that introduces the list ("השיעורים הם: 10, 20 ו־30") is body too.
 _HEBREW_LIST_BODY_FILLER_PATTERN = re.compile(
     "[\\s\\d.,:%/\u2044\u05be\\-\u2013\u2212$\u20ac\u00a3\u20aa\u20b9\u00a5"
-    "\u200e\u200f\u202a-\u202e\u2066-\u2069]*"
+    "\u00bc-\u00be\u2150-\u215e\u200e\u200f\u202a-\u202e\u2066-\u2069]*"
 )
 
 
@@ -4951,6 +4960,11 @@ def _hebrew_list_body_only(text: str, start: int, end: int) -> bool:
             or _hebrew_is_percent_noun(bare)
             or word in _HEBREW_CURRENCY_WORDS
             or bare in _HEBREW_CURRENCY_WORDS
+            or word in _HEBREW_MIXED_FRACTION_VALUES
+            or bare in _HEBREW_MIXED_FRACTION_VALUES
+            or word in _HEBREW_COUNTED_FRACTION_VALUES
+            or bare in _HEBREW_COUNTED_FRACTION_VALUES
+            or word in _HEBREW_FRACTION_COUNT_VALUES
         ):
             return False
         position = word_match.end()
@@ -4989,6 +5003,11 @@ def _hebrew_list_body_end(text: str, start: int) -> int:
             or _hebrew_is_percent_noun(bare)
             or word in _HEBREW_CURRENCY_WORDS
             or bare in _HEBREW_CURRENCY_WORDS
+            or word in _HEBREW_MIXED_FRACTION_VALUES
+            or bare in _HEBREW_MIXED_FRACTION_VALUES
+            or word in _HEBREW_COUNTED_FRACTION_VALUES
+            or bare in _HEBREW_COUNTED_FRACTION_VALUES
+            or word in _HEBREW_FRACTION_COUNT_VALUES
         ):
             break
         end = word_match.end()
@@ -5250,14 +5269,22 @@ _HEBREW_UNIT_MODIFIER_PATTERN = re.compile(
 # The inflections of a listed ש-noun ("שליחים", "שליחיו", "שליחי") are the
 # noun too; a suffix moves the stem's final letter to its medial form
 # ("שכן" becomes "שכנו", "שחקן" becomes "שחקניו").
-# A stem that is itself an inflection ("שמם", "שמות", "שליחי") inflects no
-# further, so "שממנו" stays the preposition it is.
-_HEBREW_INFLECTED_STEM_ENDINGS = ("ים", "ות", "\u05d5", "\u05d4", "\u05dd", "\u05d9")
+# An entry that is itself an inflection, a numeral or a name ("שמם", "שמות",
+# "שליחי", "שלושה", "שרון") inflects no further, so "שממנו" stays the
+# preposition it is; a base noun ("שם", "שכן", "שוכר") inflects.
+_HEBREW_LEXICAL_SHIN_FIXED_FORMS = frozenset(
+    "של שכירה שכירים שוטפת שוטפים שנתית שנתיים שקלים שיעורי שיעורים שלמה שלמים "
+    "שנת שני שתי שלושה שלוש שבעה שבע שמונה שישה שש שירותי שערי שטחי שמות שלבי "
+    "שעות שיטת שינויים שבועות שאר שומת שומות שיקולים שטרות שדות שאירים שיעבוד "
+    "שותפה שותפת שותפות שותפים שליחה שליחי שלוחה שלוחות שכנה שכנים שמאים שמאות "
+    "שוכרת שוכרים שולחת שולחים שגרירות שלטים שירה שכונת שאלות שדרות שלוחת שליטת "
+    "שמי שמו שמה שמם שרה שרון שמעון שאול שלומית שולה".split()
+)
 _HEBREW_LEXICAL_SHIN_WORD_PATTERN = re.compile(
     "(?:"
     + "|".join(
         stem
-        if stem.endswith(_HEBREW_INFLECTED_STEM_ENDINGS)
+        if stem in _HEBREW_LEXICAL_SHIN_FIXED_FORMS
         else stem
         + "|"
         + stem[:-1]
@@ -5530,6 +5557,20 @@ class AmbiguousReadingGroup:
 
 
 _HEBREW_PRINTED_MEMBER_PATTERN = re.compile("-?\\d[\\d,]*(?:\\.\\d+)?")
+_GLYPH_FRACTION_MEMBER_PATTERN = re.compile(
+    "(?P<sign>-)?(?:(?P<whole>\\d+)\\s*)?(?P<glyph>[\u00bc-\u00be\u2150-\u215e])"
+)
+_MIXED_FRACTION_MEMBER_PATTERN = re.compile(
+    "(?P<sign>-)?(?:(?P<whole>\\d+)\\s+)?(?P<num>\\d+)\\s*[/\u2044]\\s*(?P<den>\\d+)"
+)
+# A printed mixed number with an ASCII slash in Hebrew text ("2 1/2, 10
+# ו־30 אחוזים") is one number, as it is with the fraction slash; a Hebrew
+# letter or a list mark must follow, so a date or a ratio never joins.
+_HEBREW_ASCII_MIXED_FRACTION_PATTERN = re.compile(
+    "(?<![\\d.,/])(?:(?<![\u05d0-\u05ea])(?P<sign>[-\u2212]))?"
+    "(?P<whole>\\d+)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]+(?P<numerator>\\d+)\\s*/\\s*(?P<denominator>\\d+)"
+    "(?![\\d/])(?=\\s*(?:[\u0590-\u05ff,;.]|$))"
+)
 
 
 def _hebrew_member_unscaled_value(
@@ -5543,17 +5584,28 @@ def _hebrew_member_unscaled_value(
     printed and mixed fractions and number words; the occurrence whose
     span the member covers gives the value.
     """
-    best: NumericOccurrence | None = None
+    raw = cleaned[span[0] : span[1]]
+    piece = raw.strip()
+    piece_start = span[0] + (len(raw) - len(raw.lstrip()))
+    piece_end = piece_start + len(piece)
     for occurrence in grounded:
-        if occurrence.start < span[0] or occurrence.end > span[1]:
-            continue
-        if best is None or (occurrence.end - occurrence.start) > (
-            best.end - best.start
-        ):
-            best = occurrence
-    if best is not None:
-        return best.value
-    piece = cleaned[span[0] : span[1]].strip()
+        if occurrence.start == piece_start and occurrence.end == piece_end:
+            return occurrence.value
+    glyph = _GLYPH_FRACTION_MEMBER_PATTERN.fullmatch(piece.replace("\u2212", "-"))
+    if glyph is not None:
+        value = unicodedata.numeric(glyph.group("glyph")) + float(
+            glyph.group("whole") or 0
+        )
+        return -value if glyph.group("sign") else value
+    mixed = _MIXED_FRACTION_MEMBER_PATTERN.fullmatch(piece.replace("\u2212", "-"))
+    if mixed is not None:
+        try:
+            value = float(mixed.group("whole") or 0) + float(
+                mixed.group("num")
+            ) / float(mixed.group("den"))
+        except (ValueError, ZeroDivisionError):
+            return None
+        return -value if mixed.group("sign") else value
     printed = _HEBREW_PRINTED_MEMBER_PATTERN.fullmatch(piece.replace("\u2212", "-"))
     if printed is not None:
         try:
@@ -14305,7 +14357,12 @@ def _tokenize_numeric_occurrences_from_text(
             grounding_spans.append(span)
             inventory_spans.append(span)
 
-    for match in _FRACTION_SLASH_PATTERN.finditer(cleaned):
+    hebrew_ascii_mixed = (
+        list(_HEBREW_ASCII_MIXED_FRACTION_PATTERN.finditer(cleaned))
+        if re.search("[\u0590-\u05ff]", cleaned)
+        else []
+    )
+    for match in (*hebrew_ascii_mixed, *_FRACTION_SLASH_PATTERN.finditer(cleaned)):
         with contextlib.suppress(ValueError, ZeroDivisionError):
             whole = float(match.group("whole") or 0)
             numerator = float(match.group("numerator"))
@@ -14325,12 +14382,15 @@ def _tokenize_numeric_occurrences_from_text(
                 )
                 grounding_spans.append(match.span())
                 continue
-            if _PERCENT_MARKER_AFTER_NUMBER_PATTERN.match(
-                cleaned, match.end()
-            ) or _HEBREW_PERCENT_WORD_PATTERN.match(cleaned, match.end()):
-                # "16 1⁄2%" is the rate 0.165: one value to recall, the way
-                # "16.5%" is. The printed figure grounds as well, for an
-                # encoding that states the percentage and divides itself.
+            if (
+                _PERCENT_MARKER_AFTER_NUMBER_PATTERN.match(cleaned, match.end())
+                or _LOCAL_RATE_CONTEXT_AFTER_NUMBER_PATTERN.match(cleaned, match.end())
+                or _HEBREW_PERCENT_WORD_PATTERN.match(cleaned, match.end())
+            ):
+                # "16 1⁄2%" and "10 1⁄4 percent" are the rates 0.165 and
+                # 0.1025: one value to recall, the way "16.5%" is. The
+                # printed figure grounds as well, for an encoding that states
+                # the percentage and divides itself.
                 collector.add_grounding(cleaned_view, match.span(), value)
                 add_both(
                     cleaned_view,
@@ -14856,7 +14916,13 @@ def _tokenize_numeric_occurrences_from_text(
     for glyph, value in _UNICODE_FRACTION_VALUES.items():
         for match in re.finditer(re.escape(glyph), cleaned):
             collector.add_grounding(cleaned_view, match.span(), value)
+            if _span_overlaps(match.span(), inventory_spans):
+                # A list member read with its shared unit ("½, 10 ו־30
+                # אחוזים") is the rate the Hebrew pass recorded; the glyph
+                # still grounds as the fraction it prints.
+                continue
             collector.add_inventory(cleaned_view, match.span(), value)
+            inventory_spans.append(match.span())
 
     for span, value in compound_cardinal_matches:
         if _span_overlaps(span, inventory_spans):

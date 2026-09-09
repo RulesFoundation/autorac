@@ -18988,9 +18988,11 @@ def test_a_mixed_fraction_stays_on_its_line():
         assert _hebrew_recall(text) == {10.0, 0.25}, text
         grounded = extract_numbers_from_text(text)
         assert {10.0, 0.25} <= grounded and 10.25 not in grounded, text
-    for text in ("The threshold is 10 1⁄4 percent.", "הסף הוא 10 1⁄4 נקודות זיכוי."):
-        assert 10.25 in _hebrew_recall(text), text
-        assert 10.25 in extract_numbers_from_text(text), text
+    assert _hebrew_recall("הסף הוא 10 1⁄4 נקודות זיכוי.") == {10.25}
+    assert 10.25 in extract_numbers_from_text("הסף הוא 10 1⁄4 נקודות זיכוי.")
+    # Before a percent word the fraction is the rate, as "10.25 percent" is.
+    assert _hebrew_recall("The threshold is 10 1⁄4 percent.") == {0.1025}
+    assert 10.25 in extract_numbers_from_text("The threshold is 10 1⁄4 percent.")
 
 
 def test_a_predicate_after_the_unit_is_the_consequent():
@@ -19098,9 +19100,8 @@ def test_a_mixed_fraction_stays_on_its_line_across_unicode_separators():
         assert _hebrew_recall(text) == {10.0, 0.25}, text
         grounded = extract_numbers_from_text(text)
         assert {10.0, 0.25} <= grounded and 10.25 not in grounded, text
-    for text in ("הסף הוא 10 1⁄4 נקודות זיכוי.", "The threshold is 10 1⁄4 percent."):
-        assert 10.25 in _hebrew_recall(text), text
-        assert 10.25 in extract_numbers_from_text(text), text
+    assert _hebrew_recall("הסף הוא 10 1⁄4 נקודות זיכוי.") == {10.25}
+    assert _hebrew_recall("The threshold is 10 1⁄4 percent.") == {0.1025}
 
 
 def test_the_conditions_comma_tells_a_modifier_from_a_predicate():
@@ -19938,6 +19939,48 @@ def test_a_word_both_marker_and_noun_is_ambiguous_and_members_keep_their_form():
     assert "ground as 10, -20 here and would read 0.1, -0.2 under the shared unit" in (
         issue
     )
+
+
+def test_base_nouns_inflect_fractions_join_lists_and_percent_words_scale():
+    # Review round 128 on #1585: "שם" inflects to "שמנו", both marker and
+    # noun, so the list is ambiguous; fraction words and glyphs are list
+    # body; a mixed ASCII fraction in Hebrew text is one member; English
+    # percent words scale a fraction slash.
+    split = {500.0, 2_000_000.0, 3_000_000.0}
+    text = "אם התשלומים הם 500, 2 או 3 מיליון שקלים שמנו יימסר לרשות, והיתרה תוחזר."
+    assert _hebrew_recall(text) == split
+    assert extract_numbers_from_text(text) == split
+    (group,) = hebrew_ambiguous_reading_groups(text)
+    assert [(m.unscaled, m.scaled) for m in group.members] == [(500.0, 500_000_000.0)]
+    two_thirds = 2.0 / 3.0
+    for text, expected in (
+        (
+            "השיעורים הם שני שלישים, 10 ו־30 אחוזים, בהתאמה.",
+            {two_thirds / 100, 0.1, 0.3},
+        ),
+        ("השיעורים הם ½, 10 ו־30 אחוזים, בהתאמה.", {0.005, 0.1, 0.3}),
+        ("השיעורים הם חצי, 10 ו־30 אחוזים, בהתאמה.", {0.005, 0.1, 0.3}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) >= expected, text
+    text = "אם השיעורים הם 2 1/2, 10 ו־30 אחוזים מהכנסה נמוכה, תחול ההוראה."
+    assert _hebrew_recall(text) == {2.5, 10.0, 0.3}
+    (group,) = hebrew_ambiguous_reading_groups(text)
+    assert [m.unscaled for m in group.members] == [2.5, 10.0]
+    assert [m.scaled for m in group.members] == [0.025, 0.1]
+    content = _danish_numeric_rulespec("0.025", citation_path="il/statute/example/1")
+    (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+    assert "ground as 2.5, 10 here and would read 0.025, 0.1" in issue
+    for text, expected in (
+        ("The threshold is 10 1⁄4 percent.", {0.1025}),
+        ("The threshold is 10 1/4 percent.", {0.1025}),
+        ("The threshold is 10.25 percent.", {0.1025}),
+        ("The rate is 1⁄2 per cent.", {0.005}),
+        ("The rate is 1⁄2 p.c.", {0.005}),
+        ("הסף הוא 10 1⁄4 נקודות זיכוי.", {10.25}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) >= expected, text
 
 
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
