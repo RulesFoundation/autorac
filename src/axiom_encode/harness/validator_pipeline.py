@@ -2616,7 +2616,7 @@ def _parse_hebrew_number_run(
 # fifth grade, and "דרגה" is none of these.
 _HEBREW_FRACTION_COPULA_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])(?:יהיה|יהא|תהיה|תהא|הוא|היא|הם|הן|של|בשיעור|בגובה|בסך|סכום|"
-    "כדי|עד|לפחות|לכל היותר|"
+    "כדי|עד|לפחות|לכל היותר|ניכוי|הפחתה|הנחה|קיזוז|הפרשה|החזר|"
     "ישלם|תשלם|ישלמו|ישולם|תשולם|ישולמו|משלם|משלמת|משלמים|שילם|שולם|"
     "יקבל|תקבל|יקבלו|מקבל|מקבלת|קיבל|"
     "ינוכה|תנוכה|ינוכו|ינכה|תנכה|מנכה|נוכה|יופחת|תופחת|יופחתו|יוגדל|תוגדל|"
@@ -2635,7 +2635,7 @@ _HEBREW_AMOUNT_NOUN_STEMS = (
     "שכר|משכורת|הכנס|קצב|גמל|גימל|סכום|תשלום|שווי|ערך|מחיר|רווח|הון|תמור|מענק|"
     "עלות|פיצוי|פנסי|הפרש|קרן|ריבית|דמי|נכס|מס|"
     "תקציב|הוצא|מחזור|חוב|הלווא|השקע|נזק|תרומ|עמל|דיבידנד|תגמול|אגר|קנס|"
-    "היטל|ארנונ|פרמי|מלג|תמיכ|סיוע|סובסידי|כספ"
+    "היטל|ארנונ|פרמי|מלג|תמיכ|סיוע|סובסידי|כספ|יתר|הטב"
 )
 _HEBREW_FINAL_TO_MEDIAL = {
     "\u05dd": "\u05de",  # ם → מ
@@ -3199,10 +3199,12 @@ def _iter_hebrew_fraction_word_matches(
                 # third birth that qualifies and "דרגה חמישית המקנה" a fifth
                 # grade that confers. A bare מ- or ה-word after the fraction
                 # word counts only when a copula or a quantity word precedes.
-                # After a noun the ordinal agrees with ("בדרגה חמישית") a bare
-                # definite amount noun begins the next phrase ("השכר גבוה
-                # יותר"), not the fraction's operand; only an explicit
-                # partitive ("מהשכר", "משכרו") makes the word a fraction there.
+                # After a feminine noun the ordinal agrees with ("בדרגה
+                # חמישית", "בבדיקה חמישית", "בעיר חמישית") a bare definite
+                # amount noun begins the next phrase ("השכר גבוה יותר"), not
+                # the fraction's operand; only an explicit partitive
+                # ("מהשכר", "משכרו") makes the word a fraction there. A copula
+                # before it ("תהיה חמישית השכר") is clause context, read below.
                 base = _HEBREW_FRACTION_BASE_AMOUNT_PATTERN.match(
                     text, match.end("fraction")
                 )
@@ -3210,13 +3212,9 @@ def _iter_hebrew_fraction_word_matches(
                     base is not None
                     and not (
                         base.group(0).lstrip().startswith("\u05d4")
-                        and _search_before(
-                            _HEBREW_ORDINAL_CONTEXT_NOUN_PATTERN,
-                            text,
-                            match.start("fraction"),
-                            24,
+                        and _hebrew_word_before_can_be_feminine_singular(
+                            text, match.start("fraction")
                         )
-                        is not None
                     )
                     # "עשירית שקל" is a tenth of a shekel, "עשירית שנייה" a
                     # tenth of a second: a unit after the word says fraction.
@@ -7782,7 +7780,15 @@ _HEBREW_STRUCTURAL_NOT_A_QUANTITY_TAILED = (
 )
 # After a spelled reference the number is complete, and a vav-bound word is
 # the conjunction ("התוספות השנייה ושלושה ילדים"): the unit must follow at once.
-_HEBREW_STRUCTURAL_NOT_A_QUANTITY = "(?!\\s*(?:" + _HEBREW_STRUCTURAL_UNIT_NOUNS + "))"
+# Nor is a spelled reference one when a partitive names the amount it is
+# a fraction of: "תוספת חמישית מהשכר" is a supplement of a fifth of the
+# wage, an amount to encode, where "התוספת החמישית לחוק" is a schedule.
+_HEBREW_STRUCTURAL_NOT_A_QUANTITY = (
+    "(?!\\s*(?:" + _HEBREW_STRUCTURAL_UNIT_NOUNS + "))"
+    "(?!\\s+\u05de[\u05be-]?(?:\u05d4[\u05be-]?)?"
+    + _HEBREW_MONEY_NOUN
+    + "(?![\u0590-\u05ff]))"
+)
 _HEBREW_STRUCTURAL_LIST_JOIN = "(?:\u05d5[\u05be-]?|או)"
 _HEBREW_STRUCTURAL_RANGE_JOIN = "(?:עד|[-\u2013\u2014])"
 # Nor the first half of a coordinated quantity or a range of amounts,

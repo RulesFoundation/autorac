@@ -21285,6 +21285,38 @@ def test_a_feminine_stem_inflects_and_a_context_noun_keeps_its_ordinal():
         ), (text, issue)
 
 
+def test_any_feminine_noun_keeps_its_ordinal_and_a_fraction_of_an_amount_is_no_reference():
+    # Review round 161 on #1585: an ordinal after any feminine noun stays an
+    # ordinal before a definite noun that begins the next phrase; a balance
+    # and a benefit are amount nouns; and a supplement of a fraction of an
+    # amount is an amount to encode, not a schedule reference.
+    for text, expected, grounded, ungrounded in (
+        ("בבדיקה חמישית השכר נמצא תקין", {5.0}, "5", "0.2"),
+        ("בעיר חמישית השכר גבוה יותר", {5.0}, "5", "0.2"),
+        ("ניכוי חמישית מיתרת החשבון", {0.2}, "0.2", "5"),
+        ("ניכוי חמישית מהיתרה", {0.2}, "0.2", "5"),
+        ("ניכוי חמישית מההטבות", {0.2}, "0.2", "5"),
+        ("תוספת חמישית מהשכר תשולם לעובד", {0.2}, "0.2", "5"),
+        ("תהיה חמישית השכר", {0.2}, "0.2", "5"),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+    # A genuine schedule reference stays masked from recall.
+    assert _hebrew_recall("לפי התוספת החמישית לחוק ישולם 100") == {100.0}
+    assert _hebrew_recall("תוספת שלישית לחוק") == set()
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
