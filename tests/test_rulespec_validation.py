@@ -20539,6 +20539,53 @@ def test_a_condition_whose_shin_binds_the_heading_noun_opens_it():
     }
 
 
+def test_the_spelled_zero_is_a_numeral():
+    # Review round 143 on #1585: "אפס" is in the numeral vocabulary, so a
+    # list of rates that starts at zero shares its unit across every member
+    # as the printed "0, 10 ו־20" does, and a zero floor, rate or range
+    # endpoint reads as the printed zero reads. Zero is no recall
+    # obligation under either spelling.
+    for spelled, printed, extracted, recalled in (
+        (
+            "השיעורים הם אפס, 10 ו־20 אחוזים",
+            "השיעורים הם 0, 10 ו־20 אחוזים",
+            {0.0, 0.1, 0.2},
+            {0.1, 0.2},
+        ),
+        (
+            "שיעורי המס הם אפס, עשרה ועשרים אחוזים",
+            "שיעורי המס הם 0, עשרה ועשרים אחוזים",
+            {0.0, 0.1, 0.2},
+            {0.1, 0.2},
+        ),
+        (
+            "הסכומים הם אפס, 2 ו־3 מיליון שקלים",
+            "הסכומים הם 0, 2 ו־3 מיליון שקלים",
+            {0.0, 2_000_000.0, 3_000_000.0},
+            {2_000_000.0, 3_000_000.0},
+        ),
+        ("השיעור הוא אפס אחוזים", "השיעור הוא 0 אחוזים", {0.0}, set()),
+        ("הסכום הוא אפס שקלים", "הסכום הוא 0 שקלים", {0.0}, set()),
+        ("בין אפס לשלושה אחוזים", "בין 0 לשלושה אחוזים", {0.0, 0.03}, {0.03}),
+        ("מאפס עד שלושה אחוזים", "מ־0 עד שלושה אחוזים", {0.0, 0.03}, {0.03}),
+    ):
+        for text in (spelled, printed):
+            assert extract_numbers_from_text(text) == extracted, text
+            assert _hebrew_recall(text) == recalled, text
+    # Grounding follows the shared unit: the first rate grounds, its count
+    # does not, under either spelling.
+    for text in (
+        "השיעורים הם אפס, 10 ו־20 אחוזים",
+        "השיעורים הם 0, 10 ו־20 אחוזים",
+        "שיעורי המס הם אפס, עשרה ועשרים אחוזים",
+    ):
+        rate = _danish_numeric_rulespec("0.1", citation_path="il/statute/example/1")
+        assert find_ungrounded_numeric_issues(rate, source_text=text) == [], text
+        count = _danish_numeric_rulespec("10", citation_path="il/statute/example/1")
+        (issue,) = find_ungrounded_numeric_issues(count, source_text=text)
+        assert issue.startswith("Ungrounded generated numeric literal: 10 "), issue
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

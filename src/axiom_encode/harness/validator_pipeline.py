@@ -1824,6 +1824,8 @@ _HEBREW_NUMBER_WORD_VALUES = {
     "עשירי": 10.0,
     "עשירית": 10.0,
     # Cardinals, including the construct forms a statute uses before a noun.
+    # Zero, which a list of rates or a floor states ("אפס, 10 ו־20 אחוזים").
+    "אפס": 0.0,
     "אחד": 1.0,
     "אחת": 1.0,
     "שניים": 2.0,
