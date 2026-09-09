@@ -3134,7 +3134,7 @@ _HEBREW_PERCENT_PHRASE_PATTERN = re.compile(
     "(?:(?P<digits>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
     + _WRAP_SPACE_FRAGMENT
     + "+"
-    "|(?:(?P<glyph_whole>\\d+)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*)?(?P<glyph>[\u00bc-\u00be\u2150-\u215e])"
+    "|(?:(?P<glyph_whole>(?:\\d{1,3}(?:,\\d{3})+|\\d+))[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*)?(?P<glyph>[\u00bc-\u00be\u2150-\u215e])"
     + _WRAP_SPACE_FRAGMENT
     + "+"
     "|(?:(?P<whole>\\d+)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]+)?(?P<numerator>\\d+)\\s*[/\u2044]\\s*(?P<denominator>\\d+)"
@@ -3354,7 +3354,7 @@ def _iter_hebrew_percent_phrase_matches(
             # A vulgar-fraction glyph, alone or after a whole ("½ אחוז", "2½
             # אחוזים"), is the count as printed.
             count_value = unicodedata.numeric(match.group("glyph")) + float(
-                match.group("glyph_whole") or 0
+                (match.group("glyph_whole") or "0").replace(",", "")
             )
             count_start = match.start(
                 "glyph_whole" if match.group("glyph_whole") else "glyph"
@@ -3584,7 +3584,7 @@ _HEBREW_PRINTED_SCALE_PATTERN = re.compile(
     # decimal; each is a complete multiplier.
     "(?:(?:(?P<whole>\\d+)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]+)?(?P<numerator>\\d+)\\s*[/\u2044]\\s*(?P<denominator>\\d+)"
     "|(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
-    "|(?:(?P<glyph_whole>\\d+)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*)?(?P<glyph>[\u00bc-\u00be\u2150-\u215e]))"
+    "|(?:(?P<glyph_whole>(?:\\d{1,3}(?:,\\d{3})+|\\d+))[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*)?(?P<glyph>[\u00bc-\u00be\u2150-\u215e]))"
     # A vav-bound fractional tail before the scale word: one fraction word
     # ("3 וחצי מיליון") or a counted fraction ("3 ושלושה רבעים מיליון").
     "(?:"
@@ -3686,10 +3686,12 @@ _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN = re.compile(
     + _WRAP_SPACE_FRAGMENT
     + "+\u05d5[\u05be-]?"
     + _WRAP_SPACE_FRAGMENT
-    + "*(?>(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
+    + "*(?>(?:(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
     "(?:\\s*[/\u2044]\\s*(?P<bare_denominator>\\d+))?"
-    # A glyph after the number ("ו־2½ שקלים") is the remainder's fraction.
-    "(?:[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?P<remainder_glyph>[\u00bc-\u00be\u2150-\u215e]))?)"
+    # A glyph after the number ("ו־2½ שקלים") is the remainder's fraction,
+    # and a bare glyph ("ו־½ שקלים") is the remainder.
+    "(?:[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?P<remainder_glyph>[\u00bc-\u00be\u2150-\u215e]))?"
+    "|(?P<bare_remainder_glyph>[\u00bc-\u00be\u2150-\u215e])))"
     # The whole mixed number, read atomically so a tail once read is never
     # given back: a printed fraction ("3 1/2", "3 1⁄2", "3 1 / 2") or a
     # spelled tail ("3 וחצי", "3 ושלושה רבעים").
@@ -3735,7 +3737,10 @@ def _hebrew_printed_plain_remainder_pattern(money_context: bool) -> "re.Pattern[
 
 def _hebrew_printed_plain_remainder_value(match: "re.Match[str]") -> float | None:
     """The value a plain printed remainder states, fraction and tail included."""
-    value = float(match.group("number").replace(",", ""))
+    if match.groupdict().get("bare_remainder_glyph"):
+        value = unicodedata.numeric(match.group("bare_remainder_glyph"))
+    else:
+        value = float(match.group("number").replace(",", ""))
     if match.group("bare_denominator"):
         denominator = float(match.group("bare_denominator"))
         if denominator == 0:
@@ -4343,7 +4348,7 @@ def _hebrew_printed_scale_part(
         )
     elif match.group("glyph"):
         value = unicodedata.numeric(match.group("glyph")) + float(
-            match.group("glyph_whole") or 0
+            (match.group("glyph_whole") or "0").replace(",", "")
         )
     else:
         value = float(match.group("number").replace(",", ""))
@@ -4740,7 +4745,7 @@ _HEBREW_DIGITS_BEFORE_PATTERN = re.compile(
     "(?:(?:(?P<whole>\\d+)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]+)?(?P<numerator>\\d+)\\s*[/\u2044]\\s*(?P<denominator>\\d+)"
     "|(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
     # A vulgar-fraction glyph, alone or after a whole ("½", "2½", "2 ½").
-    "|(?:(?P<glyph_whole>\\d+)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*)?"
+    "|(?:(?P<glyph_whole>(?:\\d{1,3}(?:,\\d{3})+|\\d+))[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*)?"
     "(?P<glyph>[\u00bc-\u00be\u2150-\u215e]))\\s*$"
 )
 
@@ -4750,7 +4755,7 @@ def _hebrew_printed_endpoint_value(match: "re.Match[str]") -> float | None:
     groups = match.groupdict()
     if groups.get("glyph"):
         value = unicodedata.numeric(groups["glyph"]) + float(
-            groups.get("glyph_whole") or 0
+            (groups.get("glyph_whole") or "0").replace(",", "")
         )
         return -value if groups.get("sign") else value
     if match.group("numerator"):
@@ -5304,7 +5309,7 @@ _HEBREW_LEXICAL_SHIN_FIXED_FORMS = frozenset(
     "שוכרת שוכרים שולחת שולחים שגרירות שלטים שירה שכונת שאלות שדרות שלוחת שליטת "
     "שמי שמו שמה שמם שרה שרון שמעון שאול שלומית שולה".split()
 )
-_HEBREW_SHIN_SUFFIXES = "(?:ים|ות|יו|יה|יהם|יהן|נו|י|ו|ה|ם|ן|ת)"
+_HEBREW_SHIN_SUFFIXES = "(?:ים|ות|יו|יה|יהם|יהן|נו|י|ו|ה|ם|ן|ת|ך|כם|כן)"
 # The possessives a plural stem takes ("שאלותיו", "שכניו", "שליחותיהם").
 _HEBREW_SHIN_PLURAL_SUFFIXES = "(?:יו|יה|יהם|יהן|ינו|יך|יכם|יכן|י)"
 
@@ -5632,7 +5637,7 @@ _HEBREW_ASCII_MIXED_FRACTION_PATTERN = re.compile(
 # percent marker follows ("2½%"); read before the general glyph reader.
 _HEBREW_GLYPH_NUMBER_PATTERN = re.compile(
     "(?<![\\d.,/])(?:(?<![\u05d0-\u05ea])(?P<sign>[-\u2212]))?"
-    "(?:(?P<whole>\\d+)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*)?(?P<glyph>[\u00bc-\u00be\u2150-\u215e])(?![\\d])"
+    "(?:(?P<whole>(?:\\d{1,3}(?:,\\d{3})+|\\d+))[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*)?(?P<glyph>[\u00bc-\u00be\u2150-\u215e])(?![\\d])"
 )
 
 
@@ -14408,28 +14413,47 @@ def _tokenize_numeric_occurrences_from_text(
             ):
                 continue
             value = unicodedata.numeric(match.group("glyph")) + float(
-                match.group("whole") or 0
+                (match.group("whole") or "0").replace(",", "")
             )
             if match.group("sign"):
                 value = -value
-            if _PERCENT_MARKER_AFTER_NUMBER_PATTERN.match(
+            span = match.span()
+            marker = _PERCENT_MARKER_AFTER_NUMBER_PATTERN.match(
                 cleaned, match.end()
-            ) or _HEBREW_PERCENT_WORD_PATTERN.match(cleaned, match.end()):
-                # "2½%" is the rate 0.025, the way "2.5%" is; the printed
-                # figure grounds as well.
-                collector.add_grounding(cleaned_view, match.span(), value)
+            ) or _HEBREW_PERCENT_WORD_PATTERN.match(cleaned, match.end())
+            if marker is not None:
+                # "2½%" is the rate 0.025, the way "2.5%" is, and "2½% וחצי"
+                # 0.03: the tail after the marker is the rate's too, unless a
+                # unit of its own follows. The printed figure grounds as well.
+                end = marker.end()
+                tail = _HEBREW_PERCENT_TAIL_AFTER_PATTERN.match(cleaned, end)
+                if tail is not None and not _HEBREW_UNIT_AFTER_PATTERN.match(
+                    cleaned, tail.end()
+                ):
+                    if tail.group("tail"):
+                        value += _HEBREW_MIXED_FRACTION_VALUES[tail.group("tail")]
+                    else:
+                        value += (
+                            _HEBREW_FRACTION_COUNT_VALUES[tail.group("tail_count")]
+                            * _HEBREW_COUNTED_FRACTION_VALUES[
+                                tail.group("tail_fraction")
+                            ]
+                        )
+                    end = tail.end()
+                span = (match.start(), end)
+                collector.add_grounding(cleaned_view, span, value)
                 add_both(
                     cleaned_view,
-                    match.span(),
+                    span,
                     value / 100,
                     source_value=value,
                     force_rate_context=True,
                     requires_rate_context=True,
                 )
             else:
-                add_both(cleaned_view, match.span(), value)
-            grounding_spans.append(match.span())
-            inventory_spans.append(match.span())
+                add_both(cleaned_view, span, value)
+            grounding_spans.append(span)
+            inventory_spans.append(span)
     for match in (*hebrew_ascii_mixed, *_FRACTION_SLASH_PATTERN.finditer(cleaned)):
         with contextlib.suppress(ValueError, ZeroDivisionError):
             whole = float(match.group("whole") or 0)

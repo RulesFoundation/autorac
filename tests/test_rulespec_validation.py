@@ -20056,6 +20056,33 @@ def test_plural_possessives_signed_percent_glyphs_and_glyph_remainders():
         assert [m.scaled for m in group.members] == [-0.005, 0.1], text
 
 
+def test_second_person_possessives_bare_remainders_rate_tails_and_grouped_wholes():
+    # Review round 131 on #1585: the second-person possessives; a bare glyph
+    # remainder; the fractional tail after a glyph rate; a grouped whole
+    # before a glyph.
+    split = {500.0, 2_000_000.0, 3_000_000.0}
+    for text in (
+        "אם התשלומים הם 500, 2 או 3 מיליון שקלים שאלתך תועבר לוועדה, והיתרה תוחזר.",
+        "אם התשלומים הם 500, 2 או 3 מיליון שקלים שאלתכם תועבר לוועדה, והיתרה תוחזר.",
+    ):
+        assert _hebrew_recall(text) == split, text
+        assert extract_numbers_from_text(text) == split, text
+        assert hebrew_ambiguous_reading_groups(text) == [], text
+    for text, expected in (
+        ("הקצבה תהיה 3 אלפים ו־½ שקלים.", {3_000.5}),
+        ("הקצבה תהיה 3 אלפים ו־1⁄2 שקלים.", {3_000.5}),
+        ("השיעור הוא 2½% וחצי.", {0.03}),
+        ("השיעור הוא 2½ אחוז וחצי.", {0.03}),
+        ("השיעור הוא 2.5% וחצי.", {0.03}),
+        ("הסכום הוא 1,000½ שקלים.", {1_000.5}),
+        ("הסכום הוא 1000½ שקלים.", {1_000.5}),
+        ("הסכום הוא 1,000.5 שקלים.", {1_000.5}),
+        ("השיעורים הם 10, 20 ו־1,000½ אחוזים.", {0.1, 0.2, 10.005}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) >= expected, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
