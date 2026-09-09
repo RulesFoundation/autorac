@@ -42898,3 +42898,59 @@ def test_german_dependency_links_reject_negation_unrelated_clause_and_other_sect
         "de:statutes/estg/64#recipient_priority",
         corpus_citation_path="de/statute/estg/78",
     )
+
+
+def test_estg32_service_citations_do_not_create_executable_numeric_requirements():
+    # Corpus de/statute/estg/32/absatz-4/document-1: these are instrument
+    # identifiers and publication locators, not additional eligibility values.
+    source = """noch nicht das 25. Lebensjahr vollendet hat und
+Verordnung (EU) 2021/888 des Europäischen Parlaments und des Rates vom 20. Mai 2021
+zur Aufstellung des Programms für das Europäische Solidaritätskorps und zur Aufhebung
+der Verordnungen (EU) 2018/1475 und (EU) Nr. 375/2014 (ABl. L 202 vom 8.6.2021, S. 32),
+Richtlinie vom 4. Januar 2021 (GMBl S. 77);
+bis zu 20 Stunden regelmäßiger wöchentlicher Arbeitszeit."""
+    inventory = extract_typed_numeric_inventory_occurrences_from_text(
+        authoritative_numeric_recall_text(source), profile="de-DE"
+    )
+    assert [(item.raw, item.value) for item in inventory] == [
+        ("25", 25.0),
+        ("20", 20.0),
+    ]
+
+
+@pytest.mark.parametrize(
+    "citation",
+    [
+        "(ABl. L 202 vom 8.6.2021, S. 32)",
+        "(ABl. C 110 vom 25.04.1983, S. 60)",
+        "(ABl. L 202\nvom 8.6.2021,\nS. 32–40)",
+        "(GMBl S. 77)",
+        "(GMBl. 2021 S. 77)",
+        "(GMBl 2021, S. 77-80)",
+        "Verordnung (EG) Nr. 883/2004",
+        "Verordnung (EWG) Nr. 1408/71",
+        "Verordnungen (EU) 2018/1475 und (EU) Nr. 375/2014",
+    ],
+)
+def test_german_instrument_citation_cleanup_preserves_equal_operative_values(citation):
+    source = f"{citation}; Freibetrag 32 Euro, Zuschlag 77 Euro, Grenze 202 Euro."
+    inventory = extract_typed_numeric_inventory_occurrences_from_text(
+        authoritative_numeric_recall_text(source), profile="de-DE"
+    )
+    assert [item.value for item in inventory] == [32.0, 77.0, 202.0]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "(GMBl S. 77 Euro)",
+        "(GMBl S. 77; der Freibetrag beträgt 77 Euro)",
+        "(ABl. L 202 vom 8.6.2021, S. 32; der Freibetrag beträgt 32 Euro)",
+        "Verordnung (EU) 2021/888888 Euro",
+        "Verordnung (EU) 2021/888a",
+        "Verordnung (EU) 2021/888/32",
+        "Eine Zahlung von 32 Euro auf S. 77.",
+    ],
+)
+def test_german_instrument_cleanup_does_not_hide_mixed_or_partial_text(source):
+    assert authoritative_numeric_recall_text(source) == source
