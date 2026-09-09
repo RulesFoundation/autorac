@@ -4981,19 +4981,144 @@ def _hebrew_word_governs_an_amount(word: str) -> bool:
     return _HEBREW_MONEY_NOUN_WORD_PATTERN.match(word) is not None
 
 
+# The words of a rate expression between its rate word and its pair. The
+# copulas and the participles that predicate an amount, beside the listed
+# future verbs; the prepositions that open a phrase; the comparatives and
+# limits that connect a predicate to its pair; and the negations and
+# adverbs that stand anywhere.
+_HEBREW_RATE_COPULAS = frozenset(
+    {
+        "הוא",
+        "היא",
+        "הם",
+        "הן",
+        "הינו",
+        "הינה",
+        "הינם",
+        "הינן",
+        "היה",
+        "הייתה",
+        "היתה",
+        "היו",
+    }
+)
+_HEBREW_RATE_PARTICIPLES = frozenset(
+    {
+        "עומד",
+        "עומדת",
+        "עומדים",
+        "עומדות",
+        "מסתכם",
+        "מסתכמת",
+        "מסתכמים",
+        "מסתכמות",
+        "נקבע",
+        "נקבעת",
+        "נקבעים",
+        "נקבעות",
+        "מגיע",
+        "מגיעה",
+        "מגיעים",
+        "מגיעות",
+        "מהווה",
+        "מהווים",
+        "מהוות",
+        "עולה",
+        "עולים",
+        "עולות",
+        "עלה",
+        "עלתה",
+    }
+)
+_HEBREW_RATE_PREPOSITIONS = frozenset(
+    {
+        "על",
+        "של",
+        "לפי",
+        "עבור",
+        "מן",
+        "בעד",
+        "בשל",
+        "לגבי",
+        "אצל",
+        "תחת",
+        "בין",
+        "עד",
+        "ועד",
+        "כלפי",
+        "אל",
+        "אחרי",
+        "לפני",
+        "בתוך",
+        "מתוך",
+        "לעניין",
+        "בהתאם",
+        "כאמור",
+        "כמפורט",
+        "כנגד",
+        "לרבות",
+        "למעט",
+        "בגין",
+        "בגובה",
+        "בסך",
+        "בסכום",
+        "בשיעור",
+        "בשווי",
+        "כדי",
+        "מעל",
+        "מתחת",
+        "במקום",
+        "ליד",
+    }
+)
+_HEBREW_RATE_COMPARATIVES = frozenset(
+    {
+        "גבוהה",
+        "גבוה",
+        "גבוהים",
+        "גבוהות",
+        "נמוכה",
+        "נמוך",
+        "נמוכים",
+        "נמוכות",
+        "שווה",
+        "שווים",
+        "שוות",
+        "קטן",
+        "קטנה",
+        "גדול",
+        "גדולה",
+        "לפחות",
+        "לכל",
+        "היותר",
+        "הפחות",
+        "פחות",
+        "יותר",
+    }
+)
+_HEBREW_RATE_NEUTRAL_WORDS = frozenset(
+    {"לא", "אינה", "אינו", "אינם", "אינן", "גם", "רק", "אף", "כן", "בלבד", "אך"}
+)
+
+
 def _hebrew_rate_word_before(text: str, start: int) -> bool:
     """An explicit rate word before ``start`` that governs the pair there.
 
-    The rate word stands in the same clause, any modifiers between
-    ("הריבית השנתית החלה על יתרת ההלוואה הכוללת תהיה 10 או 30%"). Its
-    reach ends where another expression takes the pair: an amount noun
-    after the predicate's verb ("יוטל קנס של 50 או 2%", "תהיה לפי הקנס
-    של"), or an amount noun right before the pair or before its "של"
-    ("קנס של 50 או 2%"). The verb's own connectors ("תעמוד על", "תהיה
-    לפחות", "תהיה בשיעור של") are the rate's predicate, an amount noun in
-    the subject's own modifiers ("על יתרת ההלוואה") is the subject's, and
-    a number that is no member of the list -- a reference ("לפי סעיף 5"),
-    a member read earlier ("1 עד 2 או 3%") -- is passed over.
+    The rate word stands in the same clause; the words after it are read
+    as its subject phrase, then its predicate, then the predicate's
+    connectors, and the pair is the rate's when nothing else takes it.
+    The subject phrase holds attributives ("השנתית", "החלה"), relative
+    clauses ("שנקבעה"), prepositional phrases with their objects ("על יתרת
+    ההלוואה הכוללת", "לפי סעיף 5") and the construct after a bare rate
+    word ("שיעור המס"). The predicate is a listed verb, a copula, a
+    participle, or a bare word that stands where one would ("גבוהה",
+    "עומדת"); after it, prepositions, comparatives and limits connect it
+    to the pair ("תעמוד על", "תהיה לפחות", "תהיה בשיעור של"). A second
+    predicate ("יוטל"), an amount noun as a new subject ("אז הקנס יהיה"),
+    or any other content word after the predicate ("אז") takes the pair
+    away; so does an amount noun right before the pair or before its
+    "של" ("קנס של 50 או 2%"). Numbers, joins and number words -- a
+    reference, a member read earlier -- are passed over.
     """
     clause_start = _hebrew_clause_start_before(text, start)
     rate = _HEBREW_RATE_WORD_BEFORE_PATTERN.search(text, clause_start, start)
@@ -5001,7 +5126,7 @@ def _hebrew_rate_word_before(text: str, start: int) -> bool:
         return False
     words: list[str] = []
     for token_match in _NON_SPACE_TOKEN_PATTERN.finditer(text, rate.end("rate"), start):
-        token = token_match.group(0).strip(",;:")
+        token = token_match.group(0).strip(",;:()")
         if (
             not token
             or any(character.isdigit() for character in token)
@@ -5012,11 +5137,50 @@ def _hebrew_rate_word_before(text: str, start: int) -> bool:
         ):
             continue
         words.append(token)
-    last_verb = max(
-        (index for index, word in enumerate(words) if word in _HEBREW_CONSEQUENT_VERBS),
-        default=-1,
-    )
-    if any(_hebrew_word_governs_an_amount(word) for word in words[last_verb + 1 :]):
+    construct = not rate.group("rate").startswith("\u05d4")
+    predicated = False
+    expect_object = construct
+    for index, token in enumerate(words):
+        bare = token[1:].lstrip("\u05be-") if token.startswith("\u05d5") else token
+        if bare in _HEBREW_RATE_NEUTRAL_WORDS:
+            continue
+        if (
+            bare in _HEBREW_CONSEQUENT_VERBS
+            or bare in _HEBREW_RATE_COPULAS
+            or bare in _HEBREW_RATE_PARTICIPLES
+        ):
+            if predicated:
+                return False
+            predicated = True
+            expect_object = False
+            continue
+        if bare in _HEBREW_RATE_PREPOSITIONS:
+            expect_object = True
+            continue
+        if expect_object:
+            # The object of a preposition or of a construct, whatever word.
+            expect_object = False
+            continue
+        if bare.startswith("\u05e9"):
+            # A relative clause modifies what precedes it.
+            continue
+        if bare[:1] in "\u05d1\u05dc\u05de\u05db":
+            # A prefixed preposition and its object in one word ("בהסכם").
+            continue
+        if bare.startswith("\u05d4"):
+            # An attributive or a definite noun of the phrase; after the
+            # predicate an amount noun is a new subject.
+            if predicated and _hebrew_word_governs_an_amount(bare):
+                return False
+            continue
+        if bare in _HEBREW_RATE_COMPARATIVES:
+            if not predicated:
+                predicated = True
+            continue
+        if not predicated:
+            # A bare word where the predicate stands is the predicate.
+            predicated = True
+            continue
         return False
     if words and _hebrew_word_governs_an_amount(words[-1]):
         return False

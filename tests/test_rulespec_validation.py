@@ -20935,6 +20935,49 @@ def test_a_rate_predicate_keeps_its_connectors_and_passes_over_references():
         ), (text[:40], issue)
 
 
+def test_a_rate_expression_is_a_subject_a_predicate_and_its_connectors():
+    # Review round 150 on #1585: the words after a rate word are its
+    # subject phrase, one predicate of any tense, and the predicate's
+    # connectors; a new subject or a second predicate takes the pair away.
+    rates = {0.1, 0.3}
+    fine = {50.0, 0.02}
+    for text, expected, grounded, ungrounded in (
+        (
+            "הסכומים בשקלים: אם הריבית גבוהה מן המותר אז הקנס יהיה 50 או 2% מהמחזור",
+            fine,
+            "50",
+            "0.5",
+        ),
+        (
+            "הסכומים בשקלים: אם הריבית גבוהה מן המותר הקנס יהיה 50 או 2% מהמחזור",
+            fine,
+            "50",
+            "0.5",
+        ),
+        ("אם הריבית גבוהה מן המותר יוטל עונש של 50 או 2% מהמחזור", fine, "50", "0.5"),
+        ("הריבית על ההלוואה היא 10 או 30%", rates, "0.1", "10"),
+        ("הריבית על ההלוואה עומדת על 10 או 30%", rates, "0.1", "10"),
+        ("הריבית על גובה ההלוואה היא 10 או 30%", rates, "0.1", "10"),
+        ("הריבית לא תעלה על 10 או 30%", rates, "0.1", "10"),
+        ("הריבית תהיה שווה ל־10 או 30%", rates, "0.1", "10"),
+        ("ריבית פיגורים תהיה 10 או 30%", rates, "0.1", "10"),
+    ):
+        assert _hebrew_recall(text) == expected, text[:40]
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text[
+            :40
+        ]
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text[:40], issue)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
