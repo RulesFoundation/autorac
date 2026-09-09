@@ -1200,12 +1200,19 @@ def _retired_inventory_replacement_repo(
     tmp_path: Path,
     *,
     inventory_text: str | None = None,
+    target_path: str = "us/policies/income_tax/schedule.yaml",
 ) -> tuple[Path, Path, Path, Path]:
     repo = _repo(tmp_path)
-    target = repo / "us/policies/income_tax/schedule.yaml"
+    country_repo = tmp_path / f"rulespec-{Path(target_path).parts[0]}"
+    if repo != country_repo:
+        repo.rename(country_repo)
+        repo = country_repo
+    target = repo / target_path
     target.parent.mkdir(parents=True)
     target.write_text("format: rulespec/v1\nrules: []\n", encoding="utf-8")
-    manifest = repo / ".axiom/encoding-manifests/us/policies/income_tax/schedule.json"
+    manifest = (
+        repo / ".axiom/encoding-manifests" / Path(target_path).with_suffix(".json")
+    )
     manifest.parent.mkdir(parents=True)
     manifest.write_text(
         json.dumps({"schema_version": "axiom-encode/applied-rulespec/v1"}) + "\n",
@@ -1255,6 +1262,98 @@ def _retired_inventory_replacement_repo(
         encoding="utf-8",
     )
     return repo, target, manifest, inventory
+
+
+def _replacement_without_inventory(tmp_path: Path):
+    repo, target, manifest, inventory = _retired_inventory_replacement_repo(
+        tmp_path, target_path="de/statutes/estg/66.yaml"
+    )
+    _git(repo, "rm", inventory.relative_to(repo).as_posix())
+    _git(repo, "commit", "-m", "remove optional retired inventory")
+    return repo, target, manifest, inventory
+
+
+@pytest.mark.parametrize("remove_parent", [False, True])
+def test_reconcile_inventory_missing_from_repository(
+    tmp_path: Path, remove_parent: bool
+):
+    repo, target, _manifest, inventory = _replacement_without_inventory(tmp_path)
+    inventory.parent.mkdir(exist_ok=True)
+    if remove_parent:
+        inventory.parent.rmdir()
+    assert (
+        reconcile_retired_manifest_inventory(repo, target.relative_to(repo).as_posix())
+        is None
+    )
+
+
+@pytest.mark.parametrize("kind", ["untracked", "ignored", "dangling", "parent_symlink"])
+def test_reconcile_absent_head_inventory_rejects_live_paths(tmp_path: Path, kind: str):
+    repo, target, _manifest, inventory = _replacement_without_inventory(tmp_path)
+    inventory.parent.mkdir(exist_ok=True)
+    if kind == "parent_symlink":
+        inventory.parent.rmdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        inventory.parent.symlink_to(outside, target_is_directory=True)
+    elif kind == "dangling":
+        inventory.symlink_to("missing")
+    else:
+        inventory.write_text("unexpected inventory\n", encoding="utf-8")
+    if kind in {"ignored", "dangling", "parent_symlink"}:
+        (repo / ".git/info/exclude").write_text("/tests\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="retired manifest inventory"):
+        reconcile_retired_manifest_inventory(repo, target.relative_to(repo).as_posix())
+
+
+def test_reconcile_inventory_rejects_tracked_deletion(tmp_path: Path):
+    repo, target, _manifest, inventory = _retired_inventory_replacement_repo(tmp_path)
+    inventory.unlink()
+    with pytest.raises(ValueError, match="changed before exact reconciliation"):
+        reconcile_retired_manifest_inventory(repo, target.relative_to(repo).as_posix())
+
+
+def test_reconcile_absent_inventory_still_validates_manifest(tmp_path: Path):
+    repo, target, manifest, _inventory = _replacement_without_inventory(tmp_path)
+    manifest.write_text("{}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="not an exact signed-v5 model apply"):
+        reconcile_retired_manifest_inventory(repo, target.relative_to(repo).as_posix())
+
+
+def test_reconcile_absent_inventory_rejects_symlinked_repo_root(tmp_path: Path):
+    repo, target, _manifest, _inventory = _replacement_without_inventory(tmp_path)
+    target_relative = target.relative_to(repo).as_posix()
+    actual = repo.with_name("actual-checkout")
+    repo.rename(actual)
+    repo.symlink_to(actual, target_is_directory=True)
+    with pytest.raises(ValueError, match="unsafe repository root"):
+        reconcile_retired_manifest_inventory(repo, target_relative)
+
+
+def test_reconcile_inventory_rejects_nonregular_head_entry(tmp_path: Path):
+    repo, target, _manifest, inventory = _retired_inventory_replacement_repo(tmp_path)
+    inventory.unlink()
+    inventory.symlink_to("missing")
+    _git(repo, "add", inventory.relative_to(repo).as_posix())
+    _git(repo, "commit", "-m", "inventory symlink")
+    with pytest.raises(ValueError, match="not a regular HEAD file"):
+        reconcile_retired_manifest_inventory(repo, target.relative_to(repo).as_posix())
+
+
+def test_reconcile_inventory_git_failure_is_not_absence(tmp_path: Path, monkeypatch):
+    import scripts.prepare_signed_backfill as implementation
+
+    repo, target, _manifest, _inventory = _replacement_without_inventory(tmp_path)
+    original_git = implementation._git
+
+    def failing_git(repo, *args):
+        if args[0] == "ls-tree":
+            raise subprocess.CalledProcessError(128, ["git", *args])
+        return original_git(repo, *args)
+
+    monkeypatch.setattr(implementation, "_git", failing_git)
+    with pytest.raises(subprocess.CalledProcessError):
+        reconcile_retired_manifest_inventory(repo, target.relative_to(repo).as_posix())
 
 
 def test_reconcile_retired_manifest_inventory_is_end_to_end_authorized(
