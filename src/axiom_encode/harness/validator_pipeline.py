@@ -2661,10 +2661,18 @@ def _hebrew_stems_with_medial_finals(stems: str) -> str:
     )
 
 
+_HEBREW_MONEY_NOUN = (
+    "(?:(?:"
+    + _hebrew_stems_with_medial_finals(_HEBREW_AMOUNT_NOUN_STEMS.replace("|מס|", "|"))
+    + ")[\u0590-\u05ff]{0,6}|מס(?:ים|י)?)"
+)
+# The base is an amount noun in any of its inflections and no other word:
+# "מס" takes only its plural and construct ("מסים", "מסי"), so "המסומנת"
+# and "המספיקה" name no tax.
 _HEBREW_FRACTION_BASE_AMOUNT_PATTERN = re.compile(
-    "\\s+(?:\u05de[\u05be-]?(?:\u05d4[\u05be-]?)?|\u05d4[\u05be-]?)(?:"
-    + _hebrew_stems_with_medial_finals(_HEBREW_AMOUNT_NOUN_STEMS)
-    + ")[\u0590-\u05ff]{0,6}(?![\u0590-\u05ff])"
+    "\\s+(?:\u05de[\u05be-]?(?:\u05d4[\u05be-]?)?|\u05d4[\u05be-]?)"
+    + _HEBREW_MONEY_NOUN
+    + "(?![\u0590-\u05ff])"
 )
 # A money context: an amount noun ("קנס", "סכום", "מחזור", "שכר") shortly
 # before a scaled number says the number is money, so a unit or count noun
@@ -2715,11 +2723,6 @@ _HEBREW_MONEY_POSSESSOR_CONNECTORS = (
     "\u05d4[\u05be-]?(?:שנתי|שנתית|חודשי|חודשית|בסיסי|בסיסית|מרבי|מרבית|"
     "מזערי|מזערית|מינימלי|מינימלית|מקסימלי|מקסימלית|ממוצע|ממוצעת|"
     "שנתיים|שנתיות|חודשיים|חודשיות|כוללים|כוללות|מרביים|מרביות|ממוצעים|ממוצעות)"
-)
-_HEBREW_MONEY_NOUN = (
-    "(?:(?:"
-    + _hebrew_stems_with_medial_finals(_HEBREW_AMOUNT_NOUN_STEMS.replace("|מס|", "|"))
-    + ")[\u0590-\u05ff]{0,6}|מס(?:ים|י)?)"
 )
 # A printed multiplier may stand between the noun and the scale word the
 # caller asks about ("קנס של 3 מיליון", asked at "מיליון").

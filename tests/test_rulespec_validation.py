@@ -21201,6 +21201,33 @@ def test_a_fraction_of_an_inflected_amount_noun_is_the_fraction():
     assert _hebrew_recall("דרגה חמישית מהווה תנאי") == {5.0}
 
 
+def test_a_fractions_base_is_an_amount_noun_and_no_other_word():
+    # Review round 158 on #1585: the fraction base is the money noun in
+    # one of its inflections, so a word that merely begins with the tax
+    # noun's letters ("המסומנת", "המספיקה") names no tax and an ordinal
+    # before it stays an ordinal.
+    for text, expected, grounded, ungrounded in (
+        ("דרגה חמישית המסומנת בטבלה", {5.0}, "5", "0.2"),
+        ("דרגה חמישית המספיקה לקבלת קצבה", {5.0}, "5", "0.2"),
+        ("ניכוי חמישית מהמס", {0.2}, "0.2", "5"),
+        ("ניכוי חמישית מהמסים", {0.2}, "0.2", "5"),
+        ("ניכוי חמישית ממסי הכנסה", {0.2}, "0.2", "5"),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
