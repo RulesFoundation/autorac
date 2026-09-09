@@ -2333,9 +2333,7 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert repair_step["if"] == "${{ inputs.repair_run_id != '' }}"
     assert repair_step["env"]["GH_TOKEN"] == "${{ github.token }}"
     assert repair_step["env"]["REPAIR_RUN_ID"] == "${{ inputs.repair_run_id }}"
-    assert repair_step["env"]["REPAIR_RUN_LANE"] == (
-        "${{ inputs.repair_run_lane }}"
-    )
+    assert repair_step["env"]["REPAIR_RUN_LANE"] == ("${{ inputs.repair_run_lane }}")
     assert repair_step["env"]["RULESPEC_CHECKOUT"] == ("rulespec-${{ inputs.country }}")
     assert "REPAIR_TESTS_ONLY" not in repair_step["env"]
     repair_command = repair_step["run"]

@@ -168,9 +168,7 @@ def _rewrite_as_dependent_candidate(
             body = extracted.read()
             if member.name == "metadata.json":
                 body = json.dumps(metadata).encode()
-            name = member.name.replace(
-                "generated/target/", "generated/dependent/", 1
-            )
+            name = member.name.replace("generated/target/", "generated/dependent/", 1)
             info = tarfile.TarInfo(name)
             info.size = len(body)
             target.addfile(info, io.BytesIO(body))
@@ -268,9 +266,7 @@ def test_extracts_dependent_candidate_for_standalone_repair(tmp_path):
         metadata,
     )
 
-    result = extract_candidate(
-        _args(tmp_path, replacement, repair_lane="dependent")
-    )
+    result = extract_candidate(_args(tmp_path, replacement, repair_lane="dependent"))
 
     assert result["runner"] == "openai-gpt-5.6-sol"
     assert result["path"] == "statutes/42/1437c-1.yaml"
