@@ -43095,3 +43095,98 @@ def test_closed_statutory_rounding_rejects_unproved_witnesses(mutation: str):
         test_cases=[case],
     )
     assert _has_issue(result, "rounding"), "\n".join(result.issues)
+
+
+@pytest.mark.parametrize("separator", [" ", "\n"])
+def test_spaced_german_sentence_chain_is_not_numeric_policy(separator):
+    source = separator.join(
+        [
+            "(1a) 1 Die Arbeitszeit beträgt 10 Wochenstunden.",
+            "2 Sie wird mit 130 vervielfacht und durch 3 geteilt.",
+            "3 Die Grenze beträgt 1 Euro.",
+        ]
+    )
+    cleaned = authoritative_numeric_recall_text(source)
+    inventory = extract_typed_numeric_inventory_occurrences_from_text(
+        cleaned, profile="de-DE"
+    )
+    assert [item.value for item in inventory] == [10.0, 130.0, 3.0, 1.0]
+
+
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        ("(1) 1 Euro wird gezahlt. 2 Personen erhalten 3 Euro.", [1, 2, 3]),
+        ("(1) 1 Die Zahlung beträgt 130 Euro.", [1, 130]),
+        ("(1) 1 Die Zahlung beträgt 130 Euro. 3 Sie bleibt bestehen.", [1, 130, 3]),
+        ("1 Die Zahlung beträgt 130 Euro. 2 Sie bleibt bestehen.", [1, 130, 2]),
+        ("(1) 1 Die Zahlung beträgt 130 Euro und 2 Sie bleibt bestehen.", [1, 130, 2]),
+        ("(1) 1 The payment is 130 euros. 2 It remains.", [1, 130, 2]),
+    ],
+)
+def test_spaced_sentence_cleanup_preserves_unauthenticated_numbers(source, expected):
+    inventory = extract_typed_numeric_inventory_occurrences_from_text(
+        authoritative_numeric_recall_text(source), profile="de-DE"
+    )
+    assert [item.value for item in inventory] == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("bei einer Arbeitszeit von zehn Wochenstunden zum Mindestlohn", None),
+        ("bei einer Arbeitszeit von 10 Wochenstunden zum Mindestlohn", None),
+        ("ein Betrag von 130 Euro wird durch drei geteilt", None),
+        ("bei einer Arbeitszeit von 10 bis 20 Wochenstunden", (10, True, 20, True)),
+        (
+            "bei einer Arbeitszeit von mindestens 10 Wochenstunden",
+            (10, True, None, False),
+        ),
+        ("von 277 826 Euro an: 0,45 * x", (277826, True, None, False)),
+        ("von mehr als 10 Wochenstunden", (10, False, None, False)),
+        ("von 10 Euro bis 20 Euro", (10, True, 20, True)),
+        ("von 10 € bis 20 €", (10, True, 20, True)),
+        ("von 10 Personen bis 20 Personen", (10, True, 20, True)),
+        ("von 10 Personen an", (10, True, None, False)),
+        ("von 10 € an", (10, True, None, False)),
+        ("von 10 v. H. bis 20 v. H.", (10, True, 20, True)),
+        ("von 10 v. H. an", (10, True, None, False)),
+        ("von 10 Euro pro Monat bis 20 Euro pro Monat", (10, True, 20, True)),
+    ],
+)
+def test_german_fixed_quantities_do_not_become_formula_selector_intervals(
+    text, expected
+):
+    extractor = functools.partial(
+        extract_typed_numeric_occurrences_from_text, profile="de-DE"
+    )
+    interval = completeness_module._formula_interval_from_text(
+        text, extract_numeric_occurrences=extractor
+    )
+    if expected is None:
+        assert interval is None
+        assert extractor(text)  # Values remain available for actual numeric grounding.
+    else:
+        assert interval is not None
+        assert (
+            interval.lower.value if interval.lower else None,
+            interval.lower_inclusive,
+            interval.upper.value if interval.upper else None,
+            interval.upper_inclusive,
+        ) == expected
+
+
+def test_sgbiv8_captured_threshold_paragraph_has_no_numeric_selector():
+    # Exact corpus body SHA 03d0e9d5277f6ee048798a2ca4bf61c1a9b853da0177150576c2cc09edbd9939.
+    source = "(1a) 1 Die Geringfügigkeitsgrenze im Sinne des Sozialgesetzbuchs bezeichnet das monatliche Arbeitsentgelt, das bei einer Arbeitszeit von zehn Wochenstunden zum Mindestlohn nach § 1 Absatz 2 Satz 1 des Mindestlohngesetzes in Verbindung mit der auf der Grundlage des § 11 Absatz 1 Satz 1 des Mindestlohngesetzes jeweils erlassenen Verordnung erzielt wird. 2 Sie wird berechnet, indem der Mindestlohn mit 130 vervielfacht, durch drei geteilt und auf volle Euro aufgerundet wird. 3 Die Geringfügigkeitsgrenze wird jeweils vom Bundesministerium für Arbeit und Soziales im Bundesanzeiger bekannt gegeben."
+    cleaned = authoritative_numeric_recall_text(source)
+    assert [item.value for item in DE_NUMERIC_OCCURRENCE_EXTRACTOR(cleaned)] == [130.0]
+    extractor = functools.partial(
+        extract_typed_numeric_occurrences_from_text, profile="de-DE"
+    )
+    assert (
+        completeness_module._formula_interval_from_text(
+            cleaned, extract_numeric_occurrences=extractor
+        )
+        is None
+    )
