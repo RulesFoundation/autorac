@@ -27887,10 +27887,12 @@ def _typed_numeric_expected_cases(
 
 
 def _imported_parameter_formula_is_numeric_literal(formula: Any) -> bool:
-    if not isinstance(formula, (str, int, float)) or isinstance(formula, bool):
+    # YAML floats may have lost their original scalar precision before admission.
+    if not isinstance(formula, (str, int)) or isinstance(formula, bool):
         return False
-    with contextlib.suppress(SyntaxError, ValueError, TypeError):
-        return _rulespec_runtime_decimal(ast.literal_eval(str(formula))) is not None
+    with contextlib.suppress(SyntaxError, ValueError, TypeError, InvalidOperation):
+        parsed = _rulespec_runtime_decimal(ast.literal_eval(str(formula)))
+        return parsed is not None and parsed == Decimal(str(formula).strip())
     return False
 
 

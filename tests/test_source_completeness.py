@@ -43440,3 +43440,30 @@ def test_pipeline_completeness_resolves_threshold_parameter_artifact(tmp_path):
         test_cases=[case],
         rules_file=candidate,
     )
+
+
+@pytest.mark.parametrize(
+    "formula",
+    ["0.123456789012345675", "0.1234567890123456789", 0.123456789012345675, 12.82],
+)
+def test_imported_parameter_rejects_lossy_decimal_literals(formula):
+    # The first literal shortened to0.12345678901234568. Amplification by10**17
+    # changed a fractional operand from0.6 (ceil1) to1.1 (ceil2).
+    consumer = {"imports": ["de:provider#wage"], "rules": []}
+    provider = {
+        "format": "rulespec/v1",
+        "rules": [
+            {"name": "wage", "kind": "parameter", "versions": [{"formula": formula}]}
+        ],
+    }
+    assert (
+        completeness_module._resolved_imported_parameter_rules(
+            consumer, imported_symbol_contents=[("wage", yaml.safe_dump(provider))]
+        )
+        == {}
+    )
+
+
+@pytest.mark.parametrize("formula", ["12.41", "12.82", "-0.5", "130", 130])
+def test_imported_parameter_accepts_lossless_numeric_literals(formula):
+    assert completeness_module._imported_parameter_formula_is_numeric_literal(formula)
