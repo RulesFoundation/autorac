@@ -2637,9 +2637,33 @@ _HEBREW_AMOUNT_NOUN_STEMS = (
     "תקציב|הוצא|מחזור|חוב|הלווא|השקע|נזק|תרומ|עמל|דיבידנד|תגמול|אגר|קנס|"
     "היטל|ארנונ|פרמי|מלג|תמיכ|סיוע|סובסידי|כספ"
 )
+_HEBREW_FINAL_TO_MEDIAL = {
+    "\u05dd": "\u05de",  # ם → מ
+    "\u05df": "\u05e0",  # ן → נ
+    "\u05e5": "\u05e6",  # ץ → צ
+    "\u05e3": "\u05e4",  # ף → פ
+    "\u05da": "\u05db",  # ך → כ
+}
+
+
+def _hebrew_stems_with_medial_finals(stems: str) -> str:
+    """A stem alternation whose final letters also match their medial forms.
+
+    A suffix moves a stem's final letter to its medial form: "תשלום" is
+    "תשלומים" in the plural and "תשלומיו" with a possessive, "סכום" is
+    "סכומים". Each stem ending in a final letter matches either form.
+    """
+    return "|".join(
+        stem[:-1] + "[" + stem[-1] + _HEBREW_FINAL_TO_MEDIAL[stem[-1]] + "]"
+        if stem and stem[-1] in _HEBREW_FINAL_TO_MEDIAL
+        else stem
+        for stem in stems.split("|")
+    )
+
+
 _HEBREW_FRACTION_BASE_AMOUNT_PATTERN = re.compile(
     "\\s+(?:\u05de[\u05be-]?(?:\u05d4[\u05be-]?)?|\u05d4[\u05be-]?)(?:"
-    + _HEBREW_AMOUNT_NOUN_STEMS
+    + _hebrew_stems_with_medial_finals(_HEBREW_AMOUNT_NOUN_STEMS)
     + ")[\u0590-\u05ff]{0,6}(?![\u0590-\u05ff])"
 )
 # A money context: an amount noun ("קנס", "סכום", "מחזור", "שכר") shortly
@@ -2692,30 +2716,6 @@ _HEBREW_MONEY_POSSESSOR_CONNECTORS = (
     "מזערי|מזערית|מינימלי|מינימלית|מקסימלי|מקסימלית|ממוצע|ממוצעת|"
     "שנתיים|שנתיות|חודשיים|חודשיות|כוללים|כוללות|מרביים|מרביות|ממוצעים|ממוצעות)"
 )
-_HEBREW_FINAL_TO_MEDIAL = {
-    "\u05dd": "\u05de",  # ם → מ
-    "\u05df": "\u05e0",  # ן → נ
-    "\u05e5": "\u05e6",  # ץ → צ
-    "\u05e3": "\u05e4",  # ף → פ
-    "\u05da": "\u05db",  # ך → כ
-}
-
-
-def _hebrew_stems_with_medial_finals(stems: str) -> str:
-    """A stem alternation whose final letters also match their medial forms.
-
-    A suffix moves a stem's final letter to its medial form: "תשלום" is
-    "תשלומים" in the plural and "תשלומיו" with a possessive, "סכום" is
-    "סכומים". Each stem ending in a final letter matches either form.
-    """
-    return "|".join(
-        stem[:-1] + "[" + stem[-1] + _HEBREW_FINAL_TO_MEDIAL[stem[-1]] + "]"
-        if stem and stem[-1] in _HEBREW_FINAL_TO_MEDIAL
-        else stem
-        for stem in stems.split("|")
-    )
-
-
 _HEBREW_MONEY_NOUN = (
     "(?:(?:"
     + _hebrew_stems_with_medial_finals(_HEBREW_AMOUNT_NOUN_STEMS.replace("|מס|", "|"))

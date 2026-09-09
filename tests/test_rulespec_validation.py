@@ -21180,6 +21180,27 @@ def test_an_amount_noun_is_known_inflected_and_an_adverb_closes_a_phrase():
     }
 
 
+def test_a_fraction_of_an_inflected_amount_noun_is_the_fraction():
+    # Review round 157 on #1585: every pattern built from the amount-noun
+    # stems knows the forms a suffix gives them, so a fifth of the
+    # payments is a fifth, not a fifth grade.
+    for text in (
+        "ניכוי חמישית מתשלומי העובד",
+        "ניכוי חמישית מתשלום העובד",
+        "ניכוי חמישית מסכומי המענקים",
+        "ניכוי חמישית מתשלומיו",
+    ):
+        assert _hebrew_recall(text) == {0.2}, text
+        assert extract_numbers_from_text(text) == {0.2}, text
+        content = _danish_numeric_rulespec("0.2", citation_path="il/statute/example/1")
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec("5", citation_path="il/statute/example/1")
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith("Ungrounded generated numeric literal: 5 "), issue
+    assert _hebrew_recall("ניכוי שליש מהקנסות") == {1 / 3}
+    assert _hebrew_recall("דרגה חמישית מהווה תנאי") == {5.0}
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
