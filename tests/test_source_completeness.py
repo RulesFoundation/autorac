@@ -4405,6 +4405,51 @@ def test_explicit_satz_markers_after_absatz_are_recognized():
     }
 
 
+@pytest.mark.parametrize("separator", [" ", "", "\n"])
+def test_glued_section_sign_starts_a_distinct_german_sentence(separator: str):
+    source = (
+        "(5) 1Abweichend von § 64 Absatz 2 und 3 bleibt der Vorrang bestehen."
+        f"{separator}2§ 64 Absatz 2 und 3 ist vom Beginn des Monats an anzuwenden."
+    )
+    branches = recognize_source_structure(source)
+    sentences = {
+        branch.path: branch for branch in branches if branch.kind == "sentence"
+    }
+    assert set(sentences) == {("5", "satz-1"), ("5", "satz-2")}
+    assert sentences[("5", "satz-1")].text.endswith("Vorrang bestehen.")
+    assert sentences[("5", "satz-2")].text.startswith("2§ 64 Absatz 2 und 3")
+    for branch in sentences.values():
+        assert source[branch.start : branch.end].strip() == branch.text
+
+
+@pytest.mark.parametrize("source", ["(1) 1§ 64 gilt.", "1§§ 64 und 65 gelten."])
+def test_section_sign_sentence_can_begin_a_paragraph(source: str):
+    sentences = [b for b in recognize_source_structure(source) if b.kind == "sentence"]
+    assert len(sentences) == 1
+    assert sentences[0].label == "Satz 1"
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        "Art. 2§ 3",
+        "Abs. 2§ 3",
+        "Nr. 2§ 3",
+        "S. 2§ 3",
+        "Sec. 2§ 3",
+        "Sect. 2§ 3",
+        "Artikel 2§ 3",
+        "(Artikel 2)3§ 4",
+        "Nummer 2§ 3",
+        "2 § 3",
+        "2§ note",
+    ],
+)
+def test_compound_section_addresses_are_not_sentence_markers(reference: str):
+    branches = recognize_source_structure(f"(1) Die Fundstelle ist {reference}.")
+    assert not [b for b in branches if b.kind == "sentence"]
+
+
 def test_nj_title_54a_citations_are_not_glued_german_sentence_markers():
     branches = recognize_source_structure(
         "54A:4-7 New Jersey credit. N.J.S.54A:1-1 applies. "
