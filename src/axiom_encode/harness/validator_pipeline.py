@@ -3684,11 +3684,11 @@ def _hebrew_digits_continue_printed_scale_amount(
     )
     if join is None:
         return False
-    scale_end = len(text[: join.start()].rstrip())
+    scale_end = _end_before_space(text, join.start())
     scale_word = _search_before(_HEBREW_SCALE_WORD_BEFORE_PATTERN, text, scale_end, 24)
     if scale_word is None:
         return False
-    multiplier_end = len(text[: scale_word.start()].rstrip())
+    multiplier_end = _end_before_space(text, scale_word.start())
     if (
         _search_before(_HEBREW_DIGITS_BEFORE_PATTERN, text, multiplier_end, 32)
         is not None
@@ -3935,7 +3935,7 @@ def _hebrew_endpoint_continues_an_amount(
             is not None
         ):
             return crossed_printed or not crossing_printed
-        before = len(text[:join_start].rstrip())
+        before = _end_before_space(text, join_start)
         previous = _search_before(_HEBREW_DIGITS_BEFORE_PATTERN, text, before, 32)
         if previous is not None:
             if previous.start() >= position:
@@ -3958,7 +3958,7 @@ def _hebrew_endpoint_continues_an_amount(
             if token.startswith("\u05d5"):
                 component_start = word.start()
                 break
-            cursor = len(text[: word.start()].rstrip())
+            cursor = _end_before_space(text, word.start())
         if component_start is None or component_start >= position:
             return False
         parsed = _parse_hebrew_number_run(words)
@@ -3984,7 +3984,7 @@ def _iter_hebrew_shared_scale_range_matches(
     tokens: _HebrewWordTokens | None = None
     for scale_match in _HEBREW_SHARED_SCALE_WORD_PATTERN.finditer(text):
         scale = _HEBREW_PRINTED_SCALE_VALUES[scale_match.group("scale")]
-        upper_end = len(text[: scale_match.start()].rstrip())
+        upper_end = _end_before_space(text, scale_match.start())
         if upper_end == scale_match.start():
             continue
         if tokens is None:
@@ -4024,7 +4024,7 @@ def _iter_hebrew_shared_scale_range_matches(
         vav_join = False
         comma_join = False
         if join is not None:
-            lower_end = len(text[: join.start()].rstrip())
+            lower_end = _end_before_space(text, join.start())
             comma_join = join.group("comma") is not None
             if lower_end == join.start() and not comma_join:
                 continue
@@ -4044,7 +4044,7 @@ def _iter_hebrew_shared_scale_range_matches(
                 is None
             ):
                 continue
-            lower_end = len(text[:upper_start].rstrip())
+            lower_end = _end_before_space(text, upper_start)
             if lower_end == upper_start:
                 continue
             vav_join = head.startswith("\u05d5")
@@ -4109,7 +4109,8 @@ def _iter_hebrew_shared_scale_range_matches(
             continue
         # "2 עד 3 אלפים אחוזים": the shared scale word carries a percent unit
         # too, and both endpoints are rates.
-        headed = _hebrew_vav_pair_is_coordinated(text, lower_span[0], is_rate)
+        heading_end = _hebrew_list_heading_end(text, lower_span[0], is_rate)
+        headed = heading_end is not None
         if lower_complete and not headed:
             continue
         list_coordinated = vav_join or comma_join
@@ -4158,7 +4159,7 @@ def _iter_hebrew_shared_scale_range_matches(
                 _HEBREW_RANGE_WALK_JOIN_PATTERN, text, cursor, 12
             )
             if earlier_join is not None:
-                earlier_flush = len(text[: earlier_join.start()].rstrip())
+                earlier_flush = _end_before_space(text, earlier_join.start())
                 coordinated_crossing = (
                     earlier_join.group("vav") is not None
                     or earlier_join.group("comma") is not None
@@ -4169,7 +4170,7 @@ def _iter_hebrew_shared_scale_range_matches(
                 and text[cursor] == "\u05d5"
                 and text[cursor - 1].isspace()
             ):
-                earlier_flush = len(text[:cursor].rstrip())
+                earlier_flush = _end_before_space(text, cursor)
                 coordinated_crossing = True
             else:
                 break
@@ -4216,9 +4217,8 @@ def _iter_hebrew_shared_scale_range_matches(
                 )
             ):
                 break
-            if headed and not _hebrew_vav_pair_is_coordinated(
-                text, earlier_span[0], is_rate
-            ):
+            if headed and earlier_span[0] < heading_end:
+                # The heading bounds the list: an item before it is no item.
                 break
             matches.append(
                 (
@@ -5082,7 +5082,7 @@ def _hebrew_list_body_end(text: str, start: int) -> int:
     """
     position = start
     end = start
-    limit = min(len(text), start + 240)
+    limit = len(text)
     while position < limit:
         filler = _HEBREW_LIST_BODY_FILLER_PATTERN.match(text, position, limit)
         consumed = text[position : filler.end()].rstrip(" \t\n,.;:")
@@ -5594,6 +5594,14 @@ def _is_horizontal_space(character: str) -> bool:
     return character.isspace() and character not in "\n\r\x0b\x0c\x85\u2028\u2029"
 
 
+def _end_before_space(text: str, end: int) -> int:
+    """The end of the text before ``end`` with its trailing whitespace
+    dropped, found in place: ``len(text[:end].rstrip())`` without the copy."""
+    while end > 0 and text[end - 1].isspace():
+        end -= 1
+    return end
+
+
 def _hebrew_list_heading_end(text: str, start: int, rate: bool) -> int | None:
     """Where the heading of the list the number at ``start`` belongs to ends, or None.
 
@@ -5640,8 +5648,9 @@ def _hebrew_list_heading_end(text: str, start: int, rate: bool) -> int | None:
                 # A decimal point ("10.5, 20 ו־30") is no stop.
                 clause_start -= 1
                 continue
-            before = text[: clause_start - 1].rstrip()
-            if character == ":" and before.endswith(_HEBREW_LIST_COLON_WORDS):
+            if character == ":" and text.endswith(
+                _HEBREW_LIST_COLON_WORDS, 0, _end_before_space(text, clause_start - 1)
+            ):
                 # The colon that introduces a list ("כדלקמן:", "הם:").
                 clause_start -= 1
                 continue
@@ -5858,39 +5867,28 @@ _HEBREW_CURRENCY_HEADING_PATTERN = re.compile(
 )
 
 
-def _hebrew_paragraph_start(text: str, start: int) -> int:
-    """Where the paragraph holding ``start`` begins.
+@functools.lru_cache(maxsize=32)
+def _hebrew_paragraph_and_heading_index(
+    text: str,
+) -> tuple[tuple[int, ...], tuple[tuple[int, int], ...]]:
+    """Where each paragraph gap ends and where each currency heading lies.
 
-    A blank line, a form feed or a Unicode line or paragraph separator ends
-    a paragraph; the walk back crosses single line wraps. The cost is the
-    paragraph's own length, never the text's.
+    Computed once per text and looked up by bisection, so a clause deep in
+    a long text costs no more than one at its head.
     """
-    position = start
-    while position > 0:
-        newline = max(
-            text.rfind("\n", 0, position),
-            text.rfind("\u2028", 0, position),
-            text.rfind("\u2029", 0, position),
-            text.rfind("\x0b", 0, position),
-            text.rfind("\x0c", 0, position),
-            text.rfind("\x85", 0, position),
-        )
-        if newline < 0:
-            return 0
-        if text[newline] != "\n":
-            return newline + 1
-        # A newline whose line, before or after it, holds nothing but
-        # horizontal space is a blank line.
-        line_start = text.rfind("\n", 0, newline) + 1
-        line_end = text.find("\n", newline + 1)
-        if line_end < 0:
-            line_end = len(text)
-        if not text[line_start:newline].strip() or (
-            not text[newline + 1 : line_end].strip() and line_end < start
-        ):
-            return newline + 1
-        position = newline
-    return 0
+    gaps = tuple(match.end() for match in _PARAGRAPH_GAP_PATTERN.finditer(text))
+    headings = tuple(
+        match.span() for match in _HEBREW_CURRENCY_HEADING_PATTERN.finditer(text)
+    )
+    return gaps, headings
+
+
+def _hebrew_paragraph_start(text: str, start: int) -> int:
+    """Where the paragraph holding ``start`` begins: after the last blank
+    line, form feed or Unicode line or paragraph separator before it."""
+    gaps, _ = _hebrew_paragraph_and_heading_index(text)
+    index = bisect.bisect_right(gaps, start)
+    return gaps[index - 1] if index else 0
 
 
 def _hebrew_currency_heading_before(text: str, start: int) -> bool:
@@ -5900,11 +5898,13 @@ def _hebrew_currency_heading_before(text: str, start: int) -> bool:
     paragraph, however long: a blank line ends its reach, a distance does
     not.
     """
-    return (
-        _HEBREW_CURRENCY_HEADING_PATTERN.search(
-            text, _hebrew_paragraph_start(text, start), start
-        )
-        is not None
+    _, headings = _hebrew_paragraph_and_heading_index(text)
+    index = bisect.bisect_right(headings, (start, start))
+    if index == 0:
+        return False
+    heading_start, heading_end = headings[index - 1]
+    return heading_end <= start and heading_start >= _hebrew_paragraph_start(
+        text, start
     )
 
 
@@ -6075,7 +6075,7 @@ def _iter_hebrew_percent_range_lower_matches(
         lower_digits = _search_before(
             _HEBREW_DIGITS_BEFORE_PATTERN, text, lower_end, 32
         )
-        lower_flush = len(text[:lower_end].rstrip())
+        lower_flush = _end_before_space(text, lower_end)
         lower_amount = printed_amounts.get(lower_flush)
         spelled_lower = (
             None
@@ -6130,7 +6130,7 @@ def _iter_hebrew_percent_range_lower_matches(
             lower_value = _hebrew_printed_endpoint_value(lower_digits)
             if lower_value is None:
                 continue
-            lower_span = (lower_digits.start(), len(text[:lower_end].rstrip()))
+            lower_span = (lower_digits.start(), _end_before_space(text, lower_end))
             lower_first = None
         else:
             if spelled_lower is None:
@@ -6147,7 +6147,8 @@ def _iter_hebrew_percent_range_lower_matches(
         if _hebrew_operand_is_denominated(text, lower_span[0], lower_span[1]):
             # "$500 או 2% מהמחזור": a denominated amount shares no unit.
             continue
-        headed = _hebrew_vav_pair_is_coordinated(text, lower_span[0], True)
+        heading_end = _hebrew_list_heading_end(text, lower_span[0], True)
+        headed = heading_end is not None
         list_coordinated = vav_join or comma_join
         if list_coordinated and not headed:
             continue
@@ -6256,7 +6257,7 @@ def _iter_hebrew_percent_range_lower_matches(
             earlier_digits = _search_before(
                 _HEBREW_DIGITS_BEFORE_PATTERN, text, earlier_end, 32
             )
-            earlier_flush = len(text[:earlier_end].rstrip())
+            earlier_flush = _end_before_space(text, earlier_end)
             earlier_amount = printed_amounts.get(earlier_flush)
             if earlier_amount is not None:
                 earlier_span = (earlier_amount[0], earlier_flush)
@@ -6267,13 +6268,13 @@ def _iter_hebrew_percent_range_lower_matches(
                     break
                 earlier_span = (
                     earlier_digits.start(),
-                    len(text[:earlier_end].rstrip()),
+                    _end_before_space(text, earlier_end),
                 )
             else:
                 earlier = _hebrew_number_run_ending_at(text, earlier_end, tokens, True)
                 if earlier is None:
                     break
-                earlier_span = (earlier[0], len(text[:earlier_end].rstrip()))
+                earlier_span = (earlier[0], _end_before_space(text, earlier_end))
                 earlier_value = earlier[1]
                 if _hebrew_unary_sign_at(text, earlier_span[0] - 1):
                     earlier_value = -earlier_value
@@ -6301,9 +6302,7 @@ def _iter_hebrew_percent_range_lower_matches(
                 and not _hebrew_rate_word_before(text, earlier_span[0])
             ):
                 break
-            if headed and not _hebrew_vav_pair_is_coordinated(
-                text, earlier_span[0], True
-            ):
+            if headed and earlier_span[0] < heading_end:
                 # The heading bounds the list: an item before it is no item.
                 break
             matches.append((earlier_span, earlier_value / 100))
@@ -7473,7 +7472,7 @@ def _hebrew_structural_word_reference_spans(text: str) -> list[tuple[int, int]]:
     grammar reads no ordinal, so "התוספת השנייה שלושה ילדים" is left to the
     pattern, which stops at the ordinal and keeps the three children.
     """
-    spans: list[tuple[int, int]] = []
+    spans: list[tuple[int, int]] = _SpanList()
     for match in _HEBREW_STRUCTURAL_NOUN_PATTERN.finditer(text):
         tokens: list["re.Match[str]"] = []
         for token in _HEBREW_WORD_TOKEN_PATTERN.finditer(text, match.end()):
@@ -9774,7 +9773,7 @@ def _extract_legacy_grounding_values(text: str) -> set[float]:
     text = _clean_source_text_for_numeric_extraction(original_text)
     schedule_occurrences, text = _extract_collapsed_schedule_row_occurrences(text)
     numbers = set()
-    occupied_spans: list[tuple[int, int]] = []
+    occupied_spans: list[tuple[int, int]] = _SpanList()
     numbers.update(two_line_table_occurrences)
     numbers.update(schedule_occurrences)
 
@@ -10467,7 +10466,7 @@ def _extract_form_arithmetic_operand_values(text: str) -> list[float]:
     """Extract operands printed in official form calculation cells."""
 
     values: list[float] = []
-    fraction_spans: list[tuple[int, int]] = []
+    fraction_spans: list[tuple[int, int]] = _SpanList()
     for match in (
         *_FORM_ARITHMETIC_FRACTION_PATTERN.finditer(text),
         *_STANDALONE_FORM_FRACTION_PATTERN.finditer(text),
@@ -10807,9 +10806,48 @@ def _extract_percentage_context_values(text: str) -> set[float]:
     return values
 
 
+class _SpanList(list[tuple[int, int]]):
+    """A list of taken spans with a coverage mask beside it.
+
+    A pass takes spans one candidate at a time and asks, for each, whether
+    a taken span overlaps it; over a list of thousands of members the
+    question was answered by scanning every taken span, so the pass cost
+    the square of its size. The mask answers it in the candidate's own
+    length. The list itself is unchanged for every reader of it.
+    """
+
+    __slots__ = ("_mask",)
+
+    def __init__(self, spans: "Iterable[tuple[int, int]]" = ()) -> None:
+        super().__init__()
+        self._mask = bytearray()
+        for span in spans:
+            self.append(span)
+
+    def append(self, span: tuple[int, int]) -> None:
+        super().append(span)
+        start, end = max(span[0], 0), span[1]
+        if end > len(self._mask):
+            self._mask.extend(bytes(end - len(self._mask)))
+        if start < end:
+            self._mask[start:end] = b"\x01" * (end - start)
+
+    def extend(self, spans: "Iterable[tuple[int, int]]") -> None:
+        for span in spans:
+            self.append(span)
+
+    def overlaps(self, span: tuple[int, int]) -> bool:
+        start, end = max(span[0], 0), span[1]
+        if start >= end:
+            return any(not (end <= s or start >= e) for s, e in self)
+        return 1 in self._mask[start:end]
+
+
 def _span_overlaps(
-    span: tuple[int, int], occupied_spans: list[tuple[int, int]]
+    span: tuple[int, int], occupied_spans: "Sequence[tuple[int, int]]"
 ) -> bool:
+    if isinstance(occupied_spans, _SpanList):
+        return occupied_spans.overlaps(span)
     return any(
         not (span[1] <= start or span[0] >= end) for start, end in occupied_spans
     )
@@ -11876,7 +11914,7 @@ def _extract_legacy_inventory_values(text: str) -> list[float]:
     occurrences: list[float] = list(two_line_table_occurrences)
     occurrences.extend(collapsed_schedule_occurrences)
     occurrences.extend(value for _, value in implied_cents_matches)
-    spans: list[tuple[int, int]] = []
+    spans: list[tuple[int, int]] = _SpanList()
     cleaned_money_values: list[float] = []
     for span, value in _iter_belgian_numeric_range_endpoint_matches(cleaned):
         occurrences.append(value)
@@ -14352,8 +14390,8 @@ def _tokenize_numeric_occurrences_from_text(
     for span, value in _iter_inline_form_implied_cents_matches(text):
         collector.add_grounding(source_view, span, value)
 
-    grounding_spans: list[tuple[int, int]] = []
-    inventory_spans: list[tuple[int, int]] = []
+    grounding_spans: list[tuple[int, int]] = _SpanList()
+    inventory_spans: list[tuple[int, int]] = _SpanList()
 
     range_matches = _iter_belgian_numeric_range_endpoint_matches(cleaned)
     for span, value in range_matches:
@@ -14457,7 +14495,7 @@ def _tokenize_numeric_occurrences_from_text(
     if annual_match:
         collector.add_grounding(raw_view, annual_match.span(), 12.0)
 
-    form_fraction_spans: list[tuple[int, int]] = []
+    form_fraction_spans: list[tuple[int, int]] = _SpanList()
     for match in (
         *_FORM_ARITHMETIC_FRACTION_PATTERN.finditer(raw_text),
         *_STANDALONE_FORM_FRACTION_PATTERN.finditer(raw_text),

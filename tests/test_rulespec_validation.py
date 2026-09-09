@@ -20644,6 +20644,82 @@ def test_a_currency_heading_governs_to_the_end_of_its_paragraph():
         assert _hebrew_recall(text) == {0.5, 0.02}, text[:40]
 
 
+def _hebrew_member_list(count: int, heading: str, unit: str, tail: str = "") -> str:
+    members = [str(10 + index) for index in range(count)]
+    return f"{heading} {', '.join(members[:-1])} ו־{members[-1]} {unit}{tail}"
+
+
+def test_a_conditional_long_list_shares_its_unit():
+    # Review round 145 on #1585: the forward scan to a list's end runs to
+    # the list's boundary, not 240 characters, so a conditional list of
+    # seventy members closed by its tail keeps the shared unit, grounds on
+    # it and reports no ambiguity; left undecided it reports one group with
+    # every member but the last, as a three-member list does.
+    for unit, expected, grounded in (
+        ("אחוזים", {float(10 + index) / 100 for index in range(70)}, "0.1"),
+        (
+            "מיליון שקלים",
+            {float(10 + index) * 1_000_000.0 for index in range(70)},
+            "10000000",
+        ),
+    ):
+        heading = "כאשר השיעורים הם" if unit == "אחוזים" else "כאשר הסכומים הם"
+        text = _hebrew_member_list(70, heading, unit, " בהתאמה, תחול ההוראה.")
+        assert _hebrew_recall(text) == expected
+        assert extract_numbers_from_text(text) == expected
+        assert hebrew_ambiguous_reading_groups(text) == []
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == []
+        content = _danish_numeric_rulespec("10", citation_path="il/statute/example/1")
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith("Ungrounded generated numeric literal: 10 "), issue
+    undecided = _hebrew_member_list(
+        70, "אם השיעורים הם", "אחוזים", " מהכנסה נמוכה, תחול ההוראה."
+    )
+    assert _hebrew_recall(undecided) == {float(10 + index) for index in range(69)} | {
+        0.79
+    }
+    (group,) = hebrew_ambiguous_reading_groups(undecided)
+    assert len(group.members) == 69
+
+
+def test_the_range_passes_scan_thousands_of_members_and_clauses_in_linear_time():
+    import time
+
+    from axiom_encode.harness.validator_pipeline import (
+        _iter_hebrew_percent_range_lower_matches,
+    )
+
+    # Review round 145 on #1585: the walk back over a list learns the
+    # heading once, the paragraph and currency-heading scopes are indexed
+    # once per text and whitespace is trimmed in place, so a headed list of
+    # thousands of members and a text of hundreds of clauses cost their
+    # size. Before, 1,000, 2,000 and 4,000 members took 0.38, 1.44 and 5.71
+    # seconds, and 800 clauses 5.53 seconds.
+    timings = {}
+    for count in (1000, 4000):
+        for heading, unit in (
+            ("השיעורים הם", "אחוזים"),
+            ("הסכומים הם", "מיליון שקלים"),
+        ):
+            text = _hebrew_member_list(count, heading, unit)
+            started = time.perf_counter()
+            values = extract_numbers_from_text(text)
+            timings[(count, unit)] = time.perf_counter() - started
+            assert len(values) == count, (count, unit, len(values))
+    for unit in ("אחוזים", "מיליון שקלים"):
+        assert timings[(4000, unit)] < 2.0, timings
+        assert timings[(4000, unit)] < 8 * max(timings[(1000, unit)], 0.02), timings
+    clause = "הקנס יהיה 50 או 2 אחוזים מהמחזור, לפי הגבוה.\n"
+    started = time.perf_counter()
+    matches = _iter_hebrew_percent_range_lower_matches(clause * 800)
+    elapsed = time.perf_counter() - started
+    assert len(matches) == 800
+    assert elapsed < 1.0, elapsed
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
