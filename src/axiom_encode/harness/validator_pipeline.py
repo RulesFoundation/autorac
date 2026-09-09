@@ -3184,11 +3184,13 @@ _HEBREW_CLAUSE_BOUNDARY_CHARACTERS = frozenset(",;:.()[]\"'\u05f3\u05f4-\u2013\u
 def _hebrew_fraction_context_in_clause(text: str, start: int) -> bool:
     """Whether a word that says a fraction follows governs the word at ``start``.
 
-    The last such word in the clause governs across a prepositional phrase
-    and its attributives only -- a recipient ("שילם לעובדת החדשה חמישית
-    השכר"); a bare noun ("קיבל פנייה חמישית", a fifth request) or a
-    relative marker ("קבעה שבדרגה חמישית") between them takes the fraction
-    word for its own.
+    The last such word in the clause governs across its recipient and no
+    further: a phrase in ל ("לעובדת החדשה", "לעובדת חדשה", "לעובדת בשם
+    דנה") with whatever modifies the recipient, up to the next preposition,
+    relative marker or predicate. A bare noun after the verb ("קיבל בקשה
+    חמישית", a fifth request), a phrase in another preposition ("שילם עבור
+    בדיקה חמישית", paid for a fifth test) or a relative marker ("קבעה
+    שבדרגה חמישית") takes the fraction word for its own.
     """
     clause_start = _hebrew_clause_start_before(text, start)
     last = None
@@ -3198,20 +3200,28 @@ def _hebrew_fraction_context_in_clause(text: str, start: int) -> bool:
         last = match
     if last is None:
         return False
+    first = True
     for token_match in _NON_SPACE_TOKEN_PATTERN.finditer(text, last.end(), start):
         token = token_match.group(0).strip(",;:()")
         if not token:
             continue
         bare = token[1:].lstrip("\u05be-") if token.startswith("\u05d5") else token
-        if bare in _HEBREW_RATE_PREPOSITIONS or bare in _HEBREW_RATE_NEUTRAL_WORDS:
+        if bare in _HEBREW_RATE_NEUTRAL_WORDS:
             continue
-        if bare[
-            :1
-        ] in "\u05d1\u05dc\u05de\u05db" and not _hebrew_word_is_an_amount_noun(bare):
-            continue
-        if _hebrew_word_is_definite(bare) and not _hebrew_word_governs_an_amount(bare):
-            continue
-        return False
+        if first:
+            first = False
+            if bare.startswith("\u05dc") and not _hebrew_word_is_an_amount_noun(bare):
+                continue
+            return False
+        if (
+            bare in _HEBREW_RATE_PREPOSITIONS
+            or bare == "אשר"
+            or (bare.startswith("\u05e9") and not _hebrew_word_is_an_amount_noun(bare))
+            or bare in _HEBREW_CONSEQUENT_VERBS
+            or bare in _HEBREW_RATE_COPULAS
+            or bare in _HEBREW_RATE_PARTICIPLES
+        ):
+            return False
     return True
 
 
@@ -7848,6 +7858,10 @@ _HEBREW_STRUCTURAL_NOT_A_QUANTITY_TAILED = (
     + _HEBREW_STRUCTURAL_UNIT_NOUNS
     + "))"
 )
+# The words that name a statute, absolute and construct: what a schedule
+# or a section is "of" or "to" ("של החוק", "של פקודת מס הכנסה", "של הוראת
+# השעה", "לחוק").
+_HEBREW_STATUTE_NAME_WORDS = "(?:חוק|חוקי|חוקת|פקודה|פקודת|תקנות|תקנה|תקנת|צו|צווי|הוראה|הוראת|הוראות|כללים|כללי|תכנית|תוכנית|תכניות|תוכניות|החלטה|החלטת|החלטות|הסכם|הסכמי|הסכמים|אמנה|אמנת)"
 # After a spelled reference the number is complete, and a vav-bound word is
 # the conjunction ("התוספות השנייה ושלושה ילדים"): the unit must follow at once.
 # Nor is a spelled reference one when a partitive names the amount it is
@@ -7862,8 +7876,7 @@ _HEBREW_STRUCTURAL_NOT_A_QUANTITY = (
     # ("מגדירה") leave the reference a reference.
     "(?!(?:(?<=שלישית)|(?<=רביעית)|(?<=חמישית)|(?<=שישית)|(?<=שביעית)|(?<=שמינית)"
     "|(?<=תשיעית)|(?<=עשירית)|(?<=מחצית))\\s+(?:(?:מן|מתוך|של)\\s+"
-    "(?!(?:\u05d4[\u05be-]?)?(?:חוק|חוקי|חוקת|פקודה|פקודת|תקנות|תקנה|צו|צווי|הוראה|"
-    "הוראות|כללים|כללי|תכנית|תכניות|החלטה|החלטות|הסכם|הסכמי|הסכמים)(?![\u0590-\u05ff]))"
+    "(?!(?:\u05d4[\u05be-]?)?" + _HEBREW_STATUTE_NAME_WORDS + "(?![\u0590-\u05ff]))"
     "(?:\u05d4[\u05be-]?)?[\u0590-\u05ff]{2,}"
     # An attached מ before an amount noun ("משכרו") is the partitive; any
     # other reading of an attached מ is the fraction reader's to make.
@@ -14580,13 +14593,6 @@ def _temporal_numeric_component_spans(
     return tuple(sorted(spans))
 
 
-# The words that name a statute, absolute and construct: what a schedule
-# or a section is "of" or "to".
-_HEBREW_STATUTE_NAME_WORDS = (
-    "(?:"
-    + "חוק|חוקי|חוקת|פקודה|פקודת|תקנות|תקנה|צו|צווי|הוראה|הוראות|כללים|כללי|תכנית|תכניות|החלטה|החלטות|הסכם|הסכמי|הסכמים"
-    + ")"
-)
 _HEBREW_FRACTION_IN_REFERENCE_AFTER_PATTERN = re.compile(
     "\\s+(?:ל[\u05be-]?|(?:של|מן|מתוך)\\s+(?:ה[\u05be-]?)?|מ[\u05be-]?(?:ה[\u05be-]?)?)"
     + _HEBREW_STATUTE_NAME_WORDS

@@ -21480,6 +21480,36 @@ def test_a_verb_governs_across_a_phrase_and_a_statute_has_a_construct_form():
     assert _hebrew_recall("לפי תוספת חמישית של פקודת מס הכנסה ישולם 100") == {100.0}
 
 
+def test_a_verb_governs_across_its_recipient_and_a_statute_has_every_construct_form():
+    # Review round 167 on #1585: a context verb governs a fraction word
+    # across a recipient phrase in ל and whatever modifies it, a bare noun
+    # after the verb keeping its ordinal; and a schedule's statute is named
+    # in every construct form.
+    for text, expected, grounded, ungrounded in (
+        ("המוסד קיבל בקשה חמישית מן הציבור", {5.0}, "5", "0.2"),
+        ("המעסיק שילם לעובדת חדשה חמישית השכר", {0.2}, "0.2", "5"),
+        ("המעסיק שילם לעובדת בשם דנה חמישית השכר", {0.2}, "0.2", "5"),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+    for text in (
+        "לפי תוספת חמישית של הוראת השעה ישולם 100",
+        "לפי תוספת חמישית של החלטת הממשלה ישולם 100",
+    ):
+        assert _hebrew_recall(text) == {100.0}, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
