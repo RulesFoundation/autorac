@@ -1886,9 +1886,14 @@ def _normal_model_apply_manifest_for_target(
 def _require_absent_inventory(repo: Path) -> None:
     """Verify optional inventory absence without following any path symlinks."""
 
-    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
     with contextlib.ExitStack() as stack:
-        descriptor = os.open(repo.resolve(strict=True), flags)
+        try:
+            descriptor = os.open(repo, flags)
+        except OSError as exc:
+            raise ValueError(
+                "retired manifest inventory has unsafe repository root"
+            ) from exc
         stack.callback(os.close, descriptor)
         for part in RETIRED_MANIFEST_INVENTORY.parts[:-1]:
             try:

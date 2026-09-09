@@ -1320,6 +1320,16 @@ def test_reconcile_absent_inventory_still_validates_manifest(tmp_path: Path):
         reconcile_retired_manifest_inventory(repo, target.relative_to(repo).as_posix())
 
 
+def test_reconcile_absent_inventory_rejects_symlinked_repo_root(tmp_path: Path):
+    repo, target, _manifest, _inventory = _replacement_without_inventory(tmp_path)
+    target_relative = target.relative_to(repo).as_posix()
+    actual = repo.with_name("actual-checkout")
+    repo.rename(actual)
+    repo.symlink_to(actual, target_is_directory=True)
+    with pytest.raises(ValueError, match="unsafe repository root"):
+        reconcile_retired_manifest_inventory(repo, target_relative)
+
+
 def test_reconcile_inventory_rejects_nonregular_head_entry(tmp_path: Path):
     repo, target, _manifest, inventory = _retired_inventory_replacement_repo(tmp_path)
     inventory.unlink()
