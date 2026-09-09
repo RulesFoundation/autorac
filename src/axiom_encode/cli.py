@@ -29196,7 +29196,16 @@ def _resolve_encode_replacement_target(
         )
     replacement_citation = normalize_corpus_identifier(citation_paths[0])
     requested_citation = normalize_corpus_identifier(source_unit.requested)
-    if replacement_citation != requested_citation:
+    relative_output = Path(*checkout_relative.parts[1:])
+    expected_child_citation = _relative_output_to_child_corpus_citation_path(
+        relative_output,
+        rules_repo_path=policy_repo_path,
+    )
+    direct_child_refinement = (
+        expected_child_citation == requested_citation
+        and requested_citation.rpartition("/")[0] == replacement_citation
+    )
+    if replacement_citation != requested_citation and not direct_child_refinement:
         raise ValueError(
             "replacement RuleSpec corpus citation does not match the requested source"
         )
@@ -29204,7 +29213,7 @@ def _resolve_encode_replacement_target(
         replacement_citation,
         corpus_release,
     )
-    if (
+    if not direct_child_refinement and (
         replacement_source.citation_path != source_unit.citation_path
         or replacement_source.requested != source_unit.requested
         or replacement_source.body != source_unit.body
@@ -29225,7 +29234,7 @@ def _resolve_encode_replacement_target(
         )
         context_paths.append(companion)
     return _EncodeReplacementTarget(
-        relative_output=Path(*checkout_relative.parts[1:]),
+        relative_output=relative_output,
         context_paths=tuple(context_paths),
     )
 
