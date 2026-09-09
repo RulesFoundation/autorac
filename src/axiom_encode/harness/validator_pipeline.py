@@ -4963,12 +4963,21 @@ _HEBREW_HEADING_TAIL = (
     + _HEBREW_HEADING_NOMINAL_COMPLEMENT
     + "\\s+של)(?![\u0590-\u05ff])"
 )
+# A heading noun may carry the conjunction and the relative or conditional
+# stack ("והשיעורים הם", "ששיעורי המס הם", "כשהתשלומים הם"); a "כש" in the
+# stack opens the condition the marker search below would otherwise find
+# before the noun.
+_HEBREW_HEADING_NOUN_STACK = "(?P<stack>\u05d5?(?:\u05db\u05e9|\u05e9)?)"
 _HEBREW_PLURAL_RATE_HEADING_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?:ה[\u05be-]?שיעורים|שיעורי|ב[\u05be-]?שיעורים|שיעורים"
+    "(?<![\u0590-\u05ff])"
+    + _HEBREW_HEADING_NOUN_STACK
+    + "(?:ה[\u05be-]?שיעורים|שיעורי|ב[\u05be-]?שיעורים|שיעורים"
     "|ה[\u05be-]?ריביות|ריביות)" + _HEBREW_HEADING_TAIL
 )
 _HEBREW_PLURAL_AMOUNT_HEADING_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?:ה[\u05be-]?סכומים|סכומי|ב[\u05be-]?סכומים|סכומים"
+    "(?<![\u0590-\u05ff])"
+    + _HEBREW_HEADING_NOUN_STACK
+    + "(?:ה[\u05be-]?סכומים|סכומי|ב[\u05be-]?סכומים|סכומים"
     "|ה[\u05be-]?תשלומים|תשלומי|תשלומים|ה[\u05be-]?מענקים|מענקי"
     "|ה[\u05be-]?קנסות|קנסות|ה[\u05be-]?קצבאות|קצבאות)" + _HEBREW_HEADING_TAIL
 )
@@ -5638,12 +5647,9 @@ def _hebrew_list_heading_end(text: str, start: int, rate: bool) -> int | None:
     if heading is None or not _hebrew_list_body_only(text, heading.end(), start):
         return None
     segment_start = text.rfind(",", clause_start, heading.start()) + 1
-    if (
-        _HEBREW_CONDITIONAL_CLAUSE_PATTERN.search(
-            text, max(clause_start, segment_start), heading.start()
-        )
-        is not None
-    ):
+    if _HEBREW_CONDITIONAL_CLAUSE_PATTERN.search(
+        text, max(clause_start, segment_start), heading.start()
+    ) is not None or heading.group("stack").endswith("\u05db\u05e9"):
         state = _hebrew_list_end_state(text, _hebrew_list_body_end(text, start))
         if state == "consequent":
             return None
@@ -11305,10 +11311,23 @@ class _TrackedText:
         return _TrackedText(text, offsets)
 
 
+# A stack of one-letter prefixes in the order the grammar allows: the
+# conjunction, then the relative ש or כש, then a preposition (מ may carry
+# the article), or the article alone -- "ו", "כש", "וכש", "מה", "וכשב",
+# "כשה" -- and not the two- and three-letter words that the same letters
+# spell ("של", "שב", "כשל"), which no writer binds with a maqaf.
+_HEBREW_PREFIX_STACK_FRAGMENT = (
+    "(?!(?:\u05e9\u05dc|\u05e9\u05d1|\u05d5\u05e9\u05d1|\u05d5\u05e9\u05dc|\u05db\u05e9\u05dc)[\u05be-])"
+    "(?=[\u0590-\u05ff])"
+    "(\u05d5?(?:\u05db\u05e9|\u05e9)?(?:[\u05d1\u05db\u05dc]|\u05de\u05d4?|\u05d4)?)"
+)
 _HEBREW_PREFIX_MAQAF_BEFORE_WORD_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])" + _HEBREW_PREFIX_STACK_FRAGMENT + "\u05be(?=[\u0590-\u05ff])"
+)
+_HEBREW_PREFIX_HYPHEN_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])"
-    "(\u05d5[\u05d4\u05d1\u05db\u05dc\u05de\u05e9]|\u05db\u05e9|\u05e9\u05d4|\u05de\u05d4"
-    "|[\u05d5\u05d4\u05d1\u05db\u05dc\u05de\u05e9])\u05be(?=[\u0590-\u05ff])"
+    + _HEBREW_PREFIX_STACK_FRAGMENT
+    + "-(?=[\u0590-\u05ff\\d\u00bc-\u00be\u2150-\u215e])"
 )
 
 
@@ -11406,29 +11425,23 @@ def _clean_source_text_for_numeric_extraction_tracked(
     # Strip the glued suffix so grouped-thousands parsing sees a clean
     # boundary; a spaced "=" (a real equation, "x = 5") is left untouched.
     tracked = tracked.sub(re.compile(r"(?<=\d)/?=(?=\s|$)"), _blank_match)
-    # A hyphen after a one- or two-letter prefix cluster at a word start
-    # ("ו-מאתיים", "ה-תקציב", "מ-הכנסה", "ל-3", "וה-שני") is the maqaf an
+    # A hyphen after a prefix stack at a word start ("ו-מאתיים", "ה-תקציב",
+    # "מ-הכנסה", "ל-3", "וה-שני", "וכש-המתינה") is the maqaf an
     # editor's keyboard lacks: the source prints the prefix bound to its word
     # either way, and every reader below was taught the maqaf. The hyphen
     # becomes the maqaf in place, one character for one, keeping its offset,
     # before the maqaf before a digit is detached below, so the two spellings
     # are one text to every pattern. A hyphen between two words of two or
     # more letters is a range or a compound and is left as it is.
-    tracked = tracked.rewrite(
-        re.compile(
-            "(?<![\u0590-\u05ff])([\u05d5\u05d4\u05d1\u05db\u05dc\u05de\u05e9]{1,2})-"
-            "(?=[\u0590-\u05ff\\d\u00bc-\u00be\u2150-\u215e])"
-        ),
-        "\\1\u05be",
-    )
-    # A maqaf after a prefix cluster before a Hebrew letter ("ו־עד",
-    # "ו־המתינה", "ה־שיעורים", "וה־שני") binds the prefix to the word the
+    tracked = tracked.rewrite(_HEBREW_PREFIX_HYPHEN_PATTERN, "\\1\u05be")
+    # A maqaf after a prefix stack before a Hebrew letter ("ו־עד",
+    # "ו־המתינה", "ה־שיעורים", "וכש־המתינה") binds the prefix to the word the
     # way attachment does: the source means "ועד" whichever way it set the
     # prefix. The cluster moves up to the word and the maqaf's slot becomes
     # the space before it, one character for one, each letter keeping its
     # own offset, so the attached, maqaf and hyphen spellings are one text
-    # to every reader. Only a cluster that is a prefix stack moves: a
-    # two-letter word ("כל־", "של־") stays where it is.
+    # to every reader. Only a prefix stack moves: a word the same letters
+    # spell ("כל־", "של־") stays where it is.
     tracked = tracked.rewrite_mapped(
         _HEBREW_PREFIX_MAQAF_BEFORE_WORD_PATTERN, _hebrew_attach_prefix_cluster
     )

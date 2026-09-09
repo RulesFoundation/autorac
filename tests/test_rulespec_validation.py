@@ -45,6 +45,7 @@ from axiom_encode.harness.proof_validator import (
     validate_rulespec_proofs,
 )
 from axiom_encode.harness.validator_pipeline import (
+    _HEBREW_PREFIX_STACK_FRAGMENT,
     HEBREW_HEADED_LIST_IN_CONDITION,
     NumericOccurrence,
     OracleSubprocessResult,
@@ -20290,12 +20291,11 @@ def test_every_pinned_maqaf_case_reads_the_same_with_a_hyphen_or_attached():
     # the check as it is written.
     source = Path(__file__).read_text(encoding="utf-8")
     literals = set(re.findall(r'"([^"\n\\]*[\u0590-\u05ff][^"\n\\]*)"', source))
-    cluster = "([\u05d5\u05d4\u05d1\u05db\u05dc\u05de\u05e9]{1,2})"
+    stack = "(?<![\u0590-\u05ff])" + _HEBREW_PREFIX_STACK_FRAGMENT
     follower = "(?=[\u0590-\u05ff0-9])"
-    prefix_maqaf = re.compile("(?<![\u0590-\u05ff])" + cluster + "\u05be" + follower)
-    prefix_hyphen = re.compile("(?<![\u0590-\u05ff])" + cluster + "-" + follower)
-    stack = "(\u05d5[\u05d4\u05d1\u05db\u05dc\u05de\u05e9]|\u05db\u05e9|\u05e9\u05d4|\u05de\u05d4|[\u05d5\u05d4\u05d1\u05db\u05dc\u05de\u05e9])"
-    attached = re.compile("(?<![\u0590-\u05ff])" + stack + "\u05be(?=[\u0590-\u05ff])")
+    prefix_maqaf = re.compile(stack + "\u05be" + follower)
+    prefix_hyphen = re.compile(stack + "-" + follower)
+    attached = re.compile(stack + "\u05be(?=[\u0590-\u05ff])")
     checked = 0
     for literal in sorted(literals):
         twins = []
@@ -20355,6 +20355,114 @@ def test_a_maqaf_after_a_prefix_binds_the_word_as_attachment_does():
     assert view.text == "מאה  ועד מאתיים; כל־הסכומים"
     start = view.text.index("ועד")
     assert source[slice(*view.source_span((start, start + 3)))] == "ו־עד"
+
+
+def test_the_prefix_stack_is_the_grammars_own():
+    # Review round 141 on #1585: the stack the view binds across a maqaf or
+    # a hyphen is the grammar's -- the conjunction, then ש or כש, then a
+    # preposition or the article -- so a three-letter stack reads as its
+    # attached form, and the words the same letters spell stay where they
+    # are. A heading noun carries the stack too, and a "כש" in it opens the
+    # condition as "כאשר" before the noun does.
+    cases = (
+        (
+            "המערכת הופעלה וכשהמתינה עשירית שנייה לאחר קבלת האות נשמר הנתון",
+            {0.1},
+            "0.1",
+            "10",
+        ),
+        (
+            "המערכת הופעלה וכש־המתינה עשירית שנייה לאחר קבלת האות נשמר הנתון",
+            {0.1},
+            "0.1",
+            "10",
+        ),
+        (
+            "המערכת הופעלה וכש-המתינה עשירית שנייה לאחר קבלת האות נשמר הנתון",
+            {0.1},
+            "0.1",
+            "10",
+        ),
+        (
+            "ומהשכר ינוכו 3 מיליון ומאתיים אלף שקלים",
+            {3_200_000.0},
+            "3200000",
+            "3000000",
+        ),
+        (
+            "ומה־שכר ינוכו 3 מיליון ומאתיים אלף שקלים",
+            {3_200_000.0},
+            "3200000",
+            "3000000",
+        ),
+        (
+            "ומה-שכר ינוכו 3 מיליון ומאתיים אלף שקלים",
+            {3_200_000.0},
+            "3200000",
+            "3000000",
+        ),
+        ("וכשבסכום של אלף ומאתיים שקלים", {1200.0}, "1200", "200"),
+        ("וכשב־סכום של אלף ומאתיים שקלים", {1200.0}, "1200", "200"),
+        ("וכשב-סכום של אלף ומאתיים שקלים", {1200.0}, "1200", "200"),
+        (
+            "כשהשיעורים הם 10, 20 ו־30 אחוזים בהתאמה, תחול ההוראה",
+            {0.1, 0.2, 0.3},
+            "0.1",
+            "10",
+        ),
+        (
+            "כשה־שיעורים הם 10, 20 ו־30 אחוזים בהתאמה, תחול ההוראה",
+            {0.1, 0.2, 0.3},
+            "0.1",
+            "10",
+        ),
+        (
+            "כשה-שיעורים הם 10, 20 ו־30 אחוזים בהתאמה, תחול ההוראה",
+            {0.1, 0.2, 0.3},
+            "0.1",
+            "10",
+        ),
+        (
+            "כשהתשלומים הם 500, 2 או 3 מיליון שקלים ישולמו כמענק",
+            {500.0, 2_000_000.0, 3_000_000.0},
+            "500",
+            "500000000",
+        ),
+        (
+            "כשה־תשלומים הם 500, 2 או 3 מיליון שקלים ישולמו כמענק",
+            {500.0, 2_000_000.0, 3_000_000.0},
+            "500",
+            "500000000",
+        ),
+    )
+    for text, expected, grounded, ungrounded in cases:
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+    # Under a "כש" heading the consequent verb splits the list as it does
+    # under "כאשר": the conservative reading, no ambiguity, every spelling.
+    for text in (
+        "כאשר השיעורים הם 10, 20 ו־30 אחוזים יחיד ישלם",
+        "וכשהשיעורים הם 10, 20 ו־30 אחוזים יחיד ישלם",
+        "וכש־השיעורים הם 10, 20 ו־30 אחוזים יחיד ישלם",
+        "וכש-השיעורים הם 10, 20 ו־30 אחוזים יחיד ישלם",
+    ):
+        assert _hebrew_recall(text) == {10.0, 20.0, 0.3}, text
+        assert hebrew_ambiguous_reading_groups(text) == [], text
+    view = _clean_source_text_for_numeric_extraction_tracked(
+        "וכש־המתינה כשה־שיעורים של־מי כל־הסכומים שב־סכום ושל־כך"
+    )
+    assert view.text == " וכשהמתינה  כשהשיעורים של־מי כל־הסכומים שב־סכום ושל־כך"
 
 
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
