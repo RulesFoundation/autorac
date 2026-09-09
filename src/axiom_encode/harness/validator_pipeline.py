@@ -2615,9 +2615,10 @@ def _parse_hebrew_number_run(
 # "ישלם חמישית ההכנסה" pays a fifth of the income; "דרגה חמישית המקנה" is a
 # fifth grade, and "דרגה" is none of these.
 _HEBREW_FRACTION_COPULA_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?:יהיה|יהא|תהיה|תהא|הוא|היא|הם|הן|של|בשיעור|בגובה|בסך|סכום|"
+    "(?<![\u0590-\u05ff])(?:[\u05d5\u05e9][\u05be-]?){0,2}"
+    "(?:יהיה|יהא|תהיה|תהא|הוא|היא|הם|הן|של|בשיעור|בגובה|בסך|סכום|"
     "היה|הייתה|היתה|היו|מהווה|מהוות|מהווים|יהיו|תהיינה|"
-    "כדי|עד|לפחות|לכל היותר|ניכוי|הפחתה|הנחה|קיזוז|הפרשה|החזר|"
+    "כדי|עד|לפחות|לכל היותר|ניכוי|הפחתה|הנחה|קיזוז|הפרשה|החזר|תוספת|הקצאה|"
     "ישלם|תשלם|ישלמו|ישולם|תשולם|ישולמו|משלם|משלמת|משלמים|שילם|שילמה|שילמו|שולם|"
     "שולמה|שולמו|יקבל|תקבל|יקבלו|מקבל|מקבלת|קיבל|קיבלה|קיבלו|"
     "ינוכה|תנוכה|ינוכו|ינכה|תנכה|מנכה|נוכה|ניכה|ניכתה|ניכו|יופחת|תופחת|יופחתו|"
@@ -3132,6 +3133,14 @@ _HEBREW_FRACTION_WORD_PATTERN = re.compile(
     + _HEBREW_NOT_A_PARTITIVE_LOOKAHEAD
     + "(?:מ|ה)[֐-׿]{2,}))?"
 )
+# "מן" that modifies the noun before an ordinal rather than naming a whole:
+# a kind noun after it, or a demonstrative after its object.
+_HEBREW_KIND_MODIFIER_AFTER_PATTERN = re.compile(
+    "\\s+מן\\s+(?:\u05d4[\u05be-]?)?(?:"
+    "(?:סוג|מין|קטגוריה|שלב|דרגה|רמה|טיפוס|סדר)(?![\u0590-\u05ff])"
+    "|[\u0590-\u05ff]{2,}\\s+(?:הזה|הזאת|הזו|האלה|האלו|האמור|האמורה|האמורים|"
+    'האמורות|כאמור|הנ"ל|הנ״ל)(?![\u0590-\u05ff]))'
+)
 # The partitive that follows a bare percent noun said to be one percent:
 # "תוספת של אחוז מההכנסה" is a supplement of one percent of the income.
 _HEBREW_PARTITIVE_AFTER_PATTERN = re.compile(
@@ -3255,6 +3264,23 @@ def _iter_hebrew_fraction_word_matches(
                     or names_an_amount
                     or _hebrew_fraction_context_before(text, match.start())
                 )
+                # "מן" after an ordinal a feminine noun carries names a kind
+                # ("בדיקה חמישית מן הסוג הזה", a fifth test of this kind), not
+                # a whole, when a kind noun or a demonstrative follows it.
+                if (
+                    strict
+                    and partitive.lstrip().startswith("מן")
+                    and not names_an_amount
+                    and not _hebrew_fraction_context_before(text, match.start())
+                    and _hebrew_word_before_can_be_feminine_singular(
+                        text, match.start("fraction")
+                    )
+                    and _HEBREW_KIND_MODIFIER_AFTER_PATTERN.match(
+                        text, match.end("fraction")
+                    )
+                    is not None
+                ):
+                    strict = False
                 if not count and not strict and not loose and not names_an_amount:
                     continue
             value = _HEBREW_FRACTION_VALUES[word]
@@ -7789,9 +7815,12 @@ _HEBREW_STRUCTURAL_NOT_A_QUANTITY_TAILED = (
 # wage, an amount to encode, where "התוספת החמישית לחוק" is a schedule.
 _HEBREW_STRUCTURAL_NOT_A_QUANTITY = (
     "(?!\\s*(?:" + _HEBREW_STRUCTURAL_UNIT_NOUNS + "))"
-    "(?!\\s+(?:\u05de[\u05be-]?|(?:מן|מתוך|של)\\s+)(?:\u05d4[\u05be-]?)?"
-    + _HEBREW_MONEY_NOUN
-    + "(?![\u0590-\u05ff]))"
+    # A supplement of a fraction of anything but the statute itself is an
+    # amount ("תוספת חמישית מן התקבולים"); "התוספת השנייה של החוק" is a
+    # schedule.
+    "(?!\\s+(?:\u05de[\u05be-]?|(?:מן|מתוך|של)\\s+)"
+    "(?!(?:\u05d4[\u05be-]?)?(?:חוק|פקודה|תקנות|תקנה|צו|הוראה|הוראות|כללים|תכנית|החלטה|הסכם)"
+    "(?![\u0590-\u05ff]))(?:\u05d4[\u05be-]?)?[\u0590-\u05ff]{2,})"
 )
 _HEBREW_STRUCTURAL_LIST_JOIN = "(?:\u05d5[\u05be-]?|או)"
 _HEBREW_STRUCTURAL_RANGE_JOIN = "(?:עד|[-\u2013\u2014])"

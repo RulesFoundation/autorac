@@ -21349,6 +21349,43 @@ def test_a_verb_is_clause_context_whatever_its_ending_and_every_partitive_keeps_
     assert _hebrew_recall("תוספת שלישית לחוק") == set()
 
 
+def test_a_prefixed_predicate_counts_and_min_names_a_kind_or_a_whole():
+    # Review round 163 on #1585: a predicate under a conjunction or relative
+    # prefix is clause context; "מן" after an ordinal a feminine noun
+    # carries names a kind where a kind noun or a demonstrative follows and
+    # a whole otherwise; and a supplement of a fraction of anything but the
+    # statute itself is an amount to encode.
+    for text, expected, grounded, ungrounded in (
+        ("המעסיקה חישבה ושילמה חמישית השכר", {0.2}, "0.2", "5"),
+        ("הקצבה שהייתה חמישית השכר", {0.2}, "0.2", "5"),
+        ("בדיקה חמישית מן הסוג הזה", {5.0}, "5", "0.2"),
+        ("בדיקה חמישית מן הבדיקות האמורות", {5.0}, "5", "0.2"),
+        ("ניכוי חמישית מן השכר", {0.2}, "0.2", "5"),
+        ("תוספת חמישית מן התקבולים תשולם לעובד", {0.2}, "0.2", "5"),
+        ("תוספת חמישית מן השטח תוקצה למגורים", {0.2}, "0.2", "5"),
+        ("תוספת חמישית מהתקבולים תשולם", {0.2}, "0.2", "5"),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+    for text in (
+        "לפי התוספת השנייה של החוק ישולם 100",
+        "לפי התוספת השנייה של הפקודה ישולם 100",
+    ):
+        assert _hebrew_recall(text) == {100.0}, text
+    assert _hebrew_recall("תוספת שלישית לחוק") == set()
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
