@@ -5101,87 +5101,106 @@ _HEBREW_RATE_NEUTRAL_WORDS = frozenset(
 )
 
 
-def _hebrew_rate_word_before(text: str, start: int) -> bool:
-    """An explicit rate word before ``start`` that governs the pair there.
+_HEBREW_RATE_WORD_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])(?P<rate>(?:[\u05d1\u05d4\u05d5\u05dc\u05e9][\u05be-]?){0,2}שיעור(?:ים|י)?|אחוז(?:ים)?|(?:ה[\u05be-]?)?ריבית)"
+    "(?![\u0590-\u05ff])"
+)
 
-    The rate word stands in the same clause; the words after it are read
-    as its subject phrase, then its predicate, then the predicate's
-    connectors, and the pair is the rate's when nothing else takes it.
-    The subject phrase holds attributives ("השנתית", "החלה"), relative
-    clauses ("שנקבעה"), prepositional phrases with their objects ("על יתרת
-    ההלוואה הכוללת", "לפי סעיף 5") and the construct after a bare rate
-    word ("שיעור המס"). The predicate is a listed verb, a copula, a
-    participle, or a bare word that stands where one would ("גבוהה",
-    "עומדת"); after it, prepositions, comparatives and limits connect it
-    to the pair ("תעמוד על", "תהיה לפחות", "תהיה בשיעור של"). A second
-    predicate ("יוטל"), an amount noun as a new subject ("אז הקנס יהיה"),
-    or any other content word after the predicate ("אז") takes the pair
-    away; so does an amount noun right before the pair or before its
-    "של" ("קנס של 50 או 2%"). Numbers, joins and number words -- a
-    reference, a member read earlier -- are passed over.
+
+def _hebrew_rate_expression_governs(words: list[str], construct: bool) -> bool:
+    """Whether the words after a rate word, up to the pair, keep the pair the rate's.
+
+    The words are read as the rate's subject phrase, then one predicate,
+    then the predicate's connectors. In the subject phrase a bare word is
+    a modifier, a relative clause's verb ("שהבנק גובה") or a construct
+    complement ("הלוואת עובד"); a preposition opens a phrase whose object
+    and attributives follow ("על יתרת ההלוואה הכוללת"); a definite amount
+    noun that no phrase holds, before a predicate, is that predicate's
+    subject ("אז הקנס יהיה"), and takes the pair. The predicate is a
+    listed verb, a copula or a participle; a second one takes the pair
+    away, and after the predicate only prepositions, comparatives, limits
+    and attributives may stand ("תעמוד על", "תהיה לפחות", "תהיה בשיעור
+    של"): an amount noun ("תהיה לפי הקנס של") or any other content word
+    ("יוטל עונש") takes it. An amount noun right before the pair or before
+    its "של" takes it whatever precedes.
     """
-    clause_start = _hebrew_clause_start_before(text, start)
-    rate = _HEBREW_RATE_WORD_BEFORE_PATTERN.search(text, clause_start, start)
-    if rate is None:
-        return False
-    words: list[str] = []
-    for token_match in _NON_SPACE_TOKEN_PATTERN.finditer(text, rate.end("rate"), start):
-        token = token_match.group(0).strip(",;:()")
-        if (
-            not token
-            or any(character.isdigit() for character in token)
-            or "%" in token
-            or token in _HEBREW_LIST_JOIN_WORDS
-            or _strip_hebrew_number_prefix(token, _HEBREW_RUN_START_VOCABULARY)
-            is not None
-        ):
-            continue
-        words.append(token)
-    construct = not rate.group("rate").startswith("\u05d4")
     predicated = False
+    in_phrase = False
     expect_object = construct
-    for index, token in enumerate(words):
-        bare = token[1:].lstrip("\u05be-") if token.startswith("\u05d5") else token
+    last_definite = False
+
+    def _known_predicate(word: str) -> bool:
+        return (
+            word in _HEBREW_CONSEQUENT_VERBS
+            or word in _HEBREW_RATE_COPULAS
+            or word in _HEBREW_RATE_PARTICIPLES
+        )
+
+    bares = [
+        word[1:].lstrip("\u05be-")
+        if word.startswith("\u05d5") and len(word) > 1
+        else word
+        for word in words
+    ]
+    for index, bare in enumerate(bares):
         if bare in _HEBREW_RATE_NEUTRAL_WORDS:
             continue
-        if (
-            bare in _HEBREW_CONSEQUENT_VERBS
-            or bare in _HEBREW_RATE_COPULAS
-            or bare in _HEBREW_RATE_PARTICIPLES
-        ):
+        if _known_predicate(bare):
             if predicated:
                 return False
             predicated = True
+            in_phrase = False
             expect_object = False
+            last_definite = False
             continue
         if bare in _HEBREW_RATE_PREPOSITIONS:
+            in_phrase = True
             expect_object = True
+            last_definite = False
             continue
+        if predicated:
+            if (
+                bare in _HEBREW_RATE_COMPARATIVES
+                or bare[:1] in "\u05d1\u05dc\u05de\u05db"
+            ):
+                continue
+            if _hebrew_word_governs_an_amount(bare):
+                return False
+            if bare.startswith(("\u05d4", "\u05e9")):
+                continue
+            return False
         if expect_object:
-            # The object of a preposition or of a construct, whatever word.
             expect_object = False
+            last_definite = bare.startswith("\u05d4")
             continue
         if bare.startswith("\u05e9"):
-            # A relative clause modifies what precedes it.
             continue
         if bare[:1] in "\u05d1\u05dc\u05de\u05db":
-            # A prefixed preposition and its object in one word ("בהסכם").
+            in_phrase = True
+            last_definite = False
             continue
         if bare.startswith("\u05d4"):
-            # An attributive or a definite noun of the phrase; after the
-            # predicate an amount noun is a new subject.
-            if predicated and _hebrew_word_governs_an_amount(bare):
-                return False
+            if _hebrew_word_governs_an_amount(bare) and (
+                not in_phrase or last_definite
+            ):
+                following = next(
+                    (
+                        later
+                        for later in bares[index + 1 :]
+                        if later not in _HEBREW_RATE_NEUTRAL_WORDS
+                    ),
+                    None,
+                )
+                if following is not None and _known_predicate(following):
+                    return False
+            last_definite = True
             continue
-        if bare in _HEBREW_RATE_COMPARATIVES:
-            if not predicated:
-                predicated = True
-            continue
-        if not predicated:
-            # A bare word where the predicate stands is the predicate.
-            predicated = True
-            continue
-        return False
+        # A bare word after a definite object ends the phrase ("מן המותר אז"):
+        # a definite noun closes a construct chain, so what follows is no
+        # complement of it. After a bare object it is one ("הלוואת עובד").
+        if last_definite:
+            in_phrase = False
+        last_definite = False
     if words and _hebrew_word_governs_an_amount(words[-1]):
         return False
     return not (
@@ -5189,6 +5208,37 @@ def _hebrew_rate_word_before(text: str, start: int) -> bool:
         and words[-1] == "של"
         and _hebrew_word_governs_an_amount(words[-2])
     )
+
+
+def _hebrew_rate_word_before(text: str, start: int) -> bool:
+    """An explicit rate word before ``start`` whose expression governs the pair there.
+
+    Every rate word in the clause is a candidate, the earliest first; an
+    expression that ends before the pair ("הריבית תבוטל והקנס יהיה בשיעור
+    של 10 או 30%") yields to the next rate word. Numbers, joins and number
+    words between a rate word and the pair -- a reference, a member read
+    earlier -- are passed over.
+    """
+    clause_start = _hebrew_clause_start_before(text, start)
+    for rate in _HEBREW_RATE_WORD_PATTERN.finditer(text, clause_start, start):
+        words: list[str] = []
+        for token_match in _NON_SPACE_TOKEN_PATTERN.finditer(text, rate.end(), start):
+            token = token_match.group(0).strip(",;:()")
+            if (
+                not token
+                or any(character.isdigit() for character in token)
+                or "%" in token
+                or token in _HEBREW_LIST_JOIN_WORDS
+                or _strip_hebrew_number_prefix(token, _HEBREW_RUN_START_VOCABULARY)
+                is not None
+            ):
+                continue
+            words.append(token)
+        if _hebrew_rate_expression_governs(
+            words, not rate.group("rate").startswith("\u05d4")
+        ):
+            return True
+    return False
 
 
 # A plural noun naming the kind of quantity the unit gives, as the subject of

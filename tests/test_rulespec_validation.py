@@ -20978,6 +20978,36 @@ def test_a_rate_expression_is_a_subject_a_predicate_and_its_connectors():
         ), (text[:40], issue)
 
 
+def test_a_rate_subject_keeps_its_clauses_and_every_rate_word_is_a_candidate():
+    # Review round 151 on #1585: a bare word in the rate's subject phrase
+    # is a modifier -- a relative clause's verb, a construct complement --
+    # not the predicate; and when an earlier rate's expression has ended,
+    # a later rate word governs its own pair.
+    rates = {0.1, 0.3}
+    for text, expected, grounded, ungrounded in (
+        ("הריבית שהבנק גובה היא 10 או 30%", rates, "0.1", "10"),
+        ("הריבית על הלוואת עובד תהיה 10 או 30%", rates, "0.1", "10"),
+        ("הריבית על ההלוואה של העובד תהיה 10 או 30%", rates, "0.1", "10"),
+        ("הריבית תבוטל והקנס יהיה בשיעור של 10 או 30%", rates, "0.1", "10"),
+        ("הקנס יהיה בשיעור של 10 או 30%", rates, "0.1", "10"),
+        ("הריבית גבוהה מן המותר 10 או 30%", rates, "0.1", "10"),
+    ):
+        assert _hebrew_recall(text) == expected, text[:40]
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text[
+            :40
+        ]
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text[:40], issue)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
