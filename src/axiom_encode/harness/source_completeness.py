@@ -379,6 +379,9 @@ _GLUED_SENTENCE_MARKER = re.compile(
     r"(?=[A-ZÄÖÜ](?!:)(?![ \t]*[.:/\-\u2010-\u2015\u2212\ufe58\ufe63\uff0d]"
     r"[ \t]*\d))"
 )
+_GLUED_SECTION_SENTENCE_MARKER = re.compile(
+    r"(?<![\w])(?P<label>[1-9]\d?)(?=§{1,2}[ \t]*[1-9]\d*)"
+)
 _EXPLICIT_SENTENCE_MARKER = re.compile(
     r"(?:(?<=^)|(?<=[.;])|(?<=\)))[ \t]*Satz[ \t]+"
     r"(?P<label>[1-9]\d?)(?:[ \t]*:[ \t]*|[ \t]+)(?=[A-ZÄÖÜ])",
@@ -2195,6 +2198,22 @@ _ALABAMA_TERMINAL_CODE_HISTORY_ENTRY = re.compile(
 _FORMULA_IDENTIFIER = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 
 
+def _glued_section_sentence_matches(text: str) -> tuple[re.Match[str], ...]:
+    """Recognize a printed sentence number glued to its opening section sign."""
+
+    matches = []
+    for match in _GLUED_SECTION_SENTENCE_MARKER.finditer(text):
+        prefix = text[: match.start()].rstrip()
+        if prefix and not re.fullmatch(r"\(\d+[a-z]?\)", prefix):
+            if not prefix.endswith((".", "!", "?")):
+                continue
+            # A legal address such as "Art. 2§ 3" is not a new sentence.
+            if re.search(r"\b(?:Art|Abs|Nr|S|Sec|Sect)\.$", prefix, re.IGNORECASE):
+                continue
+        matches.append(match)
+    return tuple(matches)
+
+
 def recognize_source_structure(source_text: str) -> tuple[SourceStructureBranch, ...]:
     """Recognize paragraph, list, letter, and glued German sentence markers."""
 
@@ -2333,6 +2352,10 @@ def recognize_source_structure(source_text: str) -> tuple[SourceStructureBranch,
         *(match.start() for match in _NUMBER_MARKER.finditer(source_text)),
         *(match.start() for match in _LETTER_MARKER.finditer(source_text)),
         *(match.start() for match in _GLUED_SENTENCE_MARKER.finditer(source_text)),
+        *(
+            match.start()
+            for match in _GLUED_SECTION_SENTENCE_MARKER.finditer(source_text)
+        ),
         *(match.start() for match in _EXPLICIT_SENTENCE_MARKER.finditer(source_text)),
     }
     owner_paths = _most_specific_segment_paths_at_offsets(
@@ -2400,6 +2423,7 @@ def recognize_source_structure(source_text: str) -> tuple[SourceStructureBranch,
             for match in sorted(
                 (
                     *_GLUED_SENTENCE_MARKER.finditer(paragraph_text),
+                    *_glued_section_sentence_matches(paragraph_text),
                     *_EXPLICIT_SENTENCE_MARKER.finditer(paragraph_text),
                 ),
                 key=lambda item: item.start(),
