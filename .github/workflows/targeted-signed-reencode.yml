@@ -38,18 +38,6 @@ on:
         description: Prior failed protected run whose final candidate is replayed as untrusted repair context
         required: false
         type: string
-      repair_run_lane:
-        description: Candidate lane to replay from the prior failed run
-        required: false
-        default: target
-        type: choice
-        options:
-          - target
-          - dependent
-      repair_rulespec_path:
-        description: Exact RuleSpec path of a non-target lane selected for repair replay
-        required: false
-        type: string
       source_bundle_json:
         description: JSON citation array, canonical_refresh_bundle object, or atomic-source-transaction/v2/v3 envelope for an independent refresh transaction
         required: false
@@ -413,6 +401,37 @@ jobs:
           git -C axiom-corpus merge-base --is-ancestor HEAD refs/remotes/origin/main
           git -C axiom-rules-engine merge-base --is-ancestor HEAD refs/remotes/origin/main
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.7"
+
+      - name: Set up Go 1.26.1
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: 1.26.1
+          cache: false
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+
+      - name: Build Axiom rules engine
+        working-directory: axiom-rules-engine
+        run: |
+          cargo build --release --locked
+          test -x target/release/axiom-rules-engine
+
+      - name: Install encoder
+        working-directory: axiom-encode
+        run: |
+          uv sync --locked --python 3.13 --extra api
+          rm -rf "$RUNNER_TEMP/axiom-verification-site-packages"
+          uv pip install --python .venv/bin/python \
+            --target "$RUNNER_TEMP/axiom-verification-site-packages" ".[api]"
+
       - name: Resolve trusted prior-run repair candidate
         id: repair_candidate
         if: ${{ inputs.repair_run_id != '' }}
@@ -428,8 +447,6 @@ jobs:
           LEGACY_RETAINED_SUCCESSOR_RULESPEC_PATHS_JSON: ${{ inputs.legacy_retained_successor_rulespec_paths_json }}
           QUEUE_ID: ${{ inputs.queue_id }}
           REPAIR_RUN_ID: ${{ inputs.repair_run_id }}
-          REPAIR_RUN_LANE: ${{ inputs.repair_run_lane }}
-          REPAIR_RULESPEC_PATH: ${{ inputs.repair_rulespec_path }}
           REPLACE_LEGACY_RULESPEC_PATH: ${{ inputs.replace_legacy_rulespec_path }}
           REPLACE_RULESPEC_PATH: ${{ inputs.replace_rulespec_path }}
           RULESPEC_CHECKOUT: rulespec-${{ inputs.country }}
@@ -439,9 +456,8 @@ jobs:
           SECOND_LEGACY_EXACT_DEPENDENT_RULESPEC_PATH: ${{ inputs.second_legacy_exact_dependent_rulespec_path }}
         run: |
           set -euo pipefail
-          : "${REPAIR_RUN_LANE:=target}"
           atomic_source_payload="$(
-            python \
+            axiom-encode/.venv/bin/python \
               axiom-encode/scripts/prepare_signed_backfill.py \
               split-atomic-source-input "${ATOMIC_SOURCE_JSON:-[]}"
           )"
@@ -466,30 +482,21 @@ jobs:
             echo "repair_run_id must identify a different decimal workflow run" >&2
             exit 1
           fi
+          # The supported transaction determines the replay lane. Derive its
+          # canonical path rather than spending two additional dispatch inputs
+          # or trusting a separately supplied path (GitHub permits at most 25).
+          REPAIR_RUN_LANE=target
           repair_citation="$CITATION"
           repair_rulespec_path="$REPLACE_RULESPEC_PATH"
-          case "$REPAIR_RUN_LANE" in
-            target)
-              if [ -n "$DEPENDENT_CITATION" ] || \
-                 [ -n "$REPAIR_RULESPEC_PATH" ]; then
-                echo "target repair replay cannot select a dependent transaction" >&2
-                exit 1
-              fi
-              ;;
-            dependent)
-              if [ -z "$DEPENDENT_CITATION" ] || \
-                 [ -z "$REPAIR_RULESPEC_PATH" ]; then
-                echo "dependent repair replay requires its citation and exact RuleSpec path" >&2
-                exit 1
-              fi
-              repair_citation="$DEPENDENT_CITATION"
-              repair_rulespec_path="$REPAIR_RULESPEC_PATH"
-              ;;
-            *)
-              echo "repair_run_lane must be target or dependent" >&2
-              exit 1
-              ;;
-          esac
+          if [ -n "$DEPENDENT_CITATION" ]; then
+            REPAIR_RUN_LANE=dependent
+            repair_citation="$DEPENDENT_CITATION"
+            repair_rulespec_path="$(
+              axiom-encode/.venv/bin/python \
+                axiom-encode/scripts/prepare_signed_backfill.py \
+                citation-rulespec-path "$DEPENDENT_CITATION"
+            )"
+          fi
           if [ -z "$REPLACE_RULESPEC_PATH" ] || \
              [ -n "$REPLACE_LEGACY_RULESPEC_PATH" ] || \
              [ -n "$LEGACY_EXACT_DEPENDENT_RULESPEC_PATH" ] || \
@@ -568,7 +575,7 @@ jobs:
             --dir "$repair_download"
           repair_archive="$repair_download/targeted-reencode-failure.tar"
           test -f "$repair_archive" && test ! -L "$repair_archive"
-          python3 axiom-encode/scripts/extract_repair_candidate.py \
+          axiom-encode/.venv/bin/python axiom-encode/scripts/extract_repair_candidate.py \
             "$repair_archive" "$RUNNER_TEMP/repair-candidate" \
             --citation "$repair_citation" \
             --country "$COUNTRY" \
@@ -595,13 +602,15 @@ jobs:
             "$RUNNER_TEMP/repair-candidate.json")"
           repair_candidate_path="$(jq -er '.path' \
             "$RUNNER_TEMP/repair-candidate.json")"
-          python3 axiom-encode/scripts/verify_repair_base_advance.py \
+          axiom-encode/.venv/bin/python axiom-encode/scripts/verify_repair_base_advance.py \
             "$RULESPEC_CHECKOUT" \
             --country "$COUNTRY" \
             --source-ref "$repair_source_rulespec_ref" \
             --current-ref "$RULESPEC_REF" \
             --candidate-path "$repair_candidate_path" \
             --rulespec-path "$repair_rulespec_path"
+          echo "lane=$REPAIR_RUN_LANE" >> "$GITHUB_OUTPUT"
+          echo "rulespec_path=$repair_rulespec_path" >> "$GITHUB_OUTPUT"
           echo "root=$(jq -r '.root' "$RUNNER_TEMP/repair-candidate.json")" \
             >> "$GITHUB_OUTPUT"
           echo "path=$(jq -r '.path' "$RUNNER_TEMP/repair-candidate.json")" \
@@ -614,37 +623,6 @@ jobs:
             >> "$GITHUB_OUTPUT"
           echo "tests_sha256=$(jq -r '.tests_sha256' "$RUNNER_TEMP/repair-candidate.json")" \
             >> "$GITHUB_OUTPUT"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-        with:
-          version: "0.11.7"
-
-      - name: Set up Go 1.26.1
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version: 1.26.1
-          cache: false
-
-      - name: Set up Python
-        run: uv python install 3.13
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
-
-      - name: Build Axiom rules engine
-        working-directory: axiom-rules-engine
-        run: |
-          cargo build --release --locked
-          test -x target/release/axiom-rules-engine
-
-      - name: Install encoder
-        working-directory: axiom-encode
-        run: |
-          uv sync --locked --python 3.13 --extra api
-          rm -rf "$RUNNER_TEMP/axiom-verification-site-packages"
-          uv pip install --python .venv/bin/python \
-            --target "$RUNNER_TEMP/axiom-verification-site-packages" ".[api]"
 
       - name: Validate atomic source inputs
         env:
@@ -1158,8 +1136,8 @@ jobs:
           REPAIR_CANDIDATE_TESTS_SHA256: ${{ steps.repair_candidate.outputs.tests_sha256 }}
           REPAIR_TESTS_ONLY: ${{ steps.repair_candidate.outputs.tests_only }}
           REPAIR_RUN_ID: ${{ inputs.repair_run_id }}
-          REPAIR_RUN_LANE: ${{ inputs.repair_run_lane }}
-          REPAIR_RULESPEC_PATH: ${{ inputs.repair_rulespec_path }}
+          REPAIR_RUN_LANE: ${{ steps.repair_candidate.outputs.lane }}
+          REPAIR_RULESPEC_PATH: ${{ steps.repair_candidate.outputs.rulespec_path }}
           REPLACE_RULESPEC_PATH: ${{ inputs.replace_rulespec_path }}
           REPLACE_LEGACY_RULESPEC_PATH: ${{ inputs.replace_legacy_rulespec_path }}
           LEGACY_EXACT_DEPENDENT_RULESPEC_PATH: ${{ inputs.legacy_exact_dependent_rulespec_path }}

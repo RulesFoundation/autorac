@@ -2103,7 +2103,7 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert concurrency_suffix("manual-user", "", "queue-generation", "run-3") == "run-3"
     assert concurrency_suffix("github-actions[bot]", "snap", "", "run-4") == "run-4"
     inputs = trigger["workflow_dispatch"]["inputs"]
-    assert len(inputs) == 27
+    assert len(inputs) <= 25  # GitHub rejects the entire workflow above this cap.
     assert "allowlisted reviewed SHA" in inputs["rulespec_ref"]["description"]
     assert "artifact-only" in inputs["rulespec_ref"]["description"]
     assert inputs["country"] == {
@@ -2122,20 +2122,8 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
         "required": False,
         "type": "string",
     }
-    assert inputs["repair_run_lane"] == {
-        "description": "Candidate lane to replay from the prior failed run",
-        "required": False,
-        "default": "target",
-        "type": "choice",
-        "options": ["target", "dependent"],
-    }
-    assert inputs["repair_rulespec_path"] == {
-        "description": (
-            "Exact RuleSpec path of a non-target lane selected for repair replay"
-        ),
-        "required": False,
-        "type": "string",
-    }
+    assert "repair_run_lane" not in inputs
+    assert "repair_rulespec_path" not in inputs
     assert "repair_candidate_tests_only" not in inputs
     assert inputs["pr_base_branch"]["type"] == "string"
     assert inputs["pr_base_branch"]["default"] == "main"
@@ -2282,7 +2270,12 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     )
     repair_preflight = repair_step["run"].split('api_version="', 1)[0]
     assert "split-atomic-source-input" in repair_preflight
-    assert ".venv/bin/python" not in repair_preflight
+    normalized_preflight = " ".join(repair_preflight.replace("\\\n", " ").split())
+    assert (
+        "axiom-encode/.venv/bin/python "
+        "axiom-encode/scripts/prepare_signed_backfill.py "
+        'citation-rulespec-path "$DEPENDENT_CITATION"'
+    ) in normalized_preflight
     identity_step = next(
         step
         for step in steps
@@ -2340,13 +2333,14 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert repair_step["if"] == "${{ inputs.repair_run_id != '' }}"
     assert repair_step["env"]["GH_TOKEN"] == "${{ github.token }}"
     assert repair_step["env"]["REPAIR_RUN_ID"] == "${{ inputs.repair_run_id }}"
-    assert repair_step["env"]["REPAIR_RUN_LANE"] == ("${{ inputs.repair_run_lane }}")
-    assert repair_step["env"]["REPAIR_RULESPEC_PATH"] == (
-        "${{ inputs.repair_rulespec_path }}"
-    )
+    assert "REPAIR_RUN_LANE" not in repair_step["env"]
+    assert "REPAIR_RULESPEC_PATH" not in repair_step["env"]
     assert repair_step["env"]["RULESPEC_CHECKOUT"] == ("rulespec-${{ inputs.country }}")
     assert "REPAIR_TESTS_ONLY" not in repair_step["env"]
     repair_command = repair_step["run"]
+    install_step = next(step for step in steps if step.get("name") == "Install encoder")
+    assert steps.index(install_step) < steps.index(repair_step)
+    assert "axiom-encode/.venv/bin/python" in repair_command
     assert '.conclusion == "failure"' in repair_command
     assert '.event == "workflow_dispatch"' in repair_command
     assert '.head_branch == "main"' in repair_command
@@ -2393,6 +2387,7 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
         if step.get("name") == "Provision protected signing supervisor"
     )
     assert provision_step["id"] == "provision_signing_supervisor"
+    assert steps.index(repair_step) < steps.index(provision_step)
     assert "sudo chown 0:0 /opt" in provision_step["run"]
     assert "sudo chmod go-w /opt" in provision_step["run"]
     assert "--git /usr/bin/git" in provision_step["run"]
@@ -2546,9 +2541,12 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert apply_step["env"]["REPAIR_TESTS_ONLY"] == (
         "${{ steps.repair_candidate.outputs.tests_only }}"
     )
-    assert apply_step["env"]["REPAIR_RUN_LANE"] == "${{ inputs.repair_run_lane }}"
+    assert (
+        apply_step["env"]["REPAIR_RUN_LANE"]
+        == "${{ steps.repair_candidate.outputs.lane }}"
+    )
     assert apply_step["env"]["REPAIR_RULESPEC_PATH"] == (
-        "${{ inputs.repair_rulespec_path }}"
+        "${{ steps.repair_candidate.outputs.rulespec_path }}"
     )
     assert ': "${REPAIR_TESTS_ONLY:=false}"' in command
     assert "REPAIR_TESTS_ONLY=false" not in command
@@ -3033,7 +3031,7 @@ def test_targeted_reencode_extracts_false_complete_source_scope() -> None:
         ),
     ],
 )
-def test_repair_preflight_splits_atomic_source_before_encoder_install(
+def test_repair_preflight_splits_atomic_source(
     tmp_path: Path,
     atomic_source_json: str,
     expected_tests_only: str,
@@ -3046,10 +3044,13 @@ def test_repair_preflight_splits_atomic_source_before_encoder_install(
         for step in workflow["jobs"]["encode"]["steps"]
         if step.get("name") == "Resolve trusted prior-run repair candidate"
     ).split('api_version="', 1)[0]
+    command = command.replace("axiom-encode/.venv/bin/python", sys.executable)
     command = command.replace(
         "axiom-encode/scripts/prepare_signed_backfill.py",
         str(ROOT / "scripts/prepare_signed_backfill.py"),
     )
+
+    command += '\nprintf "%s\\n" "$REPAIR_RUN_LANE" "$repair_rulespec_path"\n'
 
     completed = subprocess.run(
         ["bash", "-c", command],
@@ -3077,6 +3078,7 @@ def test_repair_preflight_splits_atomic_source_before_encoder_install(
     )
 
     assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == "target\nus-ri/statutes/44-30-2.6.yaml\n"
     assert (tmp_path / "github-output").read_text(encoding="utf-8") == (
         f"tests_only={expected_tests_only}\n"
     )
@@ -3091,10 +3093,13 @@ def test_repair_preflight_accepts_one_bound_dependent_lane(tmp_path: Path) -> No
         for step in workflow["jobs"]["encode"]["steps"]
         if step.get("name") == "Resolve trusted prior-run repair candidate"
     ).split('api_version="', 1)[0]
+    command = command.replace("axiom-encode/.venv/bin/python", sys.executable)
     command = command.replace(
         "axiom-encode/scripts/prepare_signed_backfill.py",
         str(ROOT / "scripts/prepare_signed_backfill.py"),
     )
+
+    command += '\nprintf "%s\\n" "$REPAIR_RUN_LANE" "$repair_rulespec_path"\n'
 
     completed = subprocess.run(
         ["bash", "-c", command],
@@ -3113,8 +3118,8 @@ def test_repair_preflight_accepts_one_bound_dependent_lane(tmp_path: Path) -> No
             "LEGACY_RETAINED_SUCCESSOR_RULESPEC_PATHS_JSON": "[]",
             "QUEUE_ID": "",
             "REPAIR_RUN_ID": "100",
-            "REPAIR_RUN_LANE": "dependent",
-            "REPAIR_RULESPEC_PATH": "us/statutes/42/1437c-1.yaml",
+            "REPAIR_RUN_LANE": "target",  # Ambient values must not select the lane.
+            "REPAIR_RULESPEC_PATH": "us/statutes/42/unrelated.yaml",
             "REPLACE_LEGACY_RULESPEC_PATH": "",
             "REPLACE_RULESPEC_PATH": "us/guidance/primary/source.yaml",
             "SECOND_DEPENDENT_CITATION": "",
@@ -3123,6 +3128,7 @@ def test_repair_preflight_accepts_one_bound_dependent_lane(tmp_path: Path) -> No
     )
 
     assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == "dependent\nus/statutes/42/1437c-1.yaml\n"
     assert (tmp_path / "github-output").read_text(encoding="utf-8") == (
         "tests_only=false\n"
     )
