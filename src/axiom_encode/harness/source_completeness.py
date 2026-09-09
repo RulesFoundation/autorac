@@ -2053,6 +2053,20 @@ _GERMAN_LEGAL_CITATION = re.compile(
     r"(?:\s*(?:und|bis|[-–—])\s*\d+(?:\.\d+)*[a-z]?)*",
     flags=re.IGNORECASE,
 )
+_EU_REGULATION_NUMERIC_RECALL_CITATION = re.compile(
+    r"\bVerordnung(?:en)?\s+\((?:EU|EG|EWG)\)\s+"
+    r"(?:Nr\.\s*)?\d{1,5}/\d{2,5}(?![\w/])"
+    r"(?:\s*(?:,\s*|und\s+)\((?:EU|EG|EWG)\)\s+"
+    r"(?:Nr\.\s*)?\d{1,5}/\d{2,5}(?![\w/]))*",
+    flags=re.IGNORECASE,
+)
+_GERMAN_GAZETTE_NUMERIC_RECALL_CITATION = re.compile(
+    r"\(\s*(?:"
+    r"ABl\.\s*[LC]\s+\d+\s+vom\s+\d{1,2}\.\d{1,2}\.\d{4},\s*"
+    r"|GMBl\.?\s+(?:\d{4}\s*,?\s*)?"
+    r")S\.\s*\d+(?:\s*[-–]\s*\d+)?\s*\)",
+    flags=re.IGNORECASE,
+)
 _EXPLICIT_LEGAL_SECTION_REFERENCE = re.compile(
     r"(?:§{1,2}\s*|\b(?:sections?|paragra(?:f|phs?))\s+)"
     r"(?P<section>\d+[a-z]?)",
@@ -12134,6 +12148,11 @@ def authoritative_numeric_recall_text(source_text: str) -> str:
     )
     cleaned = _LOUISIANA_SESSION_LAW_CITATION.sub("", cleaned)
     cleaned = _LOUISIANA_RS_NUMERIC_RECALL_CITATION.sub("", cleaned)
+    # Mask complete instrument identifiers before structural-reference cleanup
+    # can remove `Nr. 375` and leave the misleading numeric remainder `/2014`.
+    # Gazette parentheses must contain only the citation, never operative text.
+    cleaned = _EU_REGULATION_NUMERIC_RECALL_CITATION.sub("", cleaned)
+    cleaned = _GERMAN_GAZETTE_NUMERIC_RECALL_CITATION.sub("", cleaned)
     cleaned = _GERMAN_LEGAL_CITATION.sub("", cleaned)
     cleaned = _TITLE_SUFFIX_LEGAL_CITATION.sub("", cleaned)
     cleaned = _ENGLISH_LEGAL_CITATION.sub("", cleaned)
