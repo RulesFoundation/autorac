@@ -2532,7 +2532,10 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert apply_step["env"]["REPAIR_TESTS_ONLY"] == (
         "${{ steps.repair_candidate.outputs.tests_only }}"
     )
-    assert apply_step["env"]["REPAIR_RUN_LANE"] == "${{ steps.repair_candidate.outputs.lane }}"
+    assert (
+        apply_step["env"]["REPAIR_RUN_LANE"]
+        == "${{ steps.repair_candidate.outputs.lane }}"
+    )
     assert apply_step["env"]["REPAIR_RULESPEC_PATH"] == (
         "${{ steps.repair_candidate.outputs.rulespec_path }}"
     )
