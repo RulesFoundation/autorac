@@ -20185,6 +20185,54 @@ def test_either_separator_wherever_a_prefix_is_stripped():
         assert extract_numbers_from_text(text) >= expected, text
 
 
+def test_one_separator_rule_for_every_hebrew_prefix():
+    # Review round 138 on #1585: a prefix or the article binds to its word
+    # directly, across a maqaf or across a hyphen, in every pattern that
+    # reads a noun, a label or a marker under one. The measured second
+    # stays the unit behind "ל־"; a spelled reference under a separated
+    # article stays a label; a conditional marker, a money context, a
+    # spelled amount and a rate noun read the same under every binding.
+    for text, expected in (
+        ("זמן התגובה יוגבל לחצי שנייה", {0.5}),
+        ("זמן התגובה יוגבל ל־חצי שנייה", {0.5}),
+        ("זמן התגובה יוגבל ל-חצי שנייה", {0.5}),
+        ("ו-אם ה-שיעורים הם 10, 20 ו-30 אחוזים בהתאמה, תחול ההוראה", {0.1, 0.2, 0.3}),
+        ("ו־אם ה־שיעורים הם 10, 20 ו־30 אחוזים בהתאמה, תחול ההוראה", {0.1, 0.2, 0.3}),
+        ("ה-שכר ה-כולל לא יעלה על 3 מיליון ו-30 ימי חופשה", {3_000_000.0, 30.0}),
+        ("סכום של אלף ו-מאתיים שקלים", {1200.0}),
+        ("סכום של אלף ו־מאתיים שקלים", {1200.0}),
+        ("ה-ריבית היא 4 אחוזים", {0.04}),
+        ("ה־ריבית היא 4 אחוזים", {0.04}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+    # A reference label under a separated article is no recall obligation,
+    # alone, cited, or in a list, as it is not when the article touches it.
+    for text in (
+        "לפי התוספת השנייה ישולם סכום של 100 שקלים",
+        "לפי התוספת ה־שנייה ישולם סכום של 100 שקלים",
+        "לפי התוספת ה-שנייה ישולם סכום של 100 שקלים",
+        "בהתאם ל-תוספת ה-שנייה ל-חוק ישולמו 100 שקלים",
+        "לפי התוספות ה-שנייה, ה־שלישית וה-רביעית ישולם סכום של 100 שקלים",
+        "לפי סעיף ה-עשרים ו-אחד ישולמו 100 שקלים",
+    ):
+        assert _hebrew_recall(text) == {100.0}, text
+        assert 100.0 in extract_numbers_from_text(text), text
+    # Grounding follows: the half second grounds against the prefixed form
+    # and against nothing else. (The literal 2 is accepted by the
+    # small-integer allowances whatever the source says, so the ordinal's
+    # exclusion is asserted on recall above, not on grounding.)
+    half = _danish_numeric_rulespec("0.5", citation_path="il/statute/example/1")
+    assert (
+        find_ungrounded_numeric_issues(half, source_text="זמן התגובה יוגבל ל־חצי שנייה")
+        == []
+    )
+    (issue,) = find_ungrounded_numeric_issues(
+        half, source_text="זמן התגובה יוגבל ל־שתי שניות"
+    )
+    assert issue.startswith("Ungrounded generated numeric literal: 0.5 "), issue
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

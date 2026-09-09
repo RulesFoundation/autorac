@@ -1863,9 +1863,24 @@ _HEBREW_NUMBER_WORD_VALUES = {
 # he, the conjunction vav, and the prepositions bet, kaf, lamed, mem and shin.
 # Two of them can stack ("and the fourth"), and a maqaf may sit between the
 # prefix and the word, as may an ASCII hyphen.
+_HEBREW_PREFIX_SEPARATOR = "[\u05be-]?"
 _HEBREW_WORD_PREFIX_PATTERN = (
-    "(?:[\u05d5\u05d4\u05d1\u05db\u05dc\u05de\u05e9][\u05be-]?){0,2}"
+    "(?:[\u05d5\u05d4\u05d1\u05db\u05dc\u05de\u05e9]"
+    + _HEBREW_PREFIX_SEPARATOR
+    + "){0,2}"
 )
+# The same binding for the patterns that read a noun, a label or a marker
+# under a prefix: the prepositions alone, the prepositions or the article,
+# and the article alone, each across the same separator.
+_HEBREW_PREPOSITION_PREFIXES = (
+    "(?:[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]" + _HEBREW_PREFIX_SEPARATOR + "){0,2}"
+)
+_HEBREW_PREPOSITION_OR_ARTICLE_PREFIXES = (
+    "(?:[\u05d1\u05db\u05dc\u05de\u05d5\u05e9\u05d4]"
+    + _HEBREW_PREFIX_SEPARATOR
+    + "){0,2}"
+)
+_HEBREW_OPTIONAL_ARTICLE = "(?:\u05d4" + _HEBREW_PREFIX_SEPARATOR + ")?"
 # The alternation is longest-first so that a longer form is never shadowed by a
 # shorter one it contains, and the boundaries refuse a match that sits inside a
 # longer Hebrew word.
@@ -2026,7 +2041,8 @@ _HEBREW_PERCENT_NOUN_WORDS = frozenset({"אחוז", "אחוזים", "אחוזי"
 def _hebrew_is_percent_noun(word: str) -> bool:
     """Whether ``word`` is a percent noun, with or without the article."""
     return word in _HEBREW_PERCENT_NOUN_WORDS or (
-        word.startswith("\u05d4") and word[1:] in _HEBREW_PERCENT_NOUN_WORDS
+        word.startswith("\u05d4")
+        and word[1:].lstrip("\u05be-") in _HEBREW_PERCENT_NOUN_WORDS
     )
 
 
@@ -2092,12 +2108,15 @@ _HEBREW_WORD_TOKEN_PATTERN = re.compile(
 )
 _HEBREW_TEEN_JOIN_PATTERN = re.compile("^\\s*[-\u05be]\\s*$")
 _HEBREW_PERCENT_WORD_PATTERN = re.compile(
-    _WRAP_SPACE_FRAGMENT + "+\u05d4?אחוז(?:ים|י)?(?![\u0590-\u05ff])"
+    _WRAP_SPACE_FRAGMENT + "+(?:\u05d4[\u05be-]?)?אחוז(?:ים|י)?(?![\u0590-\u05ff])"
 )
 _HEBREW_PERCENT_SIGN_AFTER_PATTERN = re.compile(_WRAP_SPACE_FRAGMENT + "*%")
 # The percent noun may precede its count -- "אחוז אחד" is one percent.
 _HEBREW_PERCENT_NOUN_BEFORE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}\u05d4?אחוז(?:ים)?"
+    "(?<![\u0590-\u05ff])"
+    + _HEBREW_PREPOSITION_PREFIXES
+    + _HEBREW_OPTIONAL_ARTICLE
+    + "אחוז(?:ים)?"
     + _WRAP_SPACE_FRAGMENT
     + "+$"
 )
@@ -2613,7 +2632,7 @@ _HEBREW_AMOUNT_NOUN_STEMS = (
     "היטל|ארנונ|פרמי|מלג|תמיכ|סיוע|סובסידי|כספ"
 )
 _HEBREW_FRACTION_BASE_AMOUNT_PATTERN = re.compile(
-    "\\s+(?:\u05de\u05d4?|\u05d4)(?:"
+    "\\s+(?:\u05de[\u05be-]?(?:\u05d4[\u05be-]?)?|\u05d4[\u05be-]?)(?:"
     + _HEBREW_AMOUNT_NOUN_STEMS
     + ")[\u0590-\u05ff]{0,6}(?![\u0590-\u05ff])"
 )
@@ -2660,7 +2679,7 @@ _HEBREW_MONEY_POSSESSOR_CONNECTORS = (
     "יפחת\\s+\u05de[\u05be-]?|תפחת\\s+\u05de[\u05be-]?|פחות\\s+\u05de[\u05be-]?|"
     "יותר\\s+\u05de[\u05be-]?|למעלה\\s+\u05de[\u05be-]?|"
     "יהיה|יהא|תהיה|תהא|הוא|היא|הם|הן|"
-    "\u05d4(?:שנתי|שנתית|חודשי|חודשית|בסיסי|בסיסית|מרבי|מרבית|"
+    "\u05d4[\u05be-]?(?:שנתי|שנתית|חודשי|חודשית|בסיסי|בסיסית|מרבי|מרבית|"
     "מזערי|מזערית|מינימלי|מינימלית|מקסימלי|מקסימלית|ממוצע|ממוצעת)"
 )
 _HEBREW_MONEY_NOUN = (
@@ -2691,9 +2710,9 @@ _HEBREW_MONEY_PRINTED_TAIL = (
 # it includes is a count of its own ("הסיוע כולל 3 אלפים ו־200 מיטות",
 # "התקציב הכולל לפחות 3 אלפים ו־200 עובדים").
 _HEBREW_MONEY_TOTAL_ADJECTIVE = (
-    "\u05d4?כולל(?:ת)?(?=\\s+(?:של|(?:שלא|לא)\\s+(?:יעלה|תעלה|יפחת|תפחת)|שאינו|שאינה|"
+    "(?:\u05d4[\u05be-]?)?כולל(?:ת)?(?=\\s+(?:של|(?:שלא|לא)\\s+(?:יעלה|תעלה|יפחת|תפחת)|שאינו|שאינה|"
     "יהיה|יהא|תהיה|תהא|הוא|היא|הם|הן|"
-    "\u05d4(?:שנתי|שנתית|חודשי|חודשית|בסיסי|בסיסית|מרבי|מרבית|מזערי|מזערית|"
+    "\u05d4[\u05be-]?(?:שנתי|שנתית|חודשי|חודשית|בסיסי|בסיסית|מרבי|מרבית|מזערי|מזערית|"
     "מינימלי|מינימלית|מקסימלי|מקסימלית|ממוצע|ממוצעת))(?![\u0590-\u05ff]))"
 )
 _HEBREW_MONEY_CONTEXT_CONNECTORS = (
@@ -2704,20 +2723,22 @@ _HEBREW_MONEY_POSSESSOR_CONNECTORS = (
 )
 _HEBREW_MONEY_CONTEXT_PATTERN = re.compile(
     "(?:"
-    "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}"
+    "(?<![\u0590-\u05ff])"
+    + _HEBREW_PREPOSITION_PREFIXES
     + _HEBREW_MONEY_NOUN
     + "(?![\u0590-\u05ff])"
-    "\\s+(?!\u05d4(?:"
+    "\\s+(?!\u05d4[\u05be-]?(?:"
     + _HEBREW_RELATIVE_PARTICIPLES
-    + ")(?![\u0590-\u05ff]))\u05d4[\u0590-\u05ff]{2,}(?:\\s+(?:"
+    + ")(?![\u0590-\u05ff]))\u05d4[\u05be-]?[\u0590-\u05ff]{2,}(?:\\s+(?:"
     + _HEBREW_MONEY_POSSESSOR_CONNECTORS
     + ")(?![\u0590-\u05ff])){0,6}"
     + _HEBREW_MONEY_PRINTED_TAIL
     + "|"
-    "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9\u05d4]{0,2}"
+    "(?<![\u0590-\u05ff])"
+    + _HEBREW_PREPOSITION_OR_ARTICLE_PREFIXES
     + _HEBREW_MONEY_NOUN
     + "(?![\u0590-\u05ff])"
-    "(?:\\s+\u05d4?(?:"
+    "(?:\\s+(?:\u05d4[\u05be-]?)?(?:"
     + _HEBREW_MONEY_CONTEXT_CONNECTORS
     + ")[\u05be-]?){0,6}"
     + _HEBREW_MONEY_PRINTED_TAIL
@@ -2752,7 +2773,7 @@ _HEBREW_FRACTION_OPERAND_AFTER_PATTERN = re.compile(
     # half a percent.
     + "|"
     + _WRAP_SPACE_FRAGMENT
-    + "+\u05d4?אחוז(?:ים|י)?(?![\u0590-\u05ff])|"
+    + "+(?:\u05d4[\u05be-]?)?אחוז(?:ים|י)?(?![\u0590-\u05ff])|"
     + _WRAP_SPACE_FRAGMENT
     + "*%"
     + ")"
@@ -3155,8 +3176,8 @@ _HEBREW_PERCENT_PHRASE_PATTERN = re.compile(
     "|(?:(?P<whole>(?:\\d{1,3}(?:,\\d{3})+|\\d+))[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]+)?(?P<numerator>\\d+)\\s*[/\u2044]\\s*(?P<denominator>\\d+)"
     + _WRAP_SPACE_FRAGMENT
     + "+)?"
-    "(?P<noun_prefix>[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2})"
-    "(?P<noun>\u05d4?אחוז(?:ים)?)"
+    "(?P<noun_prefix>(?:[\u05d1\u05db\u05dc\u05de\u05d5\u05e9][\u05be-]?){0,2})"
+    "(?P<noun>(?:\u05d4[\u05be-]?)?אחוז(?:ים)?)"
     "(?:"
     + _WRAP_SPACE_FRAGMENT
     + "+\u05d5[\u05be-]?(?:(?P<tail>"
@@ -3810,7 +3831,7 @@ _HEBREW_SHARED_SCALE_JOIN_BEFORE_PATTERN = re.compile(
 # A noun that numbers the lower endpoint rather than counting it: "תוספת 2
 # עד מאה ועשרים אלף" is supplement 2, up to 120,000, and shares nothing.
 _HEBREW_SHARED_SCALE_LABEL_BEFORE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9\u05d4]{0,2}(?:"
+    "(?<![\u0590-\u05ff])" + _HEBREW_PREPOSITION_OR_ARTICLE_PREFIXES + "(?:"
     "תוספת|תוספות|סעיף|סעיפים|פסקה|פסקאות|תקנה|תקנות|פרט|פרטים|לוח|טור|שורה|"
     "חלק|פרק|סימן|נספח|טופס|דרגה|שלב|קבוצה|רמה|סוג|מספר|מס'"
     ")\\s+$"
@@ -4303,7 +4324,9 @@ _HEBREW_PERCENT_TAIL_AFTER_PATTERN = re.compile(
 
 
 _HEBREW_PERCENT_MARKER_BEFORE_TAIL_PATTERN = re.compile(
-    "(?:%|(?<![\u0590-\u05ff])\u05d4?אחוז(?:ים|י)?)" + _WRAP_SPACE_FRAGMENT + "+$"
+    "(?:%|(?<![\u0590-\u05ff])(?:\u05d4[\u05be-]?)?אחוז(?:ים|י)?)"
+    + _WRAP_SPACE_FRAGMENT
+    + "+$"
 )
 
 
@@ -4748,7 +4771,10 @@ def _iter_hebrew_printed_mixed_number_matches(
 # לשלושה אחוזים", "2 עד 3 אחוזים", "מ־2 עד 3 אחוזים". The passes above read
 # the upper endpoint with the noun; this reads the lower one as a rate too.
 _HEBREW_PERCENT_NOUN_ANYWHERE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}\u05d4?אחוז(?:ים)?"
+    "(?<![\u0590-\u05ff])"
+    + _HEBREW_PREPOSITION_PREFIXES
+    + _HEBREW_OPTIONAL_ARTICLE
+    + "אחוז(?:ים)?"
     "(?![\u0590-\u05ff])"
     # The marker shares its rate across a range as the noun does ("בין 2
     # ל־3%").
@@ -4818,8 +4844,10 @@ _HEBREW_RANGE_WALK_JOIN_PATTERN = re.compile(
 # a grade ("לילד עד גיל 5, 2 או 3 אחוזים"). A reference ("לפי סעיף קטן 5, 2
 # או 3 אחוזים") is stopped at by its structural span.
 _HEBREW_RANGE_WALK_STOP_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}\u05d4?"
-    "(?:גיל|בן|בת|שנת|מספר|מס'|טופס|עמוד|שורה|דרגה|קטגוריה|סוג|רמה)"
+    "(?<![\u0590-\u05ff])"
+    + _HEBREW_PREPOSITION_PREFIXES
+    + _HEBREW_OPTIONAL_ARTICLE
+    + "(?:גיל|בן|בת|שנת|מספר|מס'|טופס|עמוד|שורה|דרגה|קטגוריה|סוג|רמה)"
     # A possessive suffix on the label ("שגילו 5", "גילה 5") is the same label.
     "(?:[\u05d5\u05d4\u05dd\u05df\u05d9\u05da]|כם|כן|נו)?\\s*$"
 )
@@ -4871,7 +4899,7 @@ def _hebrew_currency_gap_character(character: str) -> bool:
 # word in the same clause before the pair ("בשיעור של 2 או 3%") makes a
 # signed pair share too.
 _HEBREW_RATE_WORD_BEFORE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?:[\u05d1\u05d4\u05d5\u05dc\u05e9]{0,2}שיעור(?:ים|י)?|אחוז(?:ים)?|ה?ריבית)"
+    "(?<![\u0590-\u05ff])(?:(?:[\u05d1\u05d4\u05d5\u05dc\u05e9][\u05be-]?){0,2}שיעור(?:ים|י)?|אחוז(?:ים)?|(?:ה[\u05be-]?)?ריבית)"
     "(?:\\s+[^\\s.;:,\\n]+){0,6}\\s*$"
 )
 _HEBREW_CLAUSE_STOP_CHARACTERS = frozenset(".;:,\n")
@@ -4915,10 +4943,12 @@ _HEBREW_HEADING_CONSTRUCT_NOUNS = (
     "מס|מסי|הכנסה|הכנסת|ביטוח|לאומי|בריאות|דמי|תשלומי|מענקי|סכומי|שיעורי|ריבית|היטל"
 )
 _HEBREW_HEADING_NOMINAL_COMPLEMENT = (
-    "(?:\\s+(?:\u05d4[\u0590-\u05ff]+|" + _HEBREW_HEADING_CONSTRUCT_NOUNS + ")){0,3}"
+    "(?:\\s+(?:\u05d4[\u05be-]?[\u0590-\u05ff]+|"
+    + _HEBREW_HEADING_CONSTRUCT_NOUNS
+    + ")){0,3}"
 )
 _HEBREW_HEADING_SUBJECT_COMPLEMENT = (
-    '(?:\\s+(?:[\u0590-\u05ff]+(?:[\u05f4"][\u0590-\u05ff]+)?'
+    '(?:\\s+(?:[\u0590-\u05ff]+(?:[\u05f4"-][\u0590-\u05ff]+)?'
     "|\\d[\\d.,]*(?:\\([^()\\n]{1,8}\\))*|\\([^()\\n]{1,80}\\)))*"
 )
 _HEBREW_LIST_TRUE_COPULAS = "הם|הן|יהיו|תהיינה|הינם|הינן|כדלקמן:?|הבאים:?|הבאות:?"
@@ -4932,12 +4962,13 @@ _HEBREW_HEADING_TAIL = (
     + "\\s+של)(?![\u0590-\u05ff])"
 )
 _HEBREW_PLURAL_RATE_HEADING_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?:השיעורים|שיעורי|בשיעורים|שיעורים|הריביות|ריביות)"
-    + _HEBREW_HEADING_TAIL
+    "(?<![\u0590-\u05ff])(?:ה[\u05be-]?שיעורים|שיעורי|ב[\u05be-]?שיעורים|שיעורים"
+    "|ה[\u05be-]?ריביות|ריביות)" + _HEBREW_HEADING_TAIL
 )
 _HEBREW_PLURAL_AMOUNT_HEADING_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?:הסכומים|סכומי|בסכומים|סכומים|התשלומים|תשלומי|תשלומים"
-    "|המענקים|מענקי|הקנסות|קנסות|הקצבאות|קצבאות)" + _HEBREW_HEADING_TAIL
+    "(?<![\u0590-\u05ff])(?:ה[\u05be-]?סכומים|סכומי|ב[\u05be-]?סכומים|סכומים"
+    "|ה[\u05be-]?תשלומים|תשלומי|תשלומים|ה[\u05be-]?מענקים|מענקי"
+    "|ה[\u05be-]?קנסות|קנסות|ה[\u05be-]?קצבאות|קצבאות)" + _HEBREW_HEADING_TAIL
 )
 # A conditional marker in the heading's own comma segment, after a preamble
 # ("לעניין זה, כאשר התשלומים הם") or with a vav ("וכאשר"), opens a
@@ -4949,8 +4980,8 @@ _HEBREW_PLURAL_AMOUNT_HEADING_PATTERN = re.compile(
 # heads nothing when the clause runs on past the unit into the consequent
 # ("כאשר התשלומים הם 500, 2 או 3 מיליון שקלים ישולמו כמענק").
 _HEBREW_CONDITIONAL_CLAUSE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])\u05d5?(?:אם|כאשר|ככל\\s+ש|במקרה\\s+ש|אילו|לכשיהיה)(?![\u0590-\u05ff])"
-    "|(?<![\u0590-\u05ff])\u05d5?כש(?=[\u0590-\u05ff])"
+    "(?<![\u0590-\u05ff])(?:\u05d5[\u05be-]?)?(?:אם|כאשר|ככל\\s+ש|במקרה\\s+ש|אילו|לכשיהיה)(?![\u0590-\u05ff])"
+    "|(?<![\u0590-\u05ff])(?:\u05d5[\u05be-]?)?כש(?=[\u0590-\u05ff])"
 )
 _HEBREW_SENTENCE_STOP_CHARACTERS = frozenset(".;:\n")
 _HEBREW_LIST_TAIL_PATTERN = re.compile(
@@ -4962,7 +4993,7 @@ _HEBREW_LIST_TAIL_PATTERN = re.compile(
 # whitespace; any other newline, a blank line included, ends the clause, so
 # table rows and numbered paragraphs stay apart.
 _HEBREW_SOFT_WRAP_BEFORE_PATTERN = re.compile(
-    "(?:,|\u05d5\u05be|(?<![\u0590-\u05ff])(?:או|עד|ועד|לבין|"
+    "(?:,|\u05d5[\u05be-]|(?<![\u0590-\u05ff])(?:או|עד|ועד|לבין|"
     "הם|הן|יהיו|תהיינה|הינם|הינן|של|כדלקמן:?|הבאים:?|הבאות:?)|:)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*$"
 )
 
@@ -5245,15 +5276,15 @@ _HEBREW_RELATIVE_MARKER_PATTERN = re.compile(
     "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?:אשר|(?!"
     + _HEBREW_LEXICAL_SHIN_WORDS
     + "(?![\u0590-\u05ff]))"
-    "\u05e9(?:\u05d4[\u0590-\u05ff]+"
-    "|\u05d5?\u05d5(?:עדה|עדת|עד|תק|תיק|תיקה)"
+    "\u05e9[\u05be-]?(?:\u05d4[\u05be-]?[\u0590-\u05ff]+"
+    "|(?:\u05d5[\u05be-]?)?\u05d5(?:עדה|עדת|עד|תק|תיק|תיקה)"
     "|(?:על|ב|בגינ|ממנ|מ|ממ|לגבי|בשל|בעד|כנגד|כלפי|אל|אצל|תחת|לפי|בתוכ|מתוכ)"
     "(?:ו|ה|הם|הן|ם|ן|נו|יו|יה|יהם|יהן)"
     "|[\u05d9\u05ea\u05e0\u05d0][\u0590-\u05ff]{2,}"
     "|(?!\u05d5)[\u0590-\u05ff]{2,}\u05d5))(?![\u0590-\u05ff])"
 )
 _HEBREW_WORD_AFTER_PATTERN = re.compile(
-    "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*\u05d5?(?P<word>[\u0590-\u05ff]{2,})(?![\u0590-\u05ff])"
+    "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?:\u05d5[\u05be-]?)?(?P<word>[\u0590-\u05ff]{2,})(?![\u0590-\u05ff])"
 )
 # The third-person singular future forms a statute writes its consequents
 # in, masculine and feminine; the plural is derived from the masculine. A
@@ -5385,8 +5416,8 @@ _HEBREW_LEXICAL_SHIN_WORD_PATTERN = re.compile(
 # preposition ("שממנו", "שעליה") or the ועדה family. They are read before
 # the lexical nouns, which are read before the generic markers.
 _HEBREW_SPECIFIC_RELATIVE_MARKER_PATTERN = re.compile(
-    "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?:אשר|\u05e9(?:\u05d4[\u0590-\u05ff]+"
-    "|\u05d5?\u05d5(?:עדה|עדת|עד|תק|תיק|תיקה)"
+    "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?:אשר|\u05e9[\u05be-]?(?:\u05d4[\u05be-]?[\u0590-\u05ff]+"
+    "|(?:\u05d5[\u05be-]?)?\u05d5(?:עדה|עדת|עד|תק|תיק|תיקה)"
     "|(?:על|ב|בגינ|ממנ|מ|ממ|לגבי|בשל|בעד|כנגד|כלפי|אל|אצל|תחת|לפי|בתוכ|מתוכ)"
     "(?:ו|ה|הם|הן|ם|ן|נו|יו|יה|יהם|יהן)))(?![\u0590-\u05ff])"
 )
@@ -5800,7 +5831,7 @@ def _ambiguous_reading_ungrounded_literal_hint(
 # bare numbers of the clauses after it: "הקנס יהיה 50 או 2 אחוזים" under it
 # keeps 50, while a rate word in the clause still makes a pair rates.
 _HEBREW_CURRENCY_HEADING_PATTERN = re.compile(
-    '(?<![\u0590-\u05ff])(?:כל\\s+)?ה?סכומים\\s+ב(?:שקלים(?:\\s+חדשים)?|ש"ח|ש״ח|דולרים|דולר|יורו|אירו|לירות)\\s*:'
+    '(?<![\u0590-\u05ff])(?:כל\\s+)?(?:ה[\u05be-]?)?סכומים\\s+ב[\u05be-]?(?:שקלים(?:\\s+חדשים)?|ש"ח|ש״ח|דולרים|דולר|יורו|אירו|לירות)\\s*:'
 )
 
 
@@ -6451,7 +6482,7 @@ _HEBREW_STRUCTURAL_REMAINDER = (
     + _HEBREW_STRUCTURAL_TEEN
     + "|(?:"
     + _HEBREW_STRUCTURAL_TENS
-    + ")(?:\\s+\u05d5\u05d4?(?:"
+    + ")(?:\\s+\u05d5[\u05be-]?(?:\u05d4[\u05be-]?)?(?:"
     + _HEBREW_STRUCTURAL_UNITS
     + "|"
     + _HEBREW_STRUCTURAL_ORDINALS
@@ -6470,22 +6501,26 @@ _HEBREW_STRUCTURAL_REMAINDER = (
 _HEBREW_STRUCTURAL_NUMBER_WORD_BODY = (
     "(?:"
     "(?:אלף|אלפיים|(?:" + _HEBREW_STRUCTURAL_UNITS + ")\\s+אלפים)"
-    "(?:\\s+\u05d5?(?:מאה|מאתיים|(?:" + _HEBREW_STRUCTURAL_UNITS + ")\\s+מאות))?"
-    "(?:\\s+\u05d5?" + _HEBREW_STRUCTURAL_REMAINDER + ")?"
+    "(?:\\s+(?:\u05d5[\u05be-]?)?(?:מאה|מאתיים|(?:"
+    + _HEBREW_STRUCTURAL_UNITS
+    + ")\\s+מאות))?"
+    "(?:\\s+(?:\u05d5[\u05be-]?)?" + _HEBREW_STRUCTURAL_REMAINDER + ")?"
     "|(?:מאה|מאתיים|(?:" + _HEBREW_STRUCTURAL_UNITS + ")\\s+מאות)"
-    "(?:\\s+\u05d5?" + _HEBREW_STRUCTURAL_REMAINDER + ")?"
+    "(?:\\s+(?:\u05d5[\u05be-]?)?" + _HEBREW_STRUCTURAL_REMAINDER + ")?"
     "|" + _HEBREW_STRUCTURAL_REMAINDER + ")"
 )
-_HEBREW_STRUCTURAL_NUMBER_WORD = "\u05d4?" + _HEBREW_STRUCTURAL_NUMBER_WORD_BODY
+_HEBREW_STRUCTURAL_NUMBER_WORD = (
+    _HEBREW_OPTIONAL_ARTICLE + _HEBREW_STRUCTURAL_NUMBER_WORD_BODY
+)
 # A plural noun may head a list of definite spelled references ("התוספות
 # השנייה, השלישית והרביעית"); every item after the first carries the
 # article, which a count never does, so "ושלושה ילדים" after a list stays
 # substantive.
 _HEBREW_STRUCTURAL_NUMBER_WORD_LIST_TAIL = (
-    "(?:\\s*,\\s*\u05d4"
+    "(?:\\s*,\\s*\u05d4[\u05be-]?"
     + _HEBREW_STRUCTURAL_NUMBER_WORD_BODY
     + ")*"
-    + "(?:\\s+(?:\u05d5|או\\s+)\u05d4"
+    + "(?:\\s+(?:\u05d5[\u05be-]?|או\\s+)\u05d4[\u05be-]?"
     + _HEBREW_STRUCTURAL_NUMBER_WORD_BODY
     + ")?"
 )
@@ -6866,8 +6901,10 @@ _HEBREW_SEPARATE_QUANTITY_WORD_FORMS = _hebrew_separate_quantity_word_forms()
 # The feminine nouns a feminine ordinal modifies: the evidence that
 # "חמישית" after one of them is "fifth".
 _HEBREW_ORDINAL_CONTEXT_NOUN_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}\u05d4?"
-    "(?:לידה|דירה|דרגה|פעם|שנה|קומה|כיתה|רמה|קטגוריה|מדרגה|שכבה|סדרה|תקופה|עונה|"
+    "(?<![\u0590-\u05ff])"
+    + _HEBREW_PREPOSITION_PREFIXES
+    + _HEBREW_OPTIONAL_ARTICLE
+    + "(?:לידה|דירה|דרגה|פעם|שנה|קומה|כיתה|רמה|קטגוריה|מדרגה|שכבה|סדרה|תקופה|עונה|"
     "מנה|יחידה|ילדה|בת|אישה|עובדת|מבוטחת|תלמידה|תוספת|פסקה|תקנה|הוראה|נקודה|שורה|"
     "מהדורה|גרסה|קבוצה|רשימה|הודעה|בקשה|תביעה|החלטה|ישיבה|שנת|מיטה|מכונה|מדינה|"
     "משמרת|משפחה|מחלה|מלגה|מקדמה|מדידה|מכירה|מסירה|ירושה|יצירה)\\s+$"
@@ -7084,7 +7121,7 @@ _HEBREW_STRUCTURAL_NUMBER_WORD_ANY = _hebrew_alternation(
 # fraction or vav-bound number words. A bare number word after a reference
 # ("התוספת השנייה שלושה ילדים") is the statute's own count, not a tail.
 _HEBREW_STRUCTURAL_QUANTITY_TAIL = (
-    "(?:\\s+\\d+\\s*[/\u2044]\\s*\\d+|\\s+\u05d5(?:"
+    "(?:\\s+\\d+\\s*[/\u2044]\\s*\\d+|\\s+\u05d5[\u05be-]?(?:"
     + _HEBREW_STRUCTURAL_NUMBER_WORD_ANY
     + ")){0,16}"
 )
@@ -7135,7 +7172,7 @@ _HEBREW_STRUCTURAL_PRINTED_ENDPOINT = (
 # fractional tail. The first word may carry a vav.
 _HEBREW_STRUCTURAL_BELOW_THOUSAND = (
     "(?:(?:מאה|מאתיים|(?:" + _HEBREW_STRUCTURAL_UNITS + ")\\s+מאות)"
-    "(?:\\s+\u05d5?" + _HEBREW_STRUCTURAL_REMAINDER + ")?"
+    "(?:\\s+(?:\u05d5[\u05be-]?)?" + _HEBREW_STRUCTURAL_REMAINDER + ")?"
     "|" + _HEBREW_STRUCTURAL_REMAINDER + ")"
 )
 # A spelled amount: a counted fraction ("שלושה רבעים", read before the bare
@@ -7149,10 +7186,10 @@ _HEBREW_STRUCTURAL_SPELLED_ENDPOINT = (
     + "|(?:"
     + _HEBREW_STRUCTURAL_BELOW_THOUSAND
     + "\\s+)?(?:אלף|אלפיים|אלפים)"
-    "(?:\\s+\u05d5?" + _HEBREW_STRUCTURAL_BELOW_THOUSAND + ")?"
+    "(?:\\s+(?:\u05d5[\u05be-]?)?" + _HEBREW_STRUCTURAL_BELOW_THOUSAND + ")?"
     "|"
     + _HEBREW_STRUCTURAL_BELOW_THOUSAND
-    + ")(?:\\s+\u05d5"
+    + ")(?:\\s+\u05d5[\u05be-]?"
     + _HEBREW_STRUCTURAL_FRACTION_TAIL
     + ")?)"
 )
@@ -7168,7 +7205,7 @@ _HEBREW_STRUCTURAL_COORDINATED_ENDPOINT = (
 # left unread.
 _HEBREW_STRUCTURAL_CONJUNCTION = (
     "(?:\\s*(?:או|עד|ועד|לבין)\\s+|\\s*\u05d5[\u05be-]?\\s*(?=\\d)|\\s*[-\u2013]\\s*"
-    "|\\s+(?=\u05d5[\u0590-\u05ff]))"
+    "|\\s+(?=\u05d5[\u05be-]?[\u0590-\u05ff]))"
 )
 # One or more endpoints after a conjunction, then the unit ("1 או 2 או 3
 # שקלים", "שתיים ושלוש נקודות"). A comma is no join here: after a closed
@@ -7230,16 +7267,15 @@ _HEBREW_STRUCTURAL_SINGULAR_NOUNS = (
 _HEBREW_STRUCTURAL_STRICT_SINGULAR_NOUNS = (
     "פרק|חלק|סימן|סעיף קטן|סעיף|פסקת משנה|פסקה|לוח|טור|פרט|תקנה"
 )
-_HEBREW_STRUCTURAL_NOUN_PREFIX = (
-    "(?:[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}\u05d4?)"
-)
+_HEBREW_STRUCTURAL_NOUN_PREFIX = _HEBREW_PREPOSITION_PREFIXES + _HEBREW_OPTIONAL_ARTICLE
 _HEBREW_STRUCTURAL_REFERENCE_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])" + _HEBREW_STRUCTURAL_NOUN_PREFIX + "(?:"
     # A cited "תוספת" -- "לפי תוספת 5", "בהתאם לתוספת 5", "כאמור בתוספת 5",
     # with any whitespace after the citation word -- is a schedule; the
     # citation word joins the span.
     "(?:(?:לפי|על\\s+פי|מכוח)\\s+|(?:בהתאם|כאמור|האמור|כמפורט|המפורט|הקבוע|הקבועה|המנויה)"
-    "\\s+)[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}\u05d4?"
+    "\\s+)"
+    + _HEBREW_STRUCTURAL_NOUN_PREFIX
     + _HEBREW_STRUCTURAL_SUPPLEMENT_NOUN
     + "\\s+(?:"
     + _HEBREW_STRUCTURAL_DIGIT_ITEM
@@ -7277,7 +7313,7 @@ _HEBREW_STRUCTURAL_REFERENCE_PATTERN = re.compile(
     # ("התוספות השנייה ושלושה ילדים" keeps its three children substantive); a
     # bare one may be the first half of a quantity ("תוספות שתיים עד שלוש
     # נקודות").
-    "|\u05d4"
+    "|\u05d4[\u05be-]?"
     + _HEBREW_STRUCTURAL_NUMBER_WORD_BODY
     + _HEBREW_STRUCTURAL_NUMBER_WORD_LIST_TAIL
     + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
@@ -7303,7 +7339,7 @@ _HEBREW_STRUCTURAL_REFERENCE_PATTERN = re.compile(
     + _HEBREW_STRUCTURAL_DIGIT_ITEM
     + _HEBREW_STRUCTURAL_NOT_A_QUANTITY_TAILED
     + ")?"
-    "|\u05d4"
+    "|\u05d4[\u05be-]?"
     + _HEBREW_STRUCTURAL_NUMBER_WORD_BODY
     + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
     + "|"
@@ -7316,11 +7352,11 @@ _HEBREW_STRUCTURAL_REFERENCE_PATTERN = re.compile(
     # A definite "תוספת" ("התוספת השנייה"), or one followed by a number and
     # "לחוק"/"לפקודה", is a schedule; a cited one is matched with its citation
     # word below.
-    + "|(?<=\\u05d4)"
+    + "|(?:(?<=\\u05d4)|(?<=\\u05d4[\\u05be-]))"
     + _HEBREW_STRUCTURAL_SUPPLEMENT_NOUN
     + "|"
     + _HEBREW_STRUCTURAL_SUPPLEMENT_NOUN
-    + "(?=\\s+\\d+[\\u05d0-\\u05ea]?\\s+ל(?:חוק|פקודה|תקנות|צו)(?![\\u0590-\\u05ff]))"
+    + "(?=\\s+\\d+[\\u05d0-\\u05ea]?\\s+ל[\\u05be-]?(?:חוק|פקודה|תקנות|צו)(?![\\u0590-\\u05ff]))"
     + ")\\s+"
     "(?:"
     + _HEBREW_STRUCTURAL_DIGIT_ITEM
@@ -7332,7 +7368,7 @@ _HEBREW_STRUCTURAL_REFERENCE_PATTERN = re.compile(
     + _HEBREW_STRUCTURAL_DIGIT_ITEM
     + _HEBREW_STRUCTURAL_NOT_A_QUANTITY_TAILED
     + ")?"
-    "|\u05d4"
+    "|\u05d4[\u05be-]?"
     + _HEBREW_STRUCTURAL_NUMBER_WORD_BODY
     + _HEBREW_STRUCTURAL_NOT_A_QUANTITY
     + "|"
@@ -10164,7 +10200,9 @@ def _iter_hebrew_number_word_matches(
 # construct "שניית" ("שניית המתנה") is only ever the unit.
 _HEBREW_SECOND_WORDS = frozenset({"שנייה", "שניה", "שניית"})
 _HEBREW_FRACTION_BEFORE_SECOND_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])[\u05d1\u05db\u05dc\u05de\u05d5\u05e9]{0,2}(?:"
+    "(?<![\u0590-\u05ff])"
+    + _HEBREW_PREPOSITION_PREFIXES
+    + "(?:"
     + "|".join(
         re.escape(w)
         for w in sorted(
