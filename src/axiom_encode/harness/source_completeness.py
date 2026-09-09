@@ -415,6 +415,7 @@ _GERMAN_CARDINAL_VALUES = {
     "neun": 9.0,
     "zehn": 10.0,
 }
+_SLASH_CONJUNCTION = re.compile(r"\b(?:and\s*/\s*or|und\s*/\s*oder)\b", re.IGNORECASE)
 _ARITHMETIC_EXPRESSION = re.compile(
     r"(?:\d+(?:[.,]\d+)?|[A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß]*)"
     r"[ \t]*(?:[+*/=×·•∗∙]|(?<!\w)[−–-](?!\w))[ \t]*"
@@ -4356,10 +4357,16 @@ def _without_stated_conversion_results(source_text: str) -> str:
     return "".join(characters)
 
 
-def _has_substantive_arithmetic_expression(source_text: str) -> bool:
-    """Ignore slash-separated year spans while recognizing actual arithmetic."""
+def _without_slash_conjunction_operators(source_text: str) -> str:
+    """Keep prose and offsets intact while masking coordinating slashes."""
 
-    arithmetic_text = list(source_text)
+    return _SLASH_CONJUNCTION.sub(lambda match: match.group().replace("/", " "), source_text)
+
+
+def _has_substantive_arithmetic_expression(source_text: str) -> bool:
+    """Ignore prose conjunctions and year spans, retaining actual arithmetic."""
+
+    arithmetic_text = list(_without_slash_conjunction_operators(source_text))
     for date_match in _STATED_CONVERSION_DATE.finditer(source_text):
         arithmetic_text[date_match.start() : date_match.end()] = " " * (
             date_match.end() - date_match.start()
@@ -17850,12 +17857,13 @@ def _temporal_occurrence_is_formula_applicability_preface(
 def _formula_operation_kinds(text: str) -> set[str]:
     """Recognize operations in source prose or an explicit expression."""
 
+    text = _without_slash_conjunction_operators(text)
     parsed_operations = _formula_ast_operation_kinds(text)
     if parsed_operations:
         return parsed_operations
     operations: set[str] = set()
     lowered_text = text.lower()
-    arithmetic_text = re.sub(r"\band\s*/\s*or\b", "and or", lowered_text)
+    arithmetic_text = lowered_text
     operation_patterns = {
         "add": (
             r"(?:\+|\bplus\b|\bsumme\b|\bsum\s+of\b|\bzuzüglich\b|"

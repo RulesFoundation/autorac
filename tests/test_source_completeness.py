@@ -9349,6 +9349,33 @@ def test_editorial_slash_date_does_not_create_computation_obligation():
     )
 
 
+@pytest.mark.parametrize("conjunction", ["und/oder", "und / oder", "UND/ODER", "and/or", "and / or"])
+def test_slash_conjunction_does_not_create_arithmetic_obligation(conjunction: str):
+    source = (
+        "Artikel 59\nRegelungen für den Fall, in dem sich die anzuwendenden\n"
+        f"Rechtsvorschriften {conjunction} die Zuständigkeit für die Gewährung\n"
+        "von Familienleistungen ändern"
+    )
+    assert not source_states_explicit_computation(source)
+    assert "divide" not in completeness_module._formula_operation_kinds(source)
+    assert "divide" not in completeness_module._formula_operation_kinds(conjunction)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "income / days",
+        "land/orbit",
+        "und / order",
+        "The agency notifies the parent and/or guardian; payment = income / 2.",
+        "Rechtsvorschriften und/oder Zuständigkeit; Betrag = Einkommen / 2.",
+    ],
+)
+def test_slash_conjunction_mask_preserves_real_arithmetic(source: str):
+    assert source_states_explicit_computation(source)
+    assert "divide" in completeness_module._formula_operation_kinds(source)
+
+
 def test_formula_subject_matches_established_boundary_helper_suffix():
     source = (
         "Four percent of taxable income in excess of five hundred dollars "
