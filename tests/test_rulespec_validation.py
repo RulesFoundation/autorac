@@ -20083,6 +20083,27 @@ def test_second_person_possessives_bare_remainders_rate_tails_and_grouped_wholes
         assert extract_numbers_from_text(text) >= expected, text
 
 
+def test_sign_after_tail_slash_rate_tails_and_grouped_wholes_in_fractions():
+    # Review round 132 on #1585: the tail takes its number's sign; a
+    # fraction-slash rate keeps its tail; a grouped whole joins a slash
+    # fraction.
+    for text, expected in (
+        ("השיעור הוא -2½% וחצי.", {-0.03}),
+        ("השיעור הוא −2½% וחצי.", {-0.03}),
+        ("השיעור הוא -2½% ושלושה רבעים.", {-0.0325}),
+        ("השיעור הוא -2.5% וחצי.", {-0.03}),
+        ("השיעור הוא 2 1⁄2% וחצי.", {0.03}),
+        ("השיעור הוא 2 1/2% וחצי.", {0.03}),
+        ("השיעור הוא 1⁄2% ושלושה רבעים.", {0.0125}),
+        ("הסכום הוא 1,000 1/2 שקלים.", {1_000.5}),
+        ("הסכום הוא 1,000 1⁄2 שקלים.", {1_000.5}),
+        ("הסכום הוא 1000 1/2 שקלים.", {1_000.5}),
+        ("השיעורים הם 10, 20 ו־1,000 1⁄2 אחוזים.", {0.1, 0.2, 10.005}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) >= expected, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
