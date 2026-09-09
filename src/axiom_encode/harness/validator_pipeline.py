@@ -5096,6 +5096,71 @@ _HEBREW_RATE_COMPARATIVES = frozenset(
         "יותר",
     }
 )
+# Nouns whose first letter is a root ה, not the article: "הסכם" (an
+# agreement) is indefinite and heads a construct ("הסכם ההלוואה"), where
+# "המותר" (the permitted) is definite and closes its phrase. The stems
+# cover the plural, the construct and the suffixed forms.
+_HEBREW_HE_INITIAL_NOUN_STEMS = (
+    "הסכם",
+    "הלווא",
+    "הכנס",
+    "הורא",
+    "הודע",
+    "החלט",
+    "הצע",
+    "הסדר",
+    "הטב",
+    "הפרש",
+    "הכשר",
+    "השקע",
+    "הוצא",
+    "הנח",
+    "העבר",
+    "הגש",
+    "הרשא",
+    "הצהר",
+    "הפחת",
+    "העלא",
+    "הקצב",
+    "הקצא",
+    "הכר",
+    "הבטח",
+    "הגבל",
+    "הגדר",
+    "הוכח",
+    "המחא",
+    "המלצ",
+    "הנפק",
+    "הסמכ",
+    "הסכמ",
+    "העדפ",
+    "הערכ",
+    "הפסק",
+    "הפקד",
+    "הקל",
+    "הרחב",
+    "השלמ",
+    "השתתפ",
+    "התאמ",
+    "התחייב",
+    "התקשר",
+    "היטל",
+    "הון",
+    "הכשר",
+    "הליך",
+    "הצמד",
+    "הבהר",
+    "הרש",
+)
+
+
+def _hebrew_word_is_definite(word: str) -> bool:
+    """Whether ``word`` carries the article: a leading ה that is no root letter."""
+    return word.startswith("\u05d4") and not word.startswith(
+        _HEBREW_HE_INITIAL_NOUN_STEMS
+    )
+
+
 _HEBREW_RATE_NEUTRAL_WORDS = frozenset(
     {"לא", "אינה", "אינו", "אינם", "אינן", "גם", "רק", "אף", "כן", "בלבד", "אך"}
 )
@@ -5128,6 +5193,10 @@ def _hebrew_rate_expression_governs(words: list[str], construct: bool) -> bool:
     in_phrase = False
     expect_object = construct
     last_definite = False
+    # A relative clause whose subject stands in its opening word ("שהבנק",
+    # "אשר הבנק") has a predicate of its own still to come; that predicate
+    # is the clause's, not the rate's ("שהבנק יקבע תהיה").
+    relative_pending = False
 
     def _known_predicate(word: str) -> bool:
         return (
@@ -5146,12 +5215,18 @@ def _hebrew_rate_expression_governs(words: list[str], construct: bool) -> bool:
         if bare in _HEBREW_RATE_NEUTRAL_WORDS:
             continue
         if _known_predicate(bare):
+            if relative_pending:
+                relative_pending = False
+                continue
             if predicated:
                 return False
             predicated = True
             in_phrase = False
             expect_object = False
             last_definite = False
+            continue
+        if bare == "אשר":
+            relative_pending = True
             continue
         if bare in _HEBREW_RATE_PREPOSITIONS:
             in_phrase = True
@@ -5171,9 +5246,11 @@ def _hebrew_rate_expression_governs(words: list[str], construct: bool) -> bool:
             return False
         if expect_object:
             expect_object = False
-            last_definite = bare.startswith("\u05d4")
+            last_definite = _hebrew_word_is_definite(bare)
             continue
         if bare.startswith("\u05e9"):
+            if bare[1:2] == "\u05d4":
+                relative_pending = True
             continue
         if bare[:1] in "\u05d1\u05dc\u05de\u05db":
             in_phrase = True
@@ -5183,17 +5260,23 @@ def _hebrew_rate_expression_governs(words: list[str], construct: bool) -> bool:
             if _hebrew_word_governs_an_amount(bare) and (
                 not in_phrase or last_definite
             ):
+                # Its attributives ("הקנס המרבי") stand between it and its
+                # predicate.
                 following = next(
                     (
                         later
                         for later in bares[index + 1 :]
                         if later not in _HEBREW_RATE_NEUTRAL_WORDS
+                        and not (
+                            later.startswith("\u05d4")
+                            and not _hebrew_word_governs_an_amount(later)
+                        )
                     ),
                     None,
                 )
                 if following is not None and _known_predicate(following):
                     return False
-            last_definite = True
+            last_definite = _hebrew_word_is_definite(bare)
             continue
         # A bare word after a definite object ends the phrase ("מן המותר אז"):
         # a definite noun closes a construct chain, so what follows is no

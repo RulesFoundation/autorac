@@ -21008,6 +21008,39 @@ def test_a_rate_subject_keeps_its_clauses_and_every_rate_word_is_a_candidate():
         ), (text[:40], issue)
 
 
+def test_a_relative_clause_has_its_own_predicate_and_a_subject_its_attributives():
+    # Review round 152 on #1585: a relative clause whose subject stands in
+    # its opening word ("שהבנק", "אשר הבנק") consumes the next recognized
+    # predicate as its own, so the rate's real predicate still governs;
+    # and a consequent's subject keeps its attributives before its
+    # predicate, so "הקנס המרבי יהיה" still takes the pair.
+    rates = {0.1, 0.3}
+    fine = {50.0, 0.02}
+    heading = "הסכומים בשקלים: אם הריבית גבוהה מן המותר "
+    for text, expected, grounded, ungrounded in (
+        ("הריבית שהבנק יקבע תהיה 10 או 30%", rates, "0.1", "10"),
+        ("הריבית שהבנק עומד לגבות היא 10 או 30%", rates, "0.1", "10"),
+        ("הריבית אשר הבנק יקבע תהיה 10 או 30%", rates, "0.1", "10"),
+        ("הריבית שנקבעה בהסכם תהיה 10 או 30%", rates, "0.1", "10"),
+        (heading + "הקנס המרבי יהיה 50 או 2% מהמחזור", fine, "50", "0.5"),
+        (heading + "אז הקנס המרבי השנתי יהיה 50 או 2% מהמחזור", fine, "50", "0.5"),
+    ):
+        assert _hebrew_recall(text) == expected, text[:40]
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text[
+            :40
+        ]
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text[:40], issue)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
