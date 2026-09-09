@@ -21510,6 +21510,34 @@ def test_a_verb_governs_across_its_recipient_and_a_statute_has_every_construct_f
         assert _hebrew_recall(text) == {100.0}, text
 
 
+def test_a_paying_verb_governs_across_its_recipient_and_a_fraction_of_an_amount_only():
+    # Review round 168 on #1585: only a verb of paying governs a fraction
+    # word across its recipient; the recipient keeps its name and its
+    # possessor; a receiving verb's object keeps its ordinal; and the
+    # verb's reach licenses a fraction of an amount only, so a recipient's
+    # own ordinal stays.
+    for text, expected, grounded, ungrounded in (
+        ("העירייה קיבלה לוחית חמישית מן היצרן", {5.0}, "5", "0.2"),
+        ("המעסיק שילם לעובדת בשם שירה חמישית השכר", {0.2}, "0.2", "5"),
+        ("המעסיק שילם לעובדת של החברה חמישית השכר", {0.2}, "0.2", "5"),
+        ("המעסיק שילם לעובדת חמישית מן העובדות הזכאיות", {5.0}, "5", "0.2"),
+        ("המעסיק שילם לעובד חמישית מן הרווחים", {0.2}, "0.2", "5"),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

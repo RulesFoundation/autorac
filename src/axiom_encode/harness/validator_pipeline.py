@@ -3181,42 +3181,88 @@ def _search_before(
 _HEBREW_CLAUSE_BOUNDARY_CHARACTERS = frozenset(",;:.()[]\"'\u05f3\u05f4-\u2013\u2014\n")
 
 
+# The verbs that pay, give, deduct, allocate or return an amount to
+# someone: the ones whose recipient may stand between them and the amount.
+_HEBREW_PAYING_VERBS = frozenset(
+    "ישלם תשלם ישלמו ישולם תשולם ישולמו משלם משלמת משלמים שילם שילמה שילמו שולם "
+    "שולמה שולמו נתן נתנה נתנו יתן תיתן ייתן יינתן תינתן ינתן ניתן ניתנת יעביר "
+    "תעביר העביר העבירה העבירו יועבר תועבר ינכה תנכה ניכה ניכתה ניכו ינוכה תנוכה "
+    "ינוכו נוכה יופחת תופחת יופחתו הופחת הופחתה הפחית הפחיתה הפחיתו יקזז תקזז קיזז "
+    "קיזזה קיזזו יקוזז תקוזז קוזז קוזזה יחזיר תחזיר החזיר החזירה החזירו יוחזר תוחזר "
+    "הוחזר הוחזרה ישיב תשיב יפריש תפריש הפריש הפרישה הפרישו יפקיד תפקיד יקצה תקצה "
+    "הקצה הקצתה יוקצה תוקצה יזוכה תזוכה לשלם לתת ליתן להעביר לנכות להפחית לקזז "
+    "להחזיר להשיב להפריש להפקיד להקצות".split()
+)
+
+
 def _hebrew_fraction_context_in_clause(text: str, start: int) -> bool:
     """Whether a word that says a fraction follows governs the word at ``start``.
 
-    The last such word in the clause governs across its recipient and no
-    further: a phrase in ל ("לעובדת החדשה", "לעובדת חדשה", "לעובדת בשם
-    דנה") with whatever modifies the recipient, up to the next preposition,
-    relative marker or predicate. A bare noun after the verb ("קיבל בקשה
-    חמישית", a fifth request), a phrase in another preposition ("שילם עבור
-    בדיקה חמישית", paid for a fifth test) or a relative marker ("קבעה
-    שבדרגה חמישית") takes the fraction word for its own.
+    A verb of paying governs across its recipient and no further: a phrase
+    in ל ("לעובדת החדשה", "לעובדת חדשה", "לעובדת בשם שירה", "לעובדת של
+    החברה") with whatever modifies the recipient, its name and its
+    possessor included, up to the next preposition, relative clause or
+    predicate. Any other context word governs the word right after it
+    only, so a receiving verb's object keeps its ordinal ("קיבלה לוחית
+    חמישית", a fifth plate); and a bare noun after a paying verb ("שילם
+    עבור בדיקה חמישית") or a relative marker takes the fraction word for
+    its own.
     """
     clause_start = _hebrew_clause_start_before(text, start)
-    last = None
-    for match in _HEBREW_FRACTION_CONTEXT_IN_CLAUSE_PATTERN.finditer(
-        text, clause_start, start
-    ):
-        last = match
-    if last is None:
-        return False
-    first = True
-    for token_match in _NON_SPACE_TOKEN_PATTERN.finditer(text, last.end(), start):
-        token = token_match.group(0).strip(",;:()")
-        if not token:
+    matches = list(
+        _HEBREW_FRACTION_CONTEXT_IN_CLAUSE_PATTERN.finditer(text, clause_start, start)
+    )
+    # The nearest context word first; a nearer one that is no paying verb
+    # ("של" in "לעובדת של החברה") does not hide the paying verb before it.
+    for match in reversed(matches):
+        tokens = [
+            token
+            for token in (
+                token_match.group(0).strip(",;:()")
+                for token_match in _NON_SPACE_TOKEN_PATTERN.finditer(
+                    text, match.end(), start
+                )
+            )
+            if token
+        ]
+        if not tokens:
+            return True
+        verb = match.group(0).strip()
+        while (
+            verb[:1] in "\u05d5\u05e9"
+            and verb[1:].lstrip("\u05be-") in _HEBREW_PAYING_VERBS
+        ):
+            verb = verb[1:].lstrip("\u05be-")
+        if verb not in _HEBREW_PAYING_VERBS:
             continue
+        if _hebrew_recipient_phrase(tokens):
+            return True
+    return False
+
+
+def _hebrew_recipient_phrase(tokens: list[str]) -> bool:
+    """Whether ``tokens`` are a recipient in ל with its modifiers and nothing more."""
+    first = (
+        tokens[0][1:].lstrip("\u05be-") if tokens[0].startswith("\u05d5") else tokens[0]
+    )
+    if not first.startswith("\u05dc") or _hebrew_word_is_an_amount_noun(first):
+        return False
+    skip_next = False
+    for token in tokens[1:]:
         bare = token[1:].lstrip("\u05be-") if token.startswith("\u05d5") else token
+        if skip_next:
+            skip_next = False
+            continue
+        if bare in ("בשם", "של"):
+            # The recipient's name or possessor: the word after is theirs.
+            skip_next = True
+            continue
         if bare in _HEBREW_RATE_NEUTRAL_WORDS:
             continue
-        if first:
-            first = False
-            if bare.startswith("\u05dc") and not _hebrew_word_is_an_amount_noun(bare):
-                continue
-            return False
         if (
             bare in _HEBREW_RATE_PREPOSITIONS
             or bare == "אשר"
-            or (bare.startswith("\u05e9") and not _hebrew_word_is_an_amount_noun(bare))
+            or bare.startswith("\u05e9\u05d4")
             or bare in _HEBREW_CONSEQUENT_VERBS
             or bare in _HEBREW_RATE_COPULAS
             or bare in _HEBREW_RATE_PARTICIPLES
@@ -3320,12 +3366,14 @@ def _iter_hebrew_fraction_word_matches(
                 # context saying a fraction follows, names a kind or a source
                 # ("בדיקה חמישית מן הסוג הזה", "פנייה חמישית מן הציבור"), not
                 # a whole, unless what follows names an amount ("מן השכר").
+                # A paying verb's reach across its recipient licenses a fraction
+                # of an amount only: "שילם לעובדת חמישית מן העובדות הזכאיות"
+                # pays a fifth employee among the eligible ones.
                 if (
                     strict
                     and partitive.lstrip().startswith("מן")
                     and not names_an_amount
                     and not _hebrew_fraction_context_before(text, match.start())
-                    and not _hebrew_fraction_context_in_clause(text, match.start())
                     and _hebrew_word_before_can_be_feminine_singular(
                         text, match.start("fraction")
                     )
