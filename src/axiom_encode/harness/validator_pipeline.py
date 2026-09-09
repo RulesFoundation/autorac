@@ -5136,35 +5136,79 @@ def _hebrew_opens_relative_clause(text: str, position: int) -> bool:
     return False
 
 
-def _hebrew_list_ends_within_clause(text: str, body_end: int) -> bool:
-    """Whether the list ends inside its condition.
+# Ambiguity is explicit. A bare word after the unit that no class of
+# evidence decides -- no preposition, article or vav prefix, no plural
+# ending, outside the lexicons and the closed sets -- may be the consequent's
+# verb or a modifier of the unit ("מהכנסה נמוכה", "מהכנסת יחיד", "ממס ישיר").
+# Unless a lexicon verb or the sentence end decides later, the list is
+# AMBIGUOUS: it grounds as today, unscaled, and the source reports the
+# shared-unit reading as a candidate a reviewed assertion may select.
+# Exhausted input and a token that is no word are ambiguous, never a
+# consequent.
+HEBREW_HEADED_LIST_IN_CONDITION = "hebrew-headed-list-in-condition"
+_HEBREW_AMBIGUOUS_AS_HEADED: "ContextVar[bool]" = ContextVar(
+    "_HEBREW_AMBIGUOUS_AS_HEADED", default=False
+)
+_HEBREW_AMBIGUOUS_HEADINGS: "ContextVar[list[tuple[int, int, int, bool]] | None]" = (
+    ContextVar("_HEBREW_AMBIGUOUS_HEADINGS", default=None)
+)
+_HEBREW_DECIDED_MODIFIER_WORDS = frozenset(
+    "נטו ברוטו נומינלי נומינלית נומינליים אלו אלה אותם אותן אותו אותה חדשים חדש "
+    "ישראל ירושלים יהודה יחד יחדיו יותר נוסף נוספת אחר אחרת אחד אחת או את אם אף "
+    "אך אל אפילו אילו איפוא אולי תוך תחת נגד".split()
+)
+_HEBREW_LEXICAL_SHIN_WORD_PATTERN = re.compile(_HEBREW_LEXICAL_SHIN_WORDS + "$")
+
+
+def _hebrew_word_is_undecided(token: str) -> bool:
+    """Whether no class of evidence tells ``token`` for a modifier or a verb."""
+    if token in _HEBREW_DECIDED_MODIFIER_WORDS:
+        return False
+    if token[0] in "בלמכהו" and len(token) >= 3:
+        return False
+    if token.endswith(("ים", "ות")):
+        return False
+    if token[0] == "\u05e9" and _HEBREW_LEXICAL_SHIN_WORD_PATTERN.match(token):
+        return False
+    return True
+
+
+def _hebrew_list_end_state(text: str, body_end: int) -> str:
+    """How the list ends inside its condition: closed, consequent or ambiguous.
 
     A comma, a clause separator or a list tail after the unit, at most
-    modifiers between, ends it there ("אחוזים מהכנסה נמוכה, תחול ההוראה");
-    the sentence ending with words between and no comma ("שקלים משולמים
-    כמענק.") or the consequent's verb, known by word ("שקלים ישולמו
-    כמענק", "שקלים יקבל העובד"), is the clause running on.
+    decided modifiers between, closes it ("אחוזים מההכנסה החייבת, תחול
+    ההוראה"); the consequent's verb, known by word ("שקלים ישולמו כמענק",
+    "שקלים יקבל העובד"), or the sentence ending with words between and no
+    comma ("שקלים משולמים כמענק.") is the clause running on; an undecided
+    word before the comma ("מהכנסה נמוכה,") leaves the list ambiguous.
     """
     position = body_end
     relative = False
+    ambiguous = False
     for _ in range(12):
         if _HEBREW_LIST_TAIL_WORD_PATTERN.match(text, position) is not None:
-            return True
+            return "ambiguous" if ambiguous else "closed"
         if _HEBREW_CLAUSE_SEPARATOR_PATTERN.match(text, position) is not None:
-            return True
+            return "ambiguous" if ambiguous else "closed"
         if _HEBREW_SENTENCE_END_PATTERN.match(text, position) is not None:
-            return position == body_end
+            if position == body_end:
+                return "closed"
+            return "ambiguous" if ambiguous else "consequent"
         if _hebrew_opens_relative_clause(text, position):
             relative = True
         elif not relative:
             word = _HEBREW_WORD_AFTER_PATTERN.match(text, position)
-            if word is not None and word.group("word") in _HEBREW_CONSEQUENT_VERBS:
-                return False
+            if word is not None:
+                if word.group("word") in _HEBREW_CONSEQUENT_VERBS:
+                    return "consequent"
+                if _hebrew_word_is_undecided(word.group(0).strip()):
+                    ambiguous = True
         modifier = _HEBREW_UNIT_MODIFIER_PATTERN.match(text, position)
         if modifier is None:
-            return False
+            return "ambiguous"
         position = modifier.end()
-    return False
+    return "ambiguous"
 
 
 _HEBREW_LIST_COLON_WORDS = (
@@ -5260,17 +5304,157 @@ def _hebrew_list_heading_end(text: str, start: int, rate: bool) -> int | None:
     if heading is None or not _hebrew_list_body_only(text, heading.end(), start):
         return None
     segment_start = text.rfind(",", clause_start, heading.start()) + 1
-    if _HEBREW_CONDITIONAL_CLAUSE_PATTERN.search(
-        text, max(clause_start, segment_start), heading.start()
-    ) is not None and not _hebrew_list_ends_within_clause(
-        text, _hebrew_list_body_end(text, start)
+    if (
+        _HEBREW_CONDITIONAL_CLAUSE_PATTERN.search(
+            text, max(clause_start, segment_start), heading.start()
+        )
+        is not None
     ):
-        return None
+        state = _hebrew_list_end_state(text, _hebrew_list_body_end(text, start))
+        if state == "consequent":
+            return None
+        if state == "ambiguous":
+            headings = _HEBREW_AMBIGUOUS_HEADINGS.get()
+            if headings is not None:
+                headings.append((heading.start(), heading.end(), start, rate))
+            if not _HEBREW_AMBIGUOUS_AS_HEADED.get():
+                return None
     return heading.end()
 
 
 def _hebrew_vav_pair_is_coordinated(text: str, start: int, rate: bool) -> bool:
     return _hebrew_list_heading_end(text, start, rate) is not None
+
+
+@dataclass(frozen=True)
+class AmbiguousReadingMember:
+    """One member of an ambiguous list: its text, the reading that grounds
+    and the shared-unit reading a reviewed assertion may select."""
+
+    span: tuple[int, int]
+    text: str
+    unscaled: float
+    scaled: float
+
+
+@dataclass(frozen=True)
+class AmbiguousReadingGroup:
+    """A list the source leaves ambiguous, with both candidate readings."""
+
+    label: str
+    heading: str
+    span: tuple[int, int]
+    text: str
+    members: tuple[AmbiguousReadingMember, ...]
+
+
+_HEBREW_PRINTED_MEMBER_PATTERN = re.compile("-?\\d[\\d,]*(?:\\.\\d+)?")
+
+
+def _hebrew_member_unscaled_value(cleaned: str, span: tuple[int, int]) -> float | None:
+    piece = cleaned[span[0] : span[1]].strip()
+    printed = _HEBREW_PRINTED_MEMBER_PATTERN.fullmatch(piece.replace("\u2212", "-"))
+    if printed is not None:
+        try:
+            return float(printed.group(0).replace(",", ""))
+        except ValueError:
+            return None
+    spelled = _hebrew_number_run_ending_at(
+        cleaned, span[1], _HebrewWordTokens(cleaned), True
+    )
+    return None if spelled is None else spelled[1]
+
+
+def hebrew_ambiguous_reading_groups(text: str) -> list[AmbiguousReadingGroup]:
+    """The lists a Hebrew source leaves ambiguous, with both readings.
+
+    A headed list inside a condition whose end no evidence decides grounds
+    unscaled; this reports, per such list, the members with the reading
+    that grounds and the shared-unit reading, so an encoder sees why the
+    latter is ungrounded and a reviewer sees what an assertion would select.
+    Spans and text are in the cleaned source the numeric passes read.
+    """
+    cleaned_tracked = _clean_source_text_for_numeric_extraction_tracked(text)
+    _schedule, cleaned = _iter_collapsed_schedule_row_occurrences(cleaned_tracked.text)
+    structural = _structural_numeric_component_spans(cleaned)
+
+    def run() -> dict[tuple[int, int], float]:
+        found: dict[tuple[int, int], float] = {}
+        for span, rate in _iter_hebrew_percent_range_lower_matches(cleaned, structural):
+            found.setdefault(span, rate)
+        for span, value, _is_rate in _iter_hebrew_shared_scale_range_matches(
+            cleaned, structural
+        ):
+            found.setdefault(span, value)
+        return found
+
+    base = run()
+    headings: list[tuple[int, int, int, bool]] = []
+    as_headed_token = _HEBREW_AMBIGUOUS_AS_HEADED.set(True)
+    headings_token = _HEBREW_AMBIGUOUS_HEADINGS.set(headings)
+    try:
+        widened = run()
+    finally:
+        _HEBREW_AMBIGUOUS_AS_HEADED.reset(as_headed_token)
+        _HEBREW_AMBIGUOUS_HEADINGS.reset(headings_token)
+    candidates = {span: value for span, value in widened.items() if span not in base}
+    if not candidates:
+        return []
+    anchors = sorted({(hs, he) for hs, he, _start, _rate in headings})
+    groups: list[AmbiguousReadingGroup] = []
+    for index, (heading_start, heading_end) in enumerate(anchors):
+        limit = anchors[index + 1][0] if index + 1 < len(anchors) else len(cleaned)
+        members: list[AmbiguousReadingMember] = []
+        for span in sorted(candidates):
+            if span[0] < heading_end or span[0] >= limit:
+                continue
+            unscaled = _hebrew_member_unscaled_value(cleaned, span)
+            if unscaled is None:
+                continue
+            members.append(
+                AmbiguousReadingMember(
+                    span, cleaned[span[0] : span[1]], unscaled, candidates[span]
+                )
+            )
+        if not members:
+            continue
+        group_end = max(member.span[1] for member in members)
+        unit_end = _hebrew_list_body_end(cleaned, group_end)
+        groups.append(
+            AmbiguousReadingGroup(
+                HEBREW_HEADED_LIST_IN_CONDITION,
+                cleaned[heading_start:heading_end],
+                (heading_start, unit_end),
+                cleaned[heading_start:unit_end],
+                tuple(members),
+            )
+        )
+    return groups
+
+
+def _ambiguous_reading_ungrounded_literal_hint(
+    source_text: str | None, value: float
+) -> str:
+    """Name the ambiguous list whose shared-unit reading ``value`` matches."""
+    if not source_text or re.search("[\u0590-\u05ff]", source_text) is None:
+        return ""
+    for group in hebrew_ambiguous_reading_groups(source_text):
+        if not any(
+            math.isclose(
+                value, member.scaled, rel_tol=0, abs_tol=NUMERIC_GROUNDING_ABS_TOLERANCE
+            )
+            for member in group.members
+        ):
+            continue
+        unscaled = ", ".join(f"{member.unscaled:g}" for member in group.members)
+        scaled = ", ".join(f"{member.scaled:g}" for member in group.members)
+        return (
+            f" Ambiguous reading ({group.label}): \u00ab{group.text}\u00bb may share "
+            f"its unit across the list; its members ground as {unscaled} here and "
+            f"would read {scaled} under the shared unit. The shared-unit reading "
+            "is not grounded until a reviewed reading assertion selects it."
+        )
+    return ""
 
 
 # A colon-terminated currency heading ("הסכומים בשקלים:") denominates the
@@ -14831,9 +15015,11 @@ def _ungrounded_from_values(
         ):
             continue
         display = raw if raw == f"{value:g}" else f"{raw} ({value:g})"
+        ambiguous_hint = _ambiguous_reading_ungrounded_literal_hint(source, value)
         issues.append(
             "Ungrounded generated numeric literal: "
             f"{display} does not appear as a substantive numeric value in the source text."
+            f"{ambiguous_hint}"
         )
     return issues
 
@@ -14991,10 +15177,11 @@ def find_ungrounded_numeric_issues(
             value,
             amendment_source_texts,
         )
+        ambiguous_hint = _ambiguous_reading_ungrounded_literal_hint(source, value)
         issues.append(
             "Ungrounded generated numeric literal: "
             f"{display} does not appear as a substantive numeric value in the source text."
-            f"{hint}{amendment_hint}"
+            f"{hint}{amendment_hint}{ambiguous_hint}"
         )
     return issues
 
@@ -15260,10 +15447,13 @@ def find_ungrounded_numeric_issues_scoped(
             value,
             amendment_source_texts,
         )
+        ambiguous_hint = _ambiguous_reading_ungrounded_literal_hint(
+            module_source, value
+        )
         issue = (
             "Ungrounded generated numeric literal: "
             f"{display} does not appear as a substantive numeric value in the source text."
-            f"{stated_conversion_hint}{amendment_hint}"
+            f"{stated_conversion_hint}{amendment_hint}{ambiguous_hint}"
         )
         if issue not in seen:
             seen.add(issue)

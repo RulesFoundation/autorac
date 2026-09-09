@@ -45,6 +45,7 @@ from axiom_encode.harness.proof_validator import (
     validate_rulespec_proofs,
 )
 from axiom_encode.harness.validator_pipeline import (
+    HEBREW_HEADED_LIST_IN_CONDITION,
     NumericOccurrence,
     OracleSubprocessResult,
     _corpus_citation_to_normalized_target,
@@ -136,6 +137,7 @@ from axiom_encode.harness.validator_pipeline import (
     find_upstream_placement_issues,
     find_versioned_derived_formula_issues,
     find_zero_branch_test_coverage_issues,
+    hebrew_ambiguous_reading_groups,
     numeric_value_is_grounded,
     repair_copied_cross_reference_summary,
     repair_nonnegative_amount_reductions,
@@ -19003,7 +19005,6 @@ def test_a_predicate_after_the_unit_is_the_consequent():
             {500.0, 2_000_000.0, 3_000_000.0},
         ),
         ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים מנוכים מהשכר.", {1.0, 2.0, 3_000_000.0}),
-        ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה חייבת, תחול ההוראה.", rates),
         ("אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה החייבת, תחול ההוראה.", rates),
         ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים לפחות, ישולם מענק.", amounts),
         ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים אשר נקבעו בצו, ישולם מענק.", amounts),
@@ -19111,7 +19112,6 @@ def test_the_conditions_comma_tells_a_modifier_from_a_predicate():
     amounts = {1_000_000.0, 2_000_000.0, 3_000_000.0}
     split = {500.0, 2_000_000.0, 3_000_000.0}
     for text, expected in (
-        ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה נמוכה, תחול ההוראה.", rates),
         ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים מסוימים, ישולם מענק.", amounts),
         ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים משולמים, ישולם מענק.", amounts),
         ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים חדשים לפחות.", amounts),
@@ -19189,13 +19189,11 @@ def test_a_verb_right_after_the_unit_is_the_consequent():
 
 def test_no_word_after_a_noun_is_read_as_a_verb():
     # Review round 112 on #1585: "נטו" and "ברוטו" after the income noun
-    # modify it; only the position right after the unit is read for verb
-    # shape.
+    # are decided modifiers.
     rates = {0.1, 0.2, 0.3}
     for text in (
         "אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה נטו, תחול ההוראה.",
         "אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה ברוטו, תחול ההוראה.",
-        "אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה נמוכה, תחול ההוראה.",
     ):
         assert _hebrew_recall(text) == rates, text
         assert extract_numbers_from_text(text) == rates, text
@@ -19243,7 +19241,6 @@ def test_a_verb_after_a_modifier_opens_the_consequent():
             "אם הסכומים הם 1, 2 ו־3 מיליון שקלים לעובד ישולמו כמענק, והיתרה תוחזר.",
             {1.0, 2.0, 3_000_000.0},
         ),
-        ("אם השיעורים הם 10, 20 ו־30 אחוזים ממס ישיר, תחול ההוראה.", rates),
         ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים לתושב ישראל, ישולם מענק.", amounts),
         ("אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה נטו, תחול ההוראה.", rates),
         ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים חדשים, ישולם מענק.", amounts),
@@ -19295,11 +19292,6 @@ def test_agreement_tells_an_adjective_from_the_consequents_verb():
             "אם הסכומים הם 1, 2 ו־3 מיליון שקלים לעובד ישולמו כמענק, והיתרה תוחזר.",
             {1.0, 2.0, 3_000_000.0},
         ),
-        ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה יומית, תחול ההוראה.", rates),
-        ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה יציבה, תחול ההוראה.", rates),
-        ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה ידועה, תחול ההוראה.", rates),
-        ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה תקינה, תחול ההוראה.", rates),
-        ("אם השיעורים הם 10, 20 ו־30 אחוזים ממס ישיר, תחול ההוראה.", rates),
         ("אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה נטו, תחול ההוראה.", rates),
         ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים לתושב ישראל, ישולם מענק.", amounts),
         ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים נוספים, ישולם מענק.", amounts),
@@ -19312,7 +19304,6 @@ def test_the_definite_subject_tells_the_consequents_verb():
     # Review round 115 on #1585: a singular consequent verb is followed by
     # its definite subject; an adjective or a construct complement is not,
     # and a lexical ש-word opens no relative clause.
-    rates = {0.1, 0.2, 0.3}
     amounts = {1_000_000.0, 2_000_000.0, 3_000_000.0}
     split = {500.0, 2_000_000.0, 3_000_000.0}
     for text, expected in (
@@ -19336,12 +19327,6 @@ def test_the_definite_subject_tells_the_consequents_verb():
             "אם התשלומים הם 500, 2 או 3 מיליון שקלים לעובד קבוע ישולמו כמענק, והיתרה תוחזר.",
             split,
         ),
-        ("אם השיעורים הם 10, 20 ו־30 אחוזים מדמי אבטלה, תחול ההוראה.", rates),
-        ("אם השיעורים הם 10, 20 ו־30 אחוזים מדמי אבטלה חלקיים, תחול ההוראה.", rates),
-        ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסת יחיד, תחול ההוראה.", rates),
-        ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסות ייצור, תחול ההוראה.", rates),
-        ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה יומית, תחול ההוראה.", rates),
-        ("אם השיעורים הם 10, 20 ו־30 אחוזים ממס ישיר, תחול ההוראה.", rates),
         ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים אשר נקבעו בצו, ישולם מענק.", amounts),
         ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים שנקבעו בצו, ישולם מענק.", amounts),
         ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים ששולמו לעובד, ישולם מענק.", amounts),
@@ -19362,14 +19347,6 @@ def test_the_consequents_verb_is_known_by_word():
     amounts = {1_000_000.0, 2_000_000.0, 3_000_000.0}
     split = {500.0, 2_000_000.0, 3_000_000.0}
     for text, expected in (
-        (
-            "אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסת יחיד החייב במס, תחול ההוראה.",
-            rates,
-        ),
-        (
-            "אם השיעורים הם 10, 20 ו־30 אחוזים מדמי אבטלה המשולמים לעובד, תחול ההוראה.",
-            rates,
-        ),
         (
             "אם התשלומים הם 500, 2 או 3 מיליון שקלים לעובד ישלם מעסיק, והיתרה תוחזר.",
             split,
@@ -19394,11 +19371,8 @@ def test_the_consequents_verb_is_known_by_word():
             "אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה שבגינה ישלם המעסיק מס, תחול ההוראה.",
             rates,
         ),
-        ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים מהכנסת אביו, ישולם מענק.", amounts),
         ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים מנכסיו, ישולם מענק.", amounts),
         ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים לילדיו, ישולם מענק.", amounts),
-        ("אם השיעורים הם 10, 20 ו־30 אחוזים מדמי אבטלה, תחול ההוראה.", rates),
-        ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה יומית, תחול ההוראה.", rates),
     ):
         assert _hebrew_recall(text) == expected, text
         assert extract_numbers_from_text(text) == expected, text
@@ -19431,14 +19405,7 @@ def test_the_consequents_verb_is_a_closed_lexicon():
             "אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה שממנו ינוכה המס, תחול ההוראה.",
             rates,
         ),
-        ("אם השיעורים הם 10, 20 ו־30 אחוזים מערך יבולו, תחול ההוראה.", rates),
-        ("אם השיעורים הם 10, 20 ו־30 אחוזים מערך ייצורו, תחול ההוראה.", rates),
-        ("אם השיעורים הם 10, 20 ו־30 אחוזים מערך יבולו של החקלאי, תחול ההוראה.", rates),
         ("אם הסכומים הם 1, 2 ו־3 מיליון שקלים לילדיו, ישולם מענק.", amounts),
-        (
-            "אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסת יחיד החייב במס, תחול ההוראה.",
-            rates,
-        ),
     ):
         assert _hebrew_recall(text) == expected, text
         assert extract_numbers_from_text(text) == expected, text
@@ -19452,9 +19419,6 @@ def test_a_construct_complement_is_a_noun_whatever_its_spelling():
     rates = {0.1, 0.2, 0.3}
     split = {500.0, 2_000_000.0, 3_000_000.0}
     for text, expected in (
-        ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסת תושב ישראל, תחול ההוראה.", rates),
-        ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסת תושב, תחול ההוראה.", rates),
-        ("אם השיעורים הם 10, 20 ו־30 אחוזים מדמי תעלה, תחול ההוראה.", rates),
         (
             "אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה שפקיד השומה יקבע, תחול ההוראה.",
             rates,
@@ -19513,7 +19477,6 @@ def test_a_feminine_noun_hides_no_verb_and_a_relative_subject_shows_its_own():
             "אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה שפקיד השומה יקבע, תחול ההוראה.",
             rates,
         ),
-        ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסת תושב ישראל, תחול ההוראה.", rates),
         ("אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה נוספת, תחול ההוראה.", rates),
     ):
         assert _hebrew_recall(text) == expected, text
@@ -19614,6 +19577,211 @@ def test_the_doubled_vav_and_the_lexical_shin_nouns():
     ):
         assert _hebrew_recall(text) == expected, text
         assert extract_numbers_from_text(text) == expected, text
+
+
+def test_ambiguous_conditional_lists_ground_unscaled_and_report_candidates():
+    # Reading-assertions plan v2, step A: a headed list inside a condition
+    # whose end no evidence decides grounds unscaled and reports the
+    # shared-unit reading as candidates a reviewed assertion may select; the
+    # two readings together are exactly the reading these cases once pinned.
+    for text, unscaled, candidates, when_asserted in (
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה חייבת, תחול ההוראה.",
+            {0.3, 10, 20},
+            {0.1, 0.2},
+            {0.1, 0.2, 0.3},
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה נמוכה, תחול ההוראה.",
+            {0.3, 10, 20},
+            {0.1, 0.2},
+            {0.1, 0.2, 0.3},
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים ממס ישיר, תחול ההוראה.",
+            {0.3, 10, 20},
+            {0.1, 0.2},
+            {0.1, 0.2, 0.3},
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה יומית, תחול ההוראה.",
+            {0.3, 10, 20},
+            {0.1, 0.2},
+            {0.1, 0.2, 0.3},
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה יציבה, תחול ההוראה.",
+            {0.3, 10, 20},
+            {0.1, 0.2},
+            {0.1, 0.2, 0.3},
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה ידועה, תחול ההוראה.",
+            {0.3, 10, 20},
+            {0.1, 0.2},
+            {0.1, 0.2, 0.3},
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה תקינה, תחול ההוראה.",
+            {0.3, 10, 20},
+            {0.1, 0.2},
+            {0.1, 0.2, 0.3},
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים ממס ישיר, תחול ההוראה.",
+            {0.3, 10, 20},
+            {0.1, 0.2},
+            {0.1, 0.2, 0.3},
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מדמי אבטלה, תחול ההוראה.",
+            {0.3, 10, 20},
+            {0.1, 0.2},
+            {0.1, 0.2, 0.3},
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מדמי אבטלה חלקיים, תחול ההוראה.",
+            {0.3, 10, 20},
+            {0.1, 0.2},
+            {0.1, 0.2, 0.3},
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסת יחיד, תחול ההוראה.",
+            {0.3, 10, 20},
+            {0.1, 0.2},
+            {0.1, 0.2, 0.3},
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסות ייצור, תחול ההוראה.",
+            {0.3, 10, 20},
+            {0.1, 0.2},
+            {0.1, 0.2, 0.3},
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה יומית, תחול ההוראה.",
+            {0.3, 10, 20},
+            {0.1, 0.2},
+            {0.1, 0.2, 0.3},
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים ממס ישיר, תחול ההוראה.",
+            {0.3, 10, 20},
+            {0.1, 0.2},
+            {0.1, 0.2, 0.3},
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסת יחיד החייב במס, תחול ההוראה.",
+            {0.3, 10, 20},
+            {0.1, 0.2},
+            {0.1, 0.2, 0.3},
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מדמי אבטלה המשולמים לעובד, תחול ההוראה.",
+            {0.3, 10, 20},
+            {0.1, 0.2},
+            {0.1, 0.2, 0.3},
+        ),
+        (
+            "אם הסכומים הם 1, 2 ו־3 מיליון שקלים מהכנסת אביו, ישולם מענק.",
+            {1, 2, 3_000_000.0},
+            {1_000_000.0, 2_000_000.0},
+            {1_000_000.0, 2_000_000.0, 3_000_000.0},
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מדמי אבטלה, תחול ההוראה.",
+            {0.3, 10, 20},
+            {0.1, 0.2},
+            {0.1, 0.2, 0.3},
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה יומית, תחול ההוראה.",
+            {0.3, 10, 20},
+            {0.1, 0.2},
+            {0.1, 0.2, 0.3},
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מערך יבולו, תחול ההוראה.",
+            {0.3, 10, 20},
+            {0.1, 0.2},
+            {0.1, 0.2, 0.3},
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מערך ייצורו, תחול ההוראה.",
+            {0.3, 10, 20},
+            {0.1, 0.2},
+            {0.1, 0.2, 0.3},
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מערך יבולו של החקלאי, תחול ההוראה.",
+            {0.3, 10, 20},
+            {0.1, 0.2},
+            {0.1, 0.2, 0.3},
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסת יחיד החייב במס, תחול ההוראה.",
+            {0.3, 10, 20},
+            {0.1, 0.2},
+            {0.1, 0.2, 0.3},
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסת תושב ישראל, תחול ההוראה.",
+            {0.3, 10, 20},
+            {0.1, 0.2},
+            {0.1, 0.2, 0.3},
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסת תושב, תחול ההוראה.",
+            {0.3, 10, 20},
+            {0.1, 0.2},
+            {0.1, 0.2, 0.3},
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מדמי תעלה, תחול ההוראה.",
+            {0.3, 10, 20},
+            {0.1, 0.2},
+            {0.1, 0.2, 0.3},
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסת תושב ישראל, תחול ההוראה.",
+            {0.3, 10, 20},
+            {0.1, 0.2},
+            {0.1, 0.2, 0.3},
+        ),
+    ):
+        assert _hebrew_recall(text) == unscaled, text
+        assert extract_numbers_from_text(text) == unscaled, text
+        groups = hebrew_ambiguous_reading_groups(text)
+        assert groups and all(
+            group.label == HEBREW_HEADED_LIST_IN_CONDITION for group in groups
+        ), text
+        members = [member for group in groups for member in group.members]
+        assert {member.scaled for member in members} == candidates, text
+        assert (unscaled - {member.unscaled for member in members}) | candidates == (
+            when_asserted
+        ), text
+
+
+def test_an_ambiguous_list_names_its_candidates_in_the_ungrounded_issue():
+    # Reading-assertions plan v2, step A: an encoding that took the
+    # shared-unit reading of an ambiguous list is still ungrounded, and the
+    # issue names the list and both readings; the grounded reading and an
+    # unrelated literal raise no such hint.
+    source = "אם השיעורים הם 10, 20 ו־30 אחוזים מהכנסה נמוכה, תחול ההוראה."
+    content = _danish_numeric_rulespec("0.1", citation_path="il/statute/example/1")
+    issues = find_ungrounded_numeric_issues(content, source_text=source)
+    assert len(issues) == 1, issues
+    assert issues[0].startswith("Ungrounded generated numeric literal: 0.1 ")
+    assert "Ambiguous reading (hebrew-headed-list-in-condition)" in issues[0]
+    assert (
+        "ground as 10, 20 here and would read 0.1, 0.2 under the shared unit"
+        in (issues[0])
+    )
+    assert "reviewed reading assertion" in issues[0]
+    grounded = _danish_numeric_rulespec("10", citation_path="il/statute/example/1")
+    assert find_ungrounded_numeric_issues(grounded, source_text=source) == []
+    unrelated = _danish_numeric_rulespec("0.07", citation_path="il/statute/example/1")
+    (issue,) = find_ungrounded_numeric_issues(unrelated, source_text=source)
+    assert "Ambiguous reading" not in issue
 
 
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
