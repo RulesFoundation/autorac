@@ -17895,9 +17895,7 @@ def _formula_execution_matches_source_branch(
     candidate_values = [
         float(value)
         for name, value in binding_environment.items()
-        if name in leaf_names
-        and isinstance(value, (int, float))
-        and not isinstance(value, bool)
+        if name in leaf_names and _rulespec_runtime_decimal(value) is not None
     ]
     candidate_values.extend(
         float(occurrence.value)
@@ -27888,6 +27886,14 @@ def _typed_numeric_expected_cases(
     return result
 
 
+def _imported_parameter_formula_is_numeric_literal(formula: Any) -> bool:
+    if not isinstance(formula, (str, int, float)) or isinstance(formula, bool):
+        return False
+    with contextlib.suppress(SyntaxError, ValueError, TypeError):
+        return _rulespec_runtime_decimal(ast.literal_eval(str(formula))) is not None
+    return False
+
+
 def _resolved_imported_parameter_rules(
     payload: dict[str, Any],
     *,
@@ -27903,6 +27909,10 @@ def _resolved_imported_parameter_rules(
         if isinstance(item, str) and "#" in item:
             name = item.rsplit("#", 1)[1].strip()
             counts[name] = counts.get(name, 0) + 1
+    if any(
+        not isinstance(payload.get(field, []), list) for field in ("rules", "inputs")
+    ):
+        return {}
     local_names = {
         str(item.get("name") or "").strip()
         for field in ("rules", "inputs")
@@ -27928,8 +27938,22 @@ def _resolved_imported_parameter_rules(
                 for rule in rules
                 if isinstance(rule, dict) and rule.get("name") == name
             ]
-            if len(matches) == 1 and matches[0].get("kind") == "parameter":
-                candidates.setdefault(name, []).append(matches[0])
+            if len(matches) != 1 or matches[0].get("kind") != "parameter":
+                continue
+            versions = matches[0].get("versions")
+            if not isinstance(versions, list) or not versions:
+                continue
+            # Provider-local names must never resolve in the consumer namespace.
+            # This bounded path admits literal numeric parameters only.
+            if not all(
+                isinstance(version, dict)
+                and _imported_parameter_formula_is_numeric_literal(
+                    version.get("formula")
+                )
+                for version in versions
+            ):
+                continue
+            candidates.setdefault(name, []).append(matches[0])
     return {name: rules[0] for name, rules in candidates.items() if len(rules) == 1}
 
 

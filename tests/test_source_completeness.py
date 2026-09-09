@@ -43369,3 +43369,74 @@ def test_numeric_expected_normalization_preserves_text_and_invalid_values(dtype,
         )
         == cases
     )
+
+
+def test_imported_parameter_does_not_resolve_provider_names_in_consumer_scope():
+    consumer = {
+        "imports": ["de:provider#wage"],
+        "rules": [
+            {"name": "base", "kind": "parameter", "versions": [{"formula": "13"}]}
+        ],
+    }
+    provider = {
+        "format": "rulespec/v1",
+        "rules": [
+            {"name": "base", "kind": "parameter", "versions": [{"formula": "12.82"}]},
+            {"name": "wage", "kind": "parameter", "versions": [{"formula": "base"}]},
+        ],
+    }
+    assert (
+        completeness_module._resolved_imported_parameter_rules(
+            consumer, imported_symbol_contents=[("wage", yaml.safe_dump(provider))]
+        )
+        == {}
+    )
+
+
+@pytest.mark.parametrize(
+    "formula", ["1 / 2", "base", "float(base)", "True", "'12.82'", "[12.82]", None]
+)
+def test_imported_parameter_requires_literal_numeric_formula(formula):
+    assert not completeness_module._imported_parameter_formula_is_numeric_literal(
+        formula
+    )
+
+
+def test_pipeline_completeness_resolves_threshold_parameter_artifact(tmp_path):
+    import json
+
+    fixture = json.loads(
+        (
+            Path(__file__).parent / "fixtures/de_sgbiv8_rejected_threshold.json"
+        ).read_text()
+    )
+    root = tmp_path / "rulespec-de"
+    provider = root / "de/regulations/milov4/1.yaml"
+    provider.parent.mkdir(parents=True)
+    provider.write_text(fixture["imported_parameter"])
+    candidate = root / "de/statutes/sgb-4/fassung-2024-03-01/8/absatz-1a/inhalt.yaml"
+    candidate.parent.mkdir(parents=True)
+    candidate.write_text(fixture["candidate"])
+    case = yaml.safe_load(fixture["tests"])[1]
+    key = next(key for key in case["output"] if key.endswith("_unrounded"))
+    case["output"][key] = "555.53333333333333333333333333"
+    pipeline = ValidatorPipeline(
+        policy_repo_path=root / "de",
+        axiom_rules_path=tmp_path / "axiom-rules-engine",
+        local_corpus_release=None,
+        enable_oracles=False,
+        require_complete_source_unit=True,
+    )
+    assert not pipeline._complete_source_unit_issues(
+        fixture["candidate"],
+        validation_source_texts={fixture["citation_path"]: fixture["source_body"]},
+        test_cases=[case],
+        rules_file=candidate,
+    )
+    provider.unlink()
+    assert pipeline._complete_source_unit_issues(
+        fixture["candidate"],
+        validation_source_texts={fixture["citation_path"]: fixture["source_body"]},
+        test_cases=[case],
+        rules_file=candidate,
+    )
