@@ -2270,7 +2270,12 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     )
     repair_preflight = repair_step["run"].split('api_version="', 1)[0]
     assert "split-atomic-source-input" in repair_preflight
-    assert ".venv/bin/python" not in repair_preflight
+    normalized_preflight = " ".join(repair_preflight.replace("\\\n", " ").split())
+    assert (
+        "axiom-encode/.venv/bin/python "
+        "axiom-encode/scripts/prepare_signed_backfill.py "
+        'citation-rulespec-path "$DEPENDENT_CITATION"'
+    ) in normalized_preflight
     identity_step = next(
         step
         for step in steps
@@ -2333,6 +2338,9 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert repair_step["env"]["RULESPEC_CHECKOUT"] == ("rulespec-${{ inputs.country }}")
     assert "REPAIR_TESTS_ONLY" not in repair_step["env"]
     repair_command = repair_step["run"]
+    install_step = next(step for step in steps if step.get("name") == "Install encoder")
+    assert steps.index(install_step) < steps.index(repair_step)
+    assert "axiom-encode/.venv/bin/python" in repair_command
     assert '.conclusion == "failure"' in repair_command
     assert '.event == "workflow_dispatch"' in repair_command
     assert '.head_branch == "main"' in repair_command
@@ -2379,6 +2387,7 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
         if step.get("name") == "Provision protected signing supervisor"
     )
     assert provision_step["id"] == "provision_signing_supervisor"
+    assert steps.index(repair_step) < steps.index(provision_step)
     assert "sudo chown 0:0 /opt" in provision_step["run"]
     assert "sudo chmod go-w /opt" in provision_step["run"]
     assert "--git /usr/bin/git" in provision_step["run"]
@@ -3022,7 +3031,7 @@ def test_targeted_reencode_extracts_false_complete_source_scope() -> None:
         ),
     ],
 )
-def test_repair_preflight_splits_atomic_source_before_encoder_install(
+def test_repair_preflight_splits_atomic_source(
     tmp_path: Path,
     atomic_source_json: str,
     expected_tests_only: str,
@@ -3035,6 +3044,7 @@ def test_repair_preflight_splits_atomic_source_before_encoder_install(
         for step in workflow["jobs"]["encode"]["steps"]
         if step.get("name") == "Resolve trusted prior-run repair candidate"
     ).split('api_version="', 1)[0]
+    command = command.replace("axiom-encode/.venv/bin/python", sys.executable)
     command = command.replace(
         "axiom-encode/scripts/prepare_signed_backfill.py",
         str(ROOT / "scripts/prepare_signed_backfill.py"),
@@ -3083,6 +3093,7 @@ def test_repair_preflight_accepts_one_bound_dependent_lane(tmp_path: Path) -> No
         for step in workflow["jobs"]["encode"]["steps"]
         if step.get("name") == "Resolve trusted prior-run repair candidate"
     ).split('api_version="', 1)[0]
+    command = command.replace("axiom-encode/.venv/bin/python", sys.executable)
     command = command.replace(
         "axiom-encode/scripts/prepare_signed_backfill.py",
         str(ROOT / "scripts/prepare_signed_backfill.py"),
