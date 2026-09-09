@@ -21255,6 +21255,36 @@ def test_a_nouns_inflections_are_a_grammar_not_six_letters():
         ), (text, issue)
 
 
+def test_a_feminine_stem_inflects_and_a_context_noun_keeps_its_ordinal():
+    # Review round 160 on #1585: a feminine amount noun is known in its
+    # plural and possessed plural, the tax noun in every possessive, and
+    # after the noun an ordinal agrees with a bare definite noun begins
+    # the next phrase, only an explicit partitive making a fraction there.
+    for text, expected, grounded, ungrounded in (
+        ("ניכוי חמישית ממשכורותיו", {0.2}, "0.2", "5"),
+        ("ניכוי חמישית ממסם של בני הזוג", {0.2}, "0.2", "5"),
+        ("ניכוי חמישית מעלויות הייצור", {0.2}, "0.2", "5"),
+        ("ניכוי חמישית מהריביות", {0.2}, "0.2", "5"),
+        ("בדרגה חמישית השכר גבוה יותר", {5.0}, "5", "0.2"),
+        ("בדרגה חמישית מהשכר", {0.2}, "0.2", "5"),
+        ("ניכוי חמישית השכר", {0.2}, "0.2", "5"),
+        ("לידה שלישית ההכנסה נמוכה", {3.0}, "3", "0.2"),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

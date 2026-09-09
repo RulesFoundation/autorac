@@ -2647,18 +2647,31 @@ _HEBREW_FINAL_TO_MEDIAL = {
 
 
 def _hebrew_stems_with_medial_finals(stems: str) -> str:
-    """A stem alternation whose final letters also match their medial forms.
+    """A stem alternation over the bases a noun's inflections build on.
 
     A suffix moves a stem's final letter to its medial form: "תשלום" is
     "תשלומים" in the plural and "תשלומיו" with a possessive, "סכום" is
-    "סכומים". Each stem ending in a final letter matches either form.
+    "סכומים"; each stem ending in a final letter matches either form. A
+    feminine stem in ת drops it before the plural: "משכורת" is
+    "משכורות" and "משכורותיו", "ריבית" is "ריביות", "עלות" is "עלויות".
     """
-    return "|".join(
-        stem[:-1] + "[" + stem[-1] + _HEBREW_FINAL_TO_MEDIAL[stem[-1]] + "]"
-        if stem and stem[-1] in _HEBREW_FINAL_TO_MEDIAL
-        else stem
-        for stem in stems.split("|")
-    )
+    bases: list[str] = []
+    for stem in stems.split("|"):
+        if not stem:
+            continue
+        if stem.endswith("\u05d9\u05ea"):  # ־ית: ריבית, ריביות
+            bases.append(stem[:-2] + "\u05d9(?:\u05ea|\u05d5\u05ea)")
+        elif stem.endswith("\u05d5\u05ea"):  # ־ות: עלות, עלויות
+            bases.append(stem[:-2] + "\u05d5(?:\u05ea|\u05d9\u05d5\u05ea)")
+        elif stem.endswith("\u05ea"):  # ־ת: משכורת, משכורות
+            bases.append(stem[:-1] + "(?:\u05ea|\u05d5\u05ea)")
+        elif stem[-1] in _HEBREW_FINAL_TO_MEDIAL:
+            bases.append(
+                stem[:-1] + "[" + stem[-1] + _HEBREW_FINAL_TO_MEDIAL[stem[-1]] + "]"
+            )
+        else:
+            bases.append(stem)
+    return "|".join(bases)
 
 
 # The inflections a noun takes: a feminine or plural ending, then a
@@ -2688,7 +2701,7 @@ _HEBREW_MONEY_NOUN = (
     + _HEBREW_MONEY_NOUN_STEMS_INFLECTED
     + ")"
     + _HEBREW_NOUN_NUMBER_SUFFIX
-    + "|(?<!\u05d4)מס(?:\u05d9?(?:\u05d5|\u05d4|\u05d4\u05dd|\u05d4\u05df|\u05e0\u05d5|\u05db\u05dd|\u05db\u05df|\u05da)|\u05d9\u05d9)"
+    + "|(?<!\u05d4)מס(?:\u05d9?(?:\u05d5|\u05d4|\u05d4\u05dd|\u05d4\u05df|\u05e0\u05d5|\u05db\u05dd|\u05db\u05df|\u05da|\u05dd|\u05df)|\u05d9\u05d9)"
     "|מס(?:ים|י)?)"
 )
 # The base is an amount noun in any of its inflections and no other word:
@@ -3186,11 +3199,25 @@ def _iter_hebrew_fraction_word_matches(
                 # third birth that qualifies and "דרגה חמישית המקנה" a fifth
                 # grade that confers. A bare מ- or ה-word after the fraction
                 # word counts only when a copula or a quantity word precedes.
+                # After a noun the ordinal agrees with ("בדרגה חמישית") a bare
+                # definite amount noun begins the next phrase ("השכר גבוה
+                # יותר"), not the fraction's operand; only an explicit
+                # partitive ("מהשכר", "משכרו") makes the word a fraction there.
+                base = _HEBREW_FRACTION_BASE_AMOUNT_PATTERN.match(
+                    text, match.end("fraction")
+                )
                 names_an_amount = (
-                    _HEBREW_FRACTION_BASE_AMOUNT_PATTERN.match(
-                        text, match.end("fraction")
+                    base is not None
+                    and not (
+                        base.group(0).lstrip().startswith("\u05d4")
+                        and _search_before(
+                            _HEBREW_ORDINAL_CONTEXT_NOUN_PATTERN,
+                            text,
+                            match.start("fraction"),
+                            24,
+                        )
+                        is not None
                     )
-                    is not None
                     # "עשירית שקל" is a tenth of a shekel, "עשירית שנייה" a
                     # tenth of a second: a unit after the word says fraction.
                     or _hebrew_fraction_unit_after(
