@@ -34,6 +34,7 @@ COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}")
 RUNNER_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 JURISDICTION_PATTERN = re.compile(r"[a-z]{2,3}(?:-[a-z0-9]+)*")
 VERSION_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+_-]{0,127}")
+REPAIR_LANES = frozenset({"target", "dependent"})
 MAX_RETAINED_ISSUES = 4096
 CONTRACT = runpy.run_path(
     Path(__file__).parents[1] / "src/axiom_encode/repair_candidate_contract.py"
@@ -403,15 +404,23 @@ def _source_repair_candidates(
 def extract_candidate(args: argparse.Namespace) -> dict[str, object]:
     destination = Path(args.destination).resolve()
     destination.mkdir(parents=True, exist_ok=False)
+    requested_repair_lane = getattr(args, "repair_lane", "target")
+    if requested_repair_lane not in REPAIR_LANES:
+        raise ValueError("repair lane must be target or dependent")
+    transaction_citation = getattr(args, "transaction_citation", None) or args.citation
+    transaction_rulespec_path = (
+        getattr(args, "transaction_rulespec_path", None) or args.replace_rulespec_path
+    )
     expected_fields = {
-        "citation": args.citation,
+        "citation": transaction_citation,
         "country": args.country,
         "encoder_commit": args.encoder_commit,
         "corpus_ref": args.corpus_ref,
+        "replace_rulespec_path": transaction_rulespec_path,
         "rules_engine_ref": args.rules_engine_ref,
-        "replace_rulespec_path": args.replace_rulespec_path,
         "workflow_run_id": args.workflow_run_id,
     }
+    _expected_module_path(args.country, transaction_rulespec_path)
     expected_module = _expected_module_path(
         args.country,
         args.replace_rulespec_path,
@@ -443,7 +452,10 @@ def extract_candidate(args: argparse.Namespace) -> dict[str, object]:
             and not args.allow_rulespec_base_advance
         ):
             raise ValueError("repair artifact metadata mismatch: rulespec_ref")
-        for field, expected in SINGLE_TARGET_MODE_FIELDS.items():
+        expected_mode_fields = dict(SINGLE_TARGET_MODE_FIELDS)
+        if requested_repair_lane == "dependent":
+            expected_mode_fields["dependent_citation"] = args.citation
+        for field, expected in expected_mode_fields.items():
             if field not in metadata or metadata[field] != expected:
                 raise ValueError(
                     f"repair artifact is not a compatible single-target run: {field}"
@@ -452,9 +464,43 @@ def extract_candidate(args: argparse.Namespace) -> dict[str, object]:
             expected_atomic_source = SPLIT_ATOMIC_SOURCE_INPUT(args.atomic_source_json)
         except (TypeError, ValueError, json.JSONDecodeError) as exc:
             raise ValueError("expected atomic source input is invalid") from exc
-        repair_lane, expected_generated_lanes = _repair_lane_for_atomic_source(
-            metadata, args.atomic_source_json
-        )
+        if requested_repair_lane == "target":
+            repair_lane, expected_generated_lanes = _repair_lane_for_atomic_source(
+                metadata, args.atomic_source_json
+            )
+        else:
+            try:
+                expected_atomic_source = SPLIT_ATOMIC_SOURCE_INPUT(
+                    args.atomic_source_json
+                )
+                prior_atomic_source = SPLIT_ATOMIC_SOURCE_INPUT(
+                    metadata["atomic_source_input"]
+                )
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise ValueError(
+                    "dependent repair artifact atomic source input is invalid"
+                ) from exc
+            empty_atomic_source = {
+                "canonical_refresh_bundle": [],
+                "primary_required_test_cases": [],
+                "require_complete_source_unit": True,
+                "source_bundle": [],
+            }
+            if (
+                expected_atomic_source != empty_atomic_source
+                or prior_atomic_source != empty_atomic_source
+            ):
+                raise ValueError(
+                    "dependent repair replay requires empty atomic source inputs"
+                )
+            prior_primary_path = metadata.get("replace_rulespec_path")
+            if not isinstance(prior_primary_path, str):
+                raise ValueError(
+                    "dependent repair artifact primary RuleSpec path is invalid"
+                )
+            _expected_module_path(args.country, prior_primary_path)
+            repair_lane = "dependent"
+            expected_generated_lanes = ["dependent", "target"]
         if metadata.get("workflow_run_attempt") != 1:
             raise ValueError("repair artifact must come from workflow attempt 1")
         if metadata.get("failed_steps") != ["encode_apply"]:
@@ -553,7 +599,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--allow-rulespec-base-advance", action="store_true")
     parser.add_argument("--atomic-source-json", required=True)
     parser.add_argument("--replace-rulespec-path", required=True)
+    parser.add_argument("--repair-lane", choices=sorted(REPAIR_LANES), default="target")
     parser.add_argument("--source-rulespec-paths-json")
+    parser.add_argument("--transaction-citation")
+    parser.add_argument("--transaction-rulespec-path")
     parser.add_argument("--workflow-run-id", required=True)
     return parser
 
