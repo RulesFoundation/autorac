@@ -2103,7 +2103,7 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert concurrency_suffix("manual-user", "", "queue-generation", "run-3") == "run-3"
     assert concurrency_suffix("github-actions[bot]", "snap", "", "run-4") == "run-4"
     inputs = trigger["workflow_dispatch"]["inputs"]
-    assert len(inputs) == 27
+    assert len(inputs) == 25
     assert "allowlisted reviewed SHA" in inputs["rulespec_ref"]["description"]
     assert "artifact-only" in inputs["rulespec_ref"]["description"]
     assert inputs["country"] == {
@@ -2116,26 +2116,14 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert inputs["open_pr"]["default"] is False
     assert inputs["repair_run_id"] == {
         "description": (
-            "Prior failed protected run whose final candidate is replayed as "
-            "untrusted repair context"
+            "Prior failed protected run whose final target or direct-dependent "
+            "candidate is replayed as untrusted repair context"
         ),
         "required": False,
         "type": "string",
     }
-    assert inputs["repair_run_lane"] == {
-        "description": "Candidate lane to replay from the prior failed run",
-        "required": False,
-        "default": "target",
-        "type": "choice",
-        "options": ["target", "dependent"],
-    }
-    assert inputs["repair_rulespec_path"] == {
-        "description": (
-            "Exact RuleSpec path of a non-target lane selected for repair replay"
-        ),
-        "required": False,
-        "type": "string",
-    }
+    assert "repair_run_lane" not in inputs
+    assert "repair_rulespec_path" not in inputs
     assert "repair_candidate_tests_only" not in inputs
     assert inputs["pr_base_branch"]["type"] == "string"
     assert inputs["pr_base_branch"]["default"] == "main"
@@ -2340,10 +2328,8 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert repair_step["if"] == "${{ inputs.repair_run_id != '' }}"
     assert repair_step["env"]["GH_TOKEN"] == "${{ github.token }}"
     assert repair_step["env"]["REPAIR_RUN_ID"] == "${{ inputs.repair_run_id }}"
-    assert repair_step["env"]["REPAIR_RUN_LANE"] == ("${{ inputs.repair_run_lane }}")
-    assert repair_step["env"]["REPAIR_RULESPEC_PATH"] == (
-        "${{ inputs.repair_rulespec_path }}"
-    )
+    assert "REPAIR_RUN_LANE" not in repair_step["env"]
+    assert "REPAIR_RULESPEC_PATH" not in repair_step["env"]
     assert repair_step["env"]["RULESPEC_CHECKOUT"] == ("rulespec-${{ inputs.country }}")
     assert "REPAIR_TESTS_ONLY" not in repair_step["env"]
     repair_command = repair_step["run"]
@@ -2364,7 +2350,10 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert "targeted-reencode-failure-${REPAIR_RUN_ID}-1" in repair_command
     assert "extract_repair_candidate.py" in repair_command
     assert '--atomic-source-json "$ATOMIC_SOURCE_JSON"' in repair_command
-    assert '--repair-lane "$REPAIR_RUN_LANE"' in repair_command
+    assert 'repair_run_lane="target"' in repair_command
+    assert 'repair_run_lane="dependent"' in repair_command
+    assert 'citation-rulespec-path "$DEPENDENT_CITATION"' in repair_command
+    assert '--repair-lane "$repair_run_lane"' in repair_command
     for immutable_argument in (
         "--citation",
         "--country",
@@ -2386,6 +2375,8 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert '--rulespec-path "$repair_rulespec_path"' in repair_command
     assert 'echo "runner=$(jq -r' in repair_command
     assert 'echo "source_rulespec_ref=$repair_source_rulespec_ref"' in repair_command
+    assert 'echo "lane=$repair_run_lane"' in repair_command
+    assert 'echo "rulespec_path=$repair_rulespec_path"' in repair_command
 
     provision_step = next(
         step
@@ -2546,9 +2537,11 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert apply_step["env"]["REPAIR_TESTS_ONLY"] == (
         "${{ steps.repair_candidate.outputs.tests_only }}"
     )
-    assert apply_step["env"]["REPAIR_RUN_LANE"] == "${{ inputs.repair_run_lane }}"
+    assert apply_step["env"]["REPAIR_RUN_LANE"] == (
+        "${{ steps.repair_candidate.outputs.lane }}"
+    )
     assert apply_step["env"]["REPAIR_RULESPEC_PATH"] == (
-        "${{ inputs.repair_rulespec_path }}"
+        "${{ steps.repair_candidate.outputs.rulespec_path }}"
     )
     assert ': "${REPAIR_TESTS_ONLY:=false}"' in command
     assert "REPAIR_TESTS_ONLY=false" not in command
@@ -3068,7 +3061,6 @@ def test_repair_preflight_splits_atomic_source_before_encoder_install(
             "LEGACY_RETAINED_SUCCESSOR_RULESPEC_PATHS_JSON": "[]",
             "QUEUE_ID": "",
             "REPAIR_RUN_ID": "100",
-            "REPAIR_RULESPEC_PATH": "",
             "REPLACE_LEGACY_RULESPEC_PATH": "",
             "REPLACE_RULESPEC_PATH": "us-ri/statutes/44-30-2.6.yaml",
             "SECOND_DEPENDENT_CITATION": "",
@@ -3113,8 +3105,6 @@ def test_repair_preflight_accepts_one_bound_dependent_lane(tmp_path: Path) -> No
             "LEGACY_RETAINED_SUCCESSOR_RULESPEC_PATHS_JSON": "[]",
             "QUEUE_ID": "",
             "REPAIR_RUN_ID": "100",
-            "REPAIR_RUN_LANE": "dependent",
-            "REPAIR_RULESPEC_PATH": "us/statutes/42/1437c-1.yaml",
             "REPLACE_LEGACY_RULESPEC_PATH": "",
             "REPLACE_RULESPEC_PATH": "us/guidance/primary/source.yaml",
             "SECOND_DEPENDENT_CITATION": "",
