@@ -27081,6 +27081,7 @@ class ValidatorPipeline:
             numeric_value_is_grounded=numeric_value_is_grounded,
             artifact_numeric_values=artifact_numeric_values,
             artifact_numeric_bindings=artifact_numeric_bindings,
+            imported_symbol_contents=imported_symbol_contents,
             authenticated_same_act_aliases=(
                 _authenticated_same_act_aliases_from_metadata(self.source_metadata)
             ),

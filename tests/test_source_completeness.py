@@ -43190,3 +43190,182 @@ def test_sgbiv8_captured_threshold_paragraph_has_no_numeric_selector():
         )
         is None
     )
+
+
+@pytest.mark.parametrize("separator", [" ", "  ", "\t"])
+def test_numbered_german_formula_sentences_preserve_source_slices(separator):
+    source = (
+        f"(1a) 1{separator}Die Grundlage beträgt zehn Wochenstunden. "
+        f"2{separator}Sie wird mit 130 vervielfacht und durch drei geteilt. "
+        f"3{separator}Die Behörde veröffentlicht das Ergebnis."
+    )
+    clauses = list(completeness_module._source_clause_spans(source, branches=()))
+    assert len(clauses) == 4
+    assert clauses[2][2] == "Sie wird mit 130 vervielfacht und durch drei geteilt."
+    for start, end, text in clauses:
+        assert text == source[start:end]
+    extractor = functools.partial(
+        extract_typed_numeric_occurrences_from_text, profile="de-DE"
+    )
+    assert [item.value for item in extractor(clauses[2][2])] == [130, 3]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "(1) 1 Euro wird eingesetzt. 2 Euro werden abgezogen.",
+        "(1) 1 Die Grundlage gilt. 3 Sie wird mit 130 multipliziert.",
+        "(1) 2 Sie wird mit 130 multipliziert.",
+        "(1) 1 Die Grundlage gilt. 2 die Personen erhalten 130 Euro.",
+    ],
+)
+def test_unauthenticated_sentence_numbers_remain_in_clause_text(source):
+    clauses = list(completeness_module._source_clause_spans(source, branches=()))
+    joined = " ".join(text for _start, _end, text in clauses)
+    assert [item.value for item in DE_NUMERIC_OCCURRENCE_EXTRACTOR(joined)] == [
+        item.value for item in DE_NUMERIC_OCCURRENCE_EXTRACTOR(source)
+    ]
+
+
+def test_authenticated_first_sentence_label_is_excluded_from_formula_clause():
+    source = (
+        "(1) 1 Die Leistung wird mit 130 vervielfacht. 2 Sie wird monatlich gezahlt."
+    )
+    clauses = list(completeness_module._source_clause_spans(source, branches=()))
+    formula = next(text for _start, _end, text in clauses if "vervielfacht" in text)
+    assert formula == "Die Leistung wird mit 130 vervielfacht."
+    assert [item.value for item in DE_NUMERIC_OCCURRENCE_EXTRACTOR(formula)] == [130]
+    for start, end, text in clauses:
+        assert text == source[start:end]
+
+
+def _captured_sgbiv8_threshold_analysis(mutation=None):
+    import copy
+    import json
+
+    fixture = json.loads(
+        (
+            Path(__file__).parent / "fixtures/de_sgbiv8_rejected_threshold.json"
+        ).read_text()
+    )
+    assert (
+        hashlib.sha256(fixture["source_body"].encode()).hexdigest()
+        == fixture["provenance"]["corpus_body_sha256"]
+    )
+    content = fixture["candidate"]
+    cases = [copy.deepcopy(yaml.safe_load(fixture["tests"])[1])]
+    key = next(key for key in cases[0]["output"] if key.endswith("_unrounded"))
+    cases[0]["output"][key] = "555.53333333333333333333333333"
+    imports = [("hourly_minimum_wage", fixture["imported_parameter"])]
+    if mutation == "truncated":
+        cases[0]["output"][key] = 555.5333333333333
+    elif mutation == "wrong_period":
+        cases[0]["period"] = "2024-04"
+    elif mutation == "outside_period":
+        cases[0]["period"] = "2026-01"
+    elif mutation == "wrong_rounded":
+        cases[0]["output"][key.removesuffix("_unrounded")] = 555
+    elif mutation == "missing_intermediate":
+        del cases[0]["output"][key]
+    elif mutation == "unresolved_import":
+        imports = []
+    elif mutation == "ambiguous_import":
+        imports *= 2
+    elif mutation == "wrong_export":
+        imports = [("other_wage", fixture["imported_parameter"])]
+    elif mutation == "derived_import":
+        imports = [
+            (
+                "hourly_minimum_wage",
+                fixture["imported_parameter"].replace(
+                    "kind: parameter", "kind: derived"
+                ),
+            )
+        ]
+    elif mutation == "input_import":
+        imports = [
+            (
+                "hourly_minimum_wage",
+                "format: rulespec/v1\ninputs:\n- name: hourly_minimum_wage\n  dtype: Money\n",
+            )
+        ]
+    elif mutation == "shadowed_import":
+        doc = yaml.safe_load(content)
+        doc["inputs"] = [{"name": "hourly_minimum_wage", "dtype": "Money"}]
+        content = yaml.safe_dump(doc)
+    bindings = collect_artifact_numeric_bindings(
+        content,
+        extract_named_scalars=extract_named_scalar_occurrences,
+        imported_symbol_contents=imports,
+    )
+    return analyze_complete_source_unit(
+        content,
+        fixture["source_body"],
+        corpus_citation_path=fixture["citation_path"],
+        test_cases=cases,
+        extract_numeric_occurrences=DE_NUMERIC_OCCURRENCE_EXTRACTOR,
+        extract_numeric_grounding_occurrences=functools.partial(
+            extract_typed_numeric_occurrences_from_text, profile="de-DE"
+        ),
+        extract_named_scalars=extract_named_scalar_occurrences,
+        numeric_value_is_grounded=numeric_value_is_grounded,
+        artifact_numeric_bindings=bindings,
+        imported_symbol_contents=imports,
+    )
+
+
+def test_captured_threshold_uses_exact_resolved_temporal_parameter_for_rounding():
+    assert not _captured_sgbiv8_threshold_analysis().issues
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "truncated",
+        "wrong_period",
+        "outside_period",
+        "wrong_rounded",
+        "missing_intermediate",
+        "unresolved_import",
+        "ambiguous_import",
+        "wrong_export",
+        "derived_import",
+        "input_import",
+        "shadowed_import",
+    ],
+)
+def test_captured_threshold_rejects_uncorroborated_rounding_witness(mutation):
+    result = _captured_sgbiv8_threshold_analysis(mutation)
+    assert _has_issue(result, "complete-source-unit:tests")
+
+
+@pytest.mark.parametrize("dtype", ["Money", "Decimal", "Rate", "Count", "Integer"])
+def test_numeric_string_expectations_are_typed_without_losing_precision(dtype):
+    value = "555.53333333333333333333333333"
+    original = [{"input": {}, "output": {"de:test#value": value}}]
+    normalized = completeness_module._typed_numeric_expected_cases(
+        original, {"value": {"dtype": dtype}}
+    )
+    assert normalized[0]["output"]["de:test#value"] == Decimal(value)
+    assert original[0]["output"]["de:test#value"] == value
+
+
+@pytest.mark.parametrize(
+    "dtype,value",
+    [
+        ("String", "12.82"),
+        ("Bool", "1"),
+        ("Date", "2025-01-01"),
+        ("Money", "NaN"),
+        ("Money", "1e2"),
+        ("Money", "79228162514264337593543950336"),
+    ],
+)
+def test_numeric_expected_normalization_preserves_text_and_invalid_values(dtype, value):
+    cases = [{"output": {"de:test#value": value}}]
+    assert (
+        completeness_module._typed_numeric_expected_cases(
+            cases, {"value": {"dtype": dtype}}
+        )
+        == cases
+    )
