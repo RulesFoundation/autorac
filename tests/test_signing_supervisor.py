@@ -3043,6 +3043,9 @@ def test_repair_preflight_splits_atomic_source_before_encoder_install(
         "axiom-encode/scripts/prepare_signed_backfill.py",
         str(ROOT / "scripts/prepare_signed_backfill.py"),
     )
+    command = command.replace(
+        "PYTHONPATH=axiom-encode/src", f"PYTHONPATH={ROOT / 'src'}"
+    )
 
     completed = subprocess.run(
         ["bash", "-c", command],
@@ -3086,6 +3089,9 @@ def test_repair_preflight_accepts_one_bound_dependent_lane(tmp_path: Path) -> No
     command = command.replace(
         "axiom-encode/scripts/prepare_signed_backfill.py",
         str(ROOT / "scripts/prepare_signed_backfill.py"),
+    )
+    command = command.replace(
+        "PYTHONPATH=axiom-encode/src", f"PYTHONPATH={ROOT / 'src'}"
     )
 
     completed = subprocess.run(

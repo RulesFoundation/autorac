@@ -458,7 +458,7 @@ jobs:
             repair_run_lane="dependent"
             repair_citation="$DEPENDENT_CITATION"
             repair_rulespec_path="$(
-              python \
+              PYTHONPATH=axiom-encode/src python \
                 axiom-encode/scripts/prepare_signed_backfill.py \
                 citation-rulespec-path "$DEPENDENT_CITATION"
             )"
