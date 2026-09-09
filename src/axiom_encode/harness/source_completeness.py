@@ -217,6 +217,7 @@ class _TemporalFormulaValue:
 
     versions: tuple[tuple[str, str, Any], ...]
     version_formula_excerpts: tuple[tuple[str, ...], ...] = ()
+    imported_parameter: bool = False
 
 
 @dataclass(frozen=True)
@@ -4424,6 +4425,7 @@ def analyze_complete_source_unit(
     artifact_numeric_values: Sequence[float] | None = None,
     artifact_numeric_bindings: Sequence[tuple[str, float]] | None = None,
     authenticated_same_act_aliases: Sequence[str] = (),
+    imported_symbol_contents: Sequence[tuple[str, str]] = (),
 ) -> CompleteSourceUnitAnalysis:
     """Analyze one artifact against its authoritative, resolver-owned body."""
 
@@ -4454,6 +4456,7 @@ def analyze_complete_source_unit(
                 artifact_numeric_values=artifact_numeric_values,
                 artifact_numeric_bindings=artifact_numeric_bindings,
                 authenticated_same_act_aliases=authenticated_same_act_aliases,
+                imported_symbol_contents=imported_symbol_contents,
             )
 
     return CompleteSourceUnitAnalysis((), (), 0, 0, 0)
@@ -4473,6 +4476,7 @@ def _analyze_rulespec_payload(
     artifact_numeric_values: Sequence[float] | None,
     artifact_numeric_bindings: Sequence[tuple[str, float]] | None,
     authenticated_same_act_aliases: Sequence[str],
+    imported_symbol_contents: Sequence[tuple[str, str]],
 ) -> CompleteSourceUnitAnalysis:
     branches = recognize_source_structure(source_text)
     (
@@ -4491,6 +4495,7 @@ def _analyze_rulespec_payload(
         for rule in payload.get("rules", [])
         if isinstance(rule, dict) and str(rule.get("name") or "").strip()
     }
+    test_cases = _typed_numeric_expected_cases(test_cases, named_rules)
     deferred_paths, imprecise_deferrals = _deferred_coverage(
         payload,
         corpus_citation_path=corpus_citation_path,
@@ -4705,7 +4710,22 @@ def _analyze_rulespec_payload(
         )
 
     if principal_rules:
+        imported_parameters = _resolved_imported_parameter_rules(
+            payload, imported_symbol_contents=imported_symbol_contents
+        )
         formula_environment = _constant_rule_environment(payload)
+        for name, value in _constant_rule_environment(
+            {"rules": list(imported_parameters.values())}
+        ).items():
+            formula_environment[name] = (
+                _TemporalFormulaValue(
+                    value.versions,
+                    value.version_formula_excerpts,
+                    imported_parameter=True,
+                )
+                if isinstance(value, _TemporalFormulaValue)
+                else value
+            )
         if artifact_numeric_bindings is not None:
             formula_environment = _merge_unambiguous_numeric_bindings(
                 formula_environment,
@@ -4715,9 +4735,12 @@ def _analyze_rulespec_payload(
             _companion_test_issues(
                 principal_rules,
                 parameter_rules={
-                    name: rule
-                    for name, rule in named_rules.items()
-                    if str(rule.get("kind") or "").strip().lower() == "parameter"
+                    **imported_parameters,
+                    **{
+                        name: rule
+                        for name, rule in named_rules.items()
+                        if str(rule.get("kind") or "").strip().lower() == "parameter"
+                    },
                 },
                 principal_rule_paths=principal_rule_paths,
                 principal_formula_clause_rules=principal_formula_clause_rules,
@@ -12028,8 +12051,8 @@ def _strip_terminal_session_law_history(source_text: str) -> str:
     return source_text
 
 
-def _mask_spaced_german_sentence_labels(text: str) -> str:
-    """Mask a consecutive sentence-label chain, anchored to a paragraph start.
+def _spaced_german_sentence_label_spans(text: str) -> tuple[tuple[int, int], ...]:
+    """Identify a consecutive sentence-label chain, anchored to a paragraph start.
 
     A German article/pronoun after each label distinguishes these labels from
     quantities such as ``1 Euro`` or ``2 Personen``. A lone or broken sequence
@@ -12057,7 +12080,11 @@ def _mask_spaced_german_sentence_labels(text: str) -> str:
         ):
             continue
         spans.extend(match.span("label") for match in matches)
-    for start, end in reversed(spans):
+    return tuple(spans)
+
+
+def _mask_spaced_german_sentence_labels(text: str) -> str:
+    for start, end in reversed(_spaced_german_sentence_label_spans(text)):
         text = text[:start] + " " * (end - start) + text[end:]
     return text
 
@@ -15819,6 +15846,9 @@ def _source_clause_spans(
 ) -> Iterable[tuple[int, int, str]]:
     """Yield offset-preserving clauses split at punctuation and structure."""
 
+    # Mask only authenticated structural labels; preserve offsets and return
+    # original source slices so proof atoms remain text-bound.
+    boundary_text = _mask_spaced_german_sentence_labels(source_text)
     boundary = re.compile(
         r";|:(?=\s*(?i:provided)\s*,?\s*(?i:that)\b)|"
         r"[.!?](?=(?:[ \t]+[A-ZÄÖÜ(]|\s*$))",
@@ -15827,7 +15857,7 @@ def _source_clause_spans(
     inline_operand_list_spans = _formula_inline_operand_list_spans(source_text)
     boundary_matches = (
         match
-        for match in boundary.finditer(source_text)
+        for match in boundary.finditer(boundary_text)
         if not _source_clause_boundary_splits_state_code_citation(source_text, match)
         and not any(
             start < match.end() < end for start, end in inline_operand_list_spans
@@ -15844,6 +15874,11 @@ def _source_clause_spans(
     split_points = {
         0,
         len(source_text),
+        *(
+            point
+            for span in _spaced_german_sentence_label_spans(source_text)
+            for point in span
+        ),
         *(match.end() for match in boundary_matches),
         *(
             match.start()
@@ -15859,14 +15894,14 @@ def _source_clause_spans(
         *(branch.end for branch in branches),
     }
     for start, end in zip(sorted(split_points), sorted(split_points)[1:]):
-        raw = source_text[start:end]
+        raw = boundary_text[start:end]
         left_trimmed = len(raw) - len(raw.lstrip())
         right_trimmed = len(raw.rstrip())
         if right_trimmed > left_trimmed:
             yield (
                 start + left_trimmed,
                 start + right_trimmed,
-                raw[left_trimmed:right_trimmed],
+                source_text[start + left_trimmed : start + right_trimmed],
             )
 
 
@@ -16220,7 +16255,8 @@ def _formula_leaf_temporal_bindings(
     varying_direct_factor_names = {
         name
         for name in direct_factor_names
-        if _temporal_formula_values_vary(formula_environment[name])
+        if not formula_environment[name].imported_parameter
+        and _temporal_formula_values_vary(formula_environment[name])
     }
     multiplicative_temporal_names = {
         name
@@ -17859,9 +17895,7 @@ def _formula_execution_matches_source_branch(
     candidate_values = [
         float(value)
         for name, value in binding_environment.items()
-        if name in leaf_names
-        and isinstance(value, (int, float))
-        and not isinstance(value, bool)
+        if name in leaf_names and _rulespec_runtime_decimal(value) is not None
     ]
     candidate_values.extend(
         float(occurrence.value)
@@ -26857,8 +26891,10 @@ def _closed_rounding_arithmetic_environment(
             }
             if not names <= environment.keys():
                 continue
-            value = _known_numeric_formula_value(expression.body, environment)
-            if value is None:
+            value = _evaluate_formula_selector(
+                ast.unparse(expression.body), environment
+            )
+            if _rulespec_runtime_decimal(value) is None:
                 continue
             if name in inputs and not _formula_runtime_values_equal(
                 value, inputs[name]
@@ -27817,6 +27853,110 @@ def _selected_rule_formula_version_index(
     latest = max(effective_from for _index, effective_from in candidates)
     selected = [index for index, start in candidates if start == latest]
     return selected[0] if len(selected) == 1 else None
+
+
+def _typed_numeric_expected_cases(
+    test_cases: Sequence[object] | None,
+    named_rules: Mapping[str, dict[str, Any]],
+) -> Sequence[object] | None:
+    """Mirror numeric-string assertions only for declared numeric output types."""
+
+    if test_cases is None:
+        return None
+    result: list[object] = []
+    for case in test_cases:
+        if not isinstance(case, dict) or not isinstance(case.get("output"), dict):
+            result.append(case)
+            continue
+        outputs = dict(case["output"])
+        for key, value in outputs.items():
+            rule = named_rules.get(str(key).rsplit("#", 1)[-1])
+            if (
+                rule is None
+                or rule.get("dtype")
+                not in {"Money", "Decimal", "Rate", "Count", "Integer"}
+                or not isinstance(value, str)
+                or re.fullmatch(r"-?(?:\d+(?:\.\d*)?|\.\d+)", value.strip()) is None
+            ):
+                continue
+            numeric = _rulespec_runtime_decimal(Decimal(value.strip()))
+            if numeric is not None:
+                outputs[key] = numeric
+        result.append({**case, "output": outputs})
+    return result
+
+
+def _imported_parameter_formula_is_numeric_literal(formula: Any) -> bool:
+    # YAML floats may have lost their original scalar precision before admission.
+    if not isinstance(formula, (str, int)) or isinstance(formula, bool):
+        return False
+    with contextlib.suppress(SyntaxError, ValueError, TypeError, InvalidOperation):
+        parsed = _rulespec_runtime_decimal(ast.literal_eval(str(formula)))
+        return parsed is not None and parsed == Decimal(str(formula).strip())
+    return False
+
+
+def _resolved_imported_parameter_rules(
+    payload: dict[str, Any],
+    *,
+    imported_symbol_contents: Sequence[tuple[str, str]],
+) -> dict[str, dict[str, Any]]:
+    """Use only unambiguous directly resolved parameter exports, never case values."""
+
+    imports = payload.get("imports")
+    if not isinstance(imports, list):
+        return {}
+    counts: dict[str, int] = {}
+    for item in imports:
+        if isinstance(item, str) and "#" in item:
+            name = item.rsplit("#", 1)[1].strip()
+            counts[name] = counts.get(name, 0) + 1
+    if any(
+        not isinstance(payload.get(field, []), list) for field in ("rules", "inputs")
+    ):
+        return {}
+    local_names = {
+        str(item.get("name") or "").strip()
+        for field in ("rules", "inputs")
+        for item in payload.get(field, [])
+        if isinstance(item, dict)
+    }
+    candidates: dict[str, list[dict[str, Any]]] = {}
+    for name, content in imported_symbol_contents:
+        if counts.get(name) != 1 or name in local_names:
+            continue
+        with contextlib.suppress(yaml.YAMLError, TypeError, ValueError):
+            imported = yaml.safe_load(content)
+            if (
+                not isinstance(imported, dict)
+                or imported.get("format") != "rulespec/v1"
+            ):
+                continue
+            rules = imported.get("rules")
+            if not isinstance(rules, list):
+                continue
+            matches = [
+                rule
+                for rule in rules
+                if isinstance(rule, dict) and rule.get("name") == name
+            ]
+            if len(matches) != 1 or matches[0].get("kind") != "parameter":
+                continue
+            versions = matches[0].get("versions")
+            if not isinstance(versions, list) or not versions:
+                continue
+            # Provider-local names must never resolve in the consumer namespace.
+            # This bounded path admits literal numeric parameters only.
+            if not all(
+                isinstance(version, dict)
+                and _imported_parameter_formula_is_numeric_literal(
+                    version.get("formula")
+                )
+                for version in versions
+            ):
+                continue
+            candidates.setdefault(name, []).append(matches[0])
+    return {name: rules[0] for name, rules in candidates.items() if len(rules) == 1}
 
 
 def _constant_rule_environment(payload: dict[str, Any]) -> dict[str, Any]:
