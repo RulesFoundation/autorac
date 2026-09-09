@@ -20586,6 +20586,64 @@ def test_the_spelled_zero_is_a_numeral():
         assert issue.startswith("Ungrounded generated numeric literal: 10 "), issue
 
 
+def test_a_shared_unit_reaches_every_member_of_a_long_list():
+    # Review round 144 on #1585: the backward walks that carry a percent
+    # noun or a printed scale across a list run to the list's grammatical
+    # boundary, not a fixed number of steps, so a list of any length shares
+    # its unit to the first member; eighteen, nineteen and forty members
+    # read alike, and grounding follows.
+    for count in (18, 19, 40, 120):
+        members = [str(10 + index) for index in range(count)]
+        body = ", ".join(members[:-1]) + " ו־" + members[-1]
+        rates = f"השיעורים הם {body} אחוזים"
+        expected_rates = {float(10 + index) / 100 for index in range(count)}
+        assert _hebrew_recall(rates) == expected_rates, count
+        assert extract_numbers_from_text(rates) == expected_rates, count
+        amounts = f"הסכומים הם {body} מיליון שקלים"
+        expected_amounts = {float(10 + index) * 1_000_000.0 for index in range(count)}
+        assert _hebrew_recall(amounts) == expected_amounts, count
+        assert extract_numbers_from_text(amounts) == expected_amounts, count
+        for text, grounded in ((rates, "0.1"), (amounts, "10000000")):
+            content = _danish_numeric_rulespec(
+                grounded, citation_path="il/statute/example/1"
+            )
+            assert find_ungrounded_numeric_issues(content, source_text=text) == [], (
+                count,
+                grounded,
+            )
+            content = _danish_numeric_rulespec(
+                "10", citation_path="il/statute/example/1"
+            )
+            (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+            assert issue.startswith("Ungrounded generated numeric literal: 10 "), (
+                count,
+                issue,
+            )
+
+
+def test_a_currency_heading_governs_to_the_end_of_its_paragraph():
+    # Review round 144 on #1585, the same limit in another place: a
+    # colon-terminated currency heading denominated the clauses within 240
+    # characters after it. It governs to the end of its paragraph, however
+    # far, across line wraps; a blank line, with or without spaces on it,
+    # ends its reach.
+    clause = "הקנס יהיה 50 או 2 אחוזים מהמחזור, לפי הגבוה."
+    prose = "הוראה נוספת לעניין זה, " * 20
+    assert len(prose) > 400
+    for text in (
+        "הסכומים בשקלים: " + clause,
+        "הסכומים בשקלים: " + prose + clause,
+        "הסכומים בשקלים:\n" + prose + "\n" + clause,
+    ):
+        assert _hebrew_recall(text) == {50.0, 0.02}, text[:40]
+    for text in (
+        "הסכומים בשקלים:\n\n" + clause,
+        "הסכומים בשקלים:\n  \n" + clause,
+        clause,
+    ):
+        assert _hebrew_recall(text) == {0.5, 0.02}, text[:40]
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

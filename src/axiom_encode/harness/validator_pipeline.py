@@ -4149,8 +4149,11 @@ def _iter_hebrew_shared_scale_range_matches(
         # Earlier alternatives share the unit too: "1 או 2 או 3 מיליון
         # שקלים". The walk back stops at a reference, a label noun, a
         # complete amount, a denominated amount and a bare start.
+        # The walk runs to the list's grammatical boundary, however many
+        # members the list has; only a step that fails to move it earlier
+        # ends it.
         cursor = lower_span[0]
-        for _ in range(16):
+        while True:
             earlier_join = _search_before(
                 _HEBREW_RANGE_WALK_JOIN_PATTERN, text, cursor, 12
             )
@@ -4224,6 +4227,8 @@ def _iter_hebrew_shared_scale_range_matches(
                     is_rate,
                 )
             )
+            if earlier_span[0] >= cursor:
+                break
             cursor = earlier_span[0]
     return matches
 
@@ -5600,7 +5605,7 @@ def _hebrew_list_heading_end(text: str, start: int, rate: bool) -> int | None:
     """
     clause_start = start
     depth = 0
-    while clause_start > 0 and start - clause_start < 160:
+    while clause_start > 0:
         character = text[clause_start - 1]
         if character == ")":
             depth += 1
@@ -5853,10 +5858,53 @@ _HEBREW_CURRENCY_HEADING_PATTERN = re.compile(
 )
 
 
+def _hebrew_paragraph_start(text: str, start: int) -> int:
+    """Where the paragraph holding ``start`` begins.
+
+    A blank line, a form feed or a Unicode line or paragraph separator ends
+    a paragraph; the walk back crosses single line wraps. The cost is the
+    paragraph's own length, never the text's.
+    """
+    position = start
+    while position > 0:
+        newline = max(
+            text.rfind("\n", 0, position),
+            text.rfind("\u2028", 0, position),
+            text.rfind("\u2029", 0, position),
+            text.rfind("\x0b", 0, position),
+            text.rfind("\x0c", 0, position),
+            text.rfind("\x85", 0, position),
+        )
+        if newline < 0:
+            return 0
+        if text[newline] != "\n":
+            return newline + 1
+        # A newline whose line, before or after it, holds nothing but
+        # horizontal space is a blank line.
+        line_start = text.rfind("\n", 0, newline) + 1
+        line_end = text.find("\n", newline + 1)
+        if line_end < 0:
+            line_end = len(text)
+        if not text[line_start:newline].strip() or (
+            not text[newline + 1 : line_end].strip() and line_end < start
+        ):
+            return newline + 1
+        position = newline
+    return 0
+
+
 def _hebrew_currency_heading_before(text: str, start: int) -> bool:
-    window_start = max(0, start - 240)
+    """Whether a colon-terminated currency heading governs the clause at ``start``.
+
+    The heading denominates the clauses after it to the end of its
+    paragraph, however long: a blank line ends its reach, a distance does
+    not.
+    """
     return (
-        _HEBREW_CURRENCY_HEADING_PATTERN.search(text, window_start, start) is not None
+        _HEBREW_CURRENCY_HEADING_PATTERN.search(
+            text, _hebrew_paragraph_start(text, start), start
+        )
+        is not None
     )
 
 
@@ -6176,8 +6224,11 @@ def _iter_hebrew_percent_range_lower_matches(
         matches.append((lower_span, lower_value / 100))
         # Earlier alternatives share the noun too: "1 או 2 או 3 אחוזים", "1, 2
         # או 3 אחוזים". Walk back over free joins and commas.
+        # The walk runs to the list's grammatical boundary, however many
+        # members the list has; only a step that fails to move it earlier
+        # ends it.
         cursor = lower_span[0]
-        for _ in range(16):
+        while True:
             earlier_join = _search_before(
                 _HEBREW_RANGE_WALK_JOIN_PATTERN, text, cursor, 12
             )
@@ -6256,6 +6307,8 @@ def _iter_hebrew_percent_range_lower_matches(
                 # The heading bounds the list: an item before it is no item.
                 break
             matches.append((earlier_span, earlier_value / 100))
+            if earlier_span[0] >= cursor:
+                break
             cursor = earlier_span[0]
     return matches
 
