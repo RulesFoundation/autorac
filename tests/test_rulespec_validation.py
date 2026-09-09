@@ -21453,6 +21453,33 @@ def test_a_reference_yields_only_to_a_fraction_actually_read():
         assert _hebrew_recall(text) == {100.0}, text
 
 
+def test_a_verb_governs_across_a_phrase_and_a_statute_has_a_construct_form():
+    # Review round 166 on #1585: the last context word in the clause
+    # governs a fraction word across a prepositional phrase and its
+    # attributives only, and a schedule's statute is named in its
+    # construct form too.
+    for text, expected, grounded, ungrounded in (
+        ("המוסד קיבל פנייה חמישית מן הציבור", {5.0}, "5", "0.2"),
+        ("הוועדה קבעה שבדרגה חמישית השכר גבוה יותר", {5.0}, "5", "0.2"),
+        ("המעסיק שילם עבור בדיקה חמישית", {5.0}, "5", "0.2"),
+        ("המעסיק שילם לעובדת החדשה חמישית השכר", {0.2}, "0.2", "5"),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+    assert _hebrew_recall("לפי תוספת חמישית של פקודת מס הכנסה ישולם 100") == {100.0}
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

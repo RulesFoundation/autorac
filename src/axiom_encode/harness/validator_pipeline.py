@@ -3182,12 +3182,37 @@ _HEBREW_CLAUSE_BOUNDARY_CHARACTERS = frozenset(",;:.()[]\"'\u05f3\u05f4-\u2013\u
 
 
 def _hebrew_fraction_context_in_clause(text: str, start: int) -> bool:
-    """Whether a word that says a fraction follows stands anywhere earlier in the clause."""
+    """Whether a word that says a fraction follows governs the word at ``start``.
+
+    The last such word in the clause governs across a prepositional phrase
+    and its attributives only -- a recipient ("שילם לעובדת החדשה חמישית
+    השכר"); a bare noun ("קיבל פנייה חמישית", a fifth request) or a
+    relative marker ("קבעה שבדרגה חמישית") between them takes the fraction
+    word for its own.
+    """
     clause_start = _hebrew_clause_start_before(text, start)
-    return (
-        _HEBREW_FRACTION_CONTEXT_IN_CLAUSE_PATTERN.search(text, clause_start, start)
-        is not None
-    )
+    last = None
+    for match in _HEBREW_FRACTION_CONTEXT_IN_CLAUSE_PATTERN.finditer(
+        text, clause_start, start
+    ):
+        last = match
+    if last is None:
+        return False
+    for token_match in _NON_SPACE_TOKEN_PATTERN.finditer(text, last.end(), start):
+        token = token_match.group(0).strip(",;:()")
+        if not token:
+            continue
+        bare = token[1:].lstrip("\u05be-") if token.startswith("\u05d5") else token
+        if bare in _HEBREW_RATE_PREPOSITIONS or bare in _HEBREW_RATE_NEUTRAL_WORDS:
+            continue
+        if bare[
+            :1
+        ] in "\u05d1\u05dc\u05de\u05db" and not _hebrew_word_is_an_amount_noun(bare):
+            continue
+        if _hebrew_word_is_definite(bare) and not _hebrew_word_governs_an_amount(bare):
+            continue
+        return False
+    return True
 
 
 def _hebrew_fraction_context_before(text: str, start: int) -> bool:
@@ -14555,8 +14580,17 @@ def _temporal_numeric_component_spans(
     return tuple(sorted(spans))
 
 
+# The words that name a statute, absolute and construct: what a schedule
+# or a section is "of" or "to".
+_HEBREW_STATUTE_NAME_WORDS = (
+    "(?:"
+    + "חוק|חוקי|חוקת|פקודה|פקודת|תקנות|תקנה|צו|צווי|הוראה|הוראות|כללים|כללי|תכנית|תכניות|החלטה|החלטות|הסכם|הסכמי|הסכמים"
+    + ")"
+)
 _HEBREW_FRACTION_IN_REFERENCE_AFTER_PATTERN = re.compile(
-    "\\s+(?:ל[\u05be-]?(?:חוק|פקודה|תקנות|צו)|של\\s+(?:ה[\u05be-]?)?(?:חוק|פקודה|תקנות|צו))(?![\u0590-\u05ff])"
+    "\\s+(?:ל[\u05be-]?|(?:של|מן|מתוך)\\s+(?:ה[\u05be-]?)?|מ[\u05be-]?(?:ה[\u05be-]?)?)"
+    + _HEBREW_STATUTE_NAME_WORDS
+    + "(?![\u0590-\u05ff])"
 )
 
 
