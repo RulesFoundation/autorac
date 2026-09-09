@@ -2661,10 +2661,35 @@ def _hebrew_stems_with_medial_finals(stems: str) -> str:
     )
 
 
+# The inflections a noun takes: a feminine or plural ending, then a
+# possessive suffix -- "הכנסה", "הכנסות", "הכנסתו", "קצבאות", "תשלומיו",
+# "ערכו". A possessive never follows the article ("הערכנו" is a verb, we
+# assessed, not "the our value"), so the possessed form is read only where
+# no article precedes the stem. "מס" takes its own forms alone: "מסים",
+# "מסי", "מסו", "מסיו"; "המסומנת" and "המספיקה" name no tax.
+_HEBREW_NOUN_NUMBER_SUFFIX = (
+    "(?:\u05d4|\u05ea|\u05d0?\u05d5\u05ea|\u05d9?\u05d9\u05dd|\u05d9)?"
+)
+_HEBREW_NOUN_POSSESSIVE_SUFFIX = (
+    "(?:\u05d9\u05d5|\u05d9\u05d4\u05dd|\u05d9\u05d4\u05df|\u05d9\u05d4|\u05d9\u05e0\u05d5"
+    "|\u05d9\u05db\u05dd|\u05d9\u05db\u05df|\u05d9\u05da|\u05d9\u05d9|\u05e0\u05d5"
+    "|\u05db\u05dd|\u05db\u05df|\u05d9|\u05da|\u05d5|\u05d4|\u05dd|\u05df)"
+)
+_HEBREW_MONEY_NOUN_STEMS_INFLECTED = _hebrew_stems_with_medial_finals(
+    _HEBREW_AMOUNT_NOUN_STEMS.replace("|מס|", "|")
+)
 _HEBREW_MONEY_NOUN = (
-    "(?:(?:"
-    + _hebrew_stems_with_medial_finals(_HEBREW_AMOUNT_NOUN_STEMS.replace("|מס|", "|"))
-    + ")[\u0590-\u05ff]{0,6}|מס(?:ים|י)?)"
+    "(?:(?<!\u05d4)(?:"
+    + _HEBREW_MONEY_NOUN_STEMS_INFLECTED
+    + ")"
+    + _HEBREW_NOUN_NUMBER_SUFFIX
+    + _HEBREW_NOUN_POSSESSIVE_SUFFIX
+    + "|(?:"
+    + _HEBREW_MONEY_NOUN_STEMS_INFLECTED
+    + ")"
+    + _HEBREW_NOUN_NUMBER_SUFFIX
+    + "|(?<!\u05d4)מס(?:\u05d9?(?:\u05d5|\u05d4|\u05d4\u05dd|\u05d4\u05df|\u05e0\u05d5|\u05db\u05dd|\u05db\u05df|\u05da)|\u05d9\u05d9)"
+    "|מס(?:ים|י)?)"
 )
 # The base is an amount noun in any of its inflections and no other word:
 # "מס" takes only its plural and construct ("מסים", "מסי"), so "המסומנת"

@@ -21228,6 +21228,33 @@ def test_a_fractions_base_is_an_amount_noun_and_no_other_word():
         ), (text, issue)
 
 
+def test_a_nouns_inflections_are_a_grammar_not_six_letters():
+    # Review round 159 on #1585: an amount noun takes a number ending and
+    # then a possessive, the possessive never after the article, so the
+    # tax's possessives are taxes and a verb that begins with a stem's
+    # letters under the article is no noun.
+    for text, expected, grounded, ungrounded in (
+        ("ניכוי חמישית ממסו של הנישום", {0.2}, "0.2", "5"),
+        ("ניכוי חמישית ממסיו של העובד", {0.2}, "0.2", "5"),
+        ("ניכוי חמישית מהכנסתו", {0.2}, "0.2", "5"),
+        ("ניכוי חמישית מקצבאות הזקנה", {0.2}, "0.2", "5"),
+        ("בבדיקה חמישית הערכנו מחדש את הזכאות", {5.0}, "5", "0.2"),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
