@@ -2626,7 +2626,11 @@ _HEBREW_PAYING_VERBS = frozenset(
     "מחזיר מחזירה החזיר החזירה החזירו יוחזר תוחזר הוחזר הוחזרה ישיב תשיב משיב משיבה "
     "יפריש תפריש מפריש מפרישה הפריש הפרישה הפרישו יפקיד תפקיד מפקיד מפקידה יקצה תקצה "
     "מקצה הקצה הקצתה הקצו יוקצה תוקצה הוקצה הוקצתה יזוכה תזוכה יזכה תזכה זיכה זיכתה "
-    "לשלם לתת ליתן להעביר לנכות להפחית לקזז להחזיר להשיב להפריש להפקיד להקצות לזכות".split()
+    "לשלם לתת ליתן להעביר לנכות להפחית לקזז להחזיר להשיב להפריש להפקיד להקצות לזכות"
+    " ניתנה ניתנו נותנת הפקיד הפקידה הפקידו הופקד הופקדה מופקד מופקדת העניק העניקה"
+    " העניקו יעניק תעניק יעניקו מעניק מעניקה הוענק הוענקה מוענק מוענקת להעניק משולם"
+    " משולמת משולמים מועבר מועברת מנוכה מנוכית מופחת מופחתת מוקצה מוקצית מוחזר"
+    " מוחזרת מקוזז מקוזזת מזוכה שולמו".split()
 )
 # The other words of a clause that say a fraction follows: a copula, a
 # quantity word, a deduction noun, a verb of receiving, including or
@@ -2675,7 +2679,7 @@ _HEBREW_AMOUNT_NOUN_STEMS = (
     "עלות|פיצוי|פנסי|הפרש|קרן|ריבית|דמי|נכס|מס|"
     "תקציב|הוצא|מחזור|חוב|הלווא|השקע|נזק|תרומ|עמל|דיבידנד|תגמול|אגר|קנס|"
     "היטל|ארנונ|פרמי|מלג|תמיכ|סיוע|סובסידי|כספ|יתר|הטב|תקבול|פדיון|תמלוג|מקדמ|"
-    "פיקדון|פקדון|החזר|גמול"
+    "פיקדון|פקדון|החזר|גמול|בונוס|תשר|קופ"
 )
 _HEBREW_FINAL_TO_MEDIAL = {
     "\u05dd": "\u05de",  # ם → מ
@@ -2749,7 +2753,9 @@ _HEBREW_MONEY_NOUN = (
 # and "המספיקה" name no tax.
 _HEBREW_FRACTION_BASE_AMOUNT_PATTERN = re.compile(
     "\\s+(?:\u05de[\u05be-]?(?:\u05d4[\u05be-]?)?|(?:מן|מתוך|של)\\s+(?:\u05d4[\u05be-]?)?"
-    "|\u05d4[\u05be-]?)" + _HEBREW_MONEY_NOUN + "(?![\u0590-\u05ff])"
+    # or nothing: "חמישית שכרו", "חמישית שכר המינימום" take the possessed or
+    # construct noun's amount.
+    "|\u05d4[\u05be-]?|)" + _HEBREW_MONEY_NOUN + "(?![\u0590-\u05ff])"
 )
 # A money context: an amount noun ("קנס", "סכום", "מחזור", "שכר") shortly
 # before a scaled number says the number is money, so a unit or count noun
@@ -3071,6 +3077,8 @@ _HEBREW_UNAMBIGUOUS_FRACTION_WORDS = frozenset(
     {"מחצית", "חצי", "שליש", "רבע"}
 ) | frozenset(word for word in _HEBREW_FRACTION_VALUES if word.endswith(("ים", "יות")))
 _HEBREW_FRACTION_COUNT_VALUES = {
+    "שלש": 3.0,
+    "חמשה": 5.0,
     "שני": 2.0,
     "שתי": 2.0,
     "שלושה": 3.0,
@@ -3326,7 +3334,9 @@ def _iter_hebrew_fraction_word_matches(
                 names_an_amount = (
                     base is not None
                     and not (
-                        base.group(0).lstrip().startswith("\u05d4")
+                        not base.group(0)
+                        .lstrip()
+                        .startswith(("\u05de", "מן", "מתוך", "של"))
                         and not _hebrew_fraction_context_before(text, match.start())
                         and not _hebrew_fraction_context_in_clause(text, match.start())
                         and _hebrew_word_before_can_be_feminine_singular(

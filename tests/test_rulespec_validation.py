@@ -21576,6 +21576,50 @@ def test_one_vocabulary_of_paying_verbs_and_receipts_are_an_amount():
         ), (text, issue)
 
 
+def test_a_count_has_its_spellings_an_operand_its_bare_form_a_verb_its_tenses():
+    # Review round 170 on #1585: a fraction's count takes the traditional
+    # cardinal spellings; a bare construct or possessed amount noun after
+    # the fraction word is its operand where the clause pays; the paying
+    # vocabulary knows its past, present and passive forms; and a bonus is
+    # an amount.
+    import math
+
+    for text, expected in (
+        ("השיעור הוא שלש עשיריות האחוז", 0.003),
+        ("השיעור הוא שלוש עשיריות האחוז", 0.003),
+        ("חמשה רבעים", 1.25),
+        ("שלשה רבעים מהשכר", 0.75),
+    ):
+        (value,) = _hebrew_recall(text)
+        assert math.isclose(value, expected, rel_tol=1e-9), text
+        (value,) = extract_numbers_from_text(text)
+        assert math.isclose(value, expected, rel_tol=1e-9), text
+    for text, expected, grounded, ungrounded in (
+        ("המעסיק ישלם לעובד חמישית שכרו", {0.2}, "0.2", "5"),
+        ("המעסיק ישלם לעובד חמישית שכר המינימום", {0.2}, "0.2", "5"),
+        ("לעובדת ניתנה חמישית השכר", {0.2}, "0.2", "5"),
+        ("המעסיק הפקיד לעובדת חמישית השכר", {0.2}, "0.2", "5"),
+        ("המעסיק העניק לעובדת חמישית השכר", {0.2}, "0.2", "5"),
+        ("המעסיק שילם לעובדת חמישית מן הבונוס", {0.2}, "0.2", "5"),
+        ("המעסיק שילם לעובד חמישית מן הבונוס", {0.2}, "0.2", "5"),
+        ("המעסיק שילם לעובדת חמישית מן העובדות הזכאיות", {5.0}, "5", "0.2"),
+        ("דרגה חמישית שכר", {5.0}, "5", "0.2"),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
