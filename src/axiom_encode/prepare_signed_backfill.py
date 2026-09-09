@@ -1883,6 +1883,34 @@ def _normal_model_apply_manifest_for_target(
     return manifest_path, payload
 
 
+def _require_absent_inventory(repo: Path) -> None:
+    """Verify optional inventory absence without following any path symlinks."""
+
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    with contextlib.ExitStack() as stack:
+        descriptor = os.open(repo.resolve(strict=True), flags)
+        stack.callback(os.close, descriptor)
+        for part in RETIRED_MANIFEST_INVENTORY.parts[:-1]:
+            try:
+                descriptor = os.open(part, flags, dir_fd=descriptor)
+            except FileNotFoundError:
+                return
+            except OSError as exc:
+                raise ValueError(
+                    "retired manifest inventory has unsafe parent"
+                ) from exc
+            stack.callback(os.close, descriptor)
+        try:
+            os.stat(
+                RETIRED_MANIFEST_INVENTORY.name,
+                dir_fd=descriptor,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            return
+        raise ValueError("retired manifest inventory exists outside HEAD")
+
+
 def reconcile_retired_manifest_inventory(
     repo: Path,
     target_rulespec_path: str,
@@ -1901,6 +1929,20 @@ def reconcile_retired_manifest_inventory(
         raise ValueError(
             "retired manifest inventory changed before exact reconciliation"
         )
+    entry = _git(
+        repo,
+        "ls-tree",
+        "--full-tree",
+        "-z",
+        "HEAD",
+        "--",
+        RETIRED_MANIFEST_INVENTORY.as_posix(),
+    )
+    if not entry:
+        _require_absent_inventory(repo)
+        return None
+    if not entry.startswith(b"100644 blob "):
+        raise ValueError("retired manifest inventory is not a regular HEAD file")
     try:
         base_raw = _git(
             repo,
