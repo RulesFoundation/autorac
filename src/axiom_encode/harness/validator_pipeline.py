@@ -2955,7 +2955,7 @@ _HEBREW_DIGIT_PERCENT_PATTERN = re.compile(
     + _WRAP_SPACE_FRAGMENT
     + "*%|"
     + _WRAP_SPACE_FRAGMENT
-    + "*%(?=\\s+\u05d5(?:"
+    + "*%(?=\\s+\u05d5[\u05be-]?(?:"
     + "|".join(
         re.escape(w)
         for w in sorted(_HEBREW_MIXED_FRACTION_VALUES, key=len, reverse=True)
@@ -4261,10 +4261,12 @@ def _hebrew_spelled_remainder_after(
     return tokens[consumed - 1][1], value
 
 
+# The conjunction may carry a maqaf or a hyphen ("% ו־חצי"), as the
+# fraction-word suppression allows.
 _HEBREW_PERCENT_TAIL_AFTER_PATTERN = re.compile(
     ""
     + _WRAP_SPACE_FRAGMENT
-    + "+\u05d5(?:(?P<tail>"
+    + "+\u05d5[\u05be-]?(?:(?P<tail>"
     + "|".join(
         re.escape(w)
         for w in sorted(_HEBREW_MIXED_FRACTION_VALUES, key=len, reverse=True)

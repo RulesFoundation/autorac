@@ -20104,6 +20104,21 @@ def test_sign_after_tail_slash_rate_tails_and_grouped_wholes_in_fractions():
         assert extract_numbers_from_text(text) >= expected, text
 
 
+def test_a_maqaf_bound_tail_after_a_percent_marker():
+    # Review round 133 on #1585: the conjunction before the tail may carry a
+    # maqaf, and the tail is consumed wherever it is suppressed.
+    for text, expected in (
+        ("השיעור הוא 2½% ו־חצי.", {0.03}),
+        ("השיעור הוא 2½% וחצי.", {0.03}),
+        ("השיעור הוא 2½% ו־שלושה רבעים.", {0.0325}),
+        ("השיעור הוא 2 1⁄2% ו־חצי.", {0.03}),
+        ("השיעור הוא -2½% ו־חצי.", {-0.03}),
+        ("השיעור הוא 2.5% ו־חצי.", {0.03}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) >= expected, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
