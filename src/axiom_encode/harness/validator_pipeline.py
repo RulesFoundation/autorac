@@ -5175,28 +5175,23 @@ _HEBREW_RATE_WORD_PATTERN = re.compile(
 def _hebrew_rate_expression_governs(words: list[str], construct: bool) -> bool:
     """Whether the words after a rate word, up to the pair, keep the pair the rate's.
 
-    The words are read as the rate's subject phrase, then one predicate,
-    then the predicate's connectors. In the subject phrase a bare word is
-    a modifier, a relative clause's verb ("שהבנק גובה") or a construct
-    complement ("הלוואת עובד"); a preposition opens a phrase whose object
-    and attributives follow ("על יתרת ההלוואה הכוללת"); a definite amount
-    noun that no phrase holds, before a predicate, is that predicate's
-    subject ("אז הקנס יהיה"), and takes the pair. The predicate is a
-    listed verb, a copula or a participle; a second one takes the pair
-    away, and after the predicate only prepositions, comparatives, limits
-    and attributives may stand ("תעמוד על", "תהיה לפחות", "תהיה בשיעור
-    של"): an amount noun ("תהיה לפי הקנס של") or any other content word
-    ("יוטל עונש") takes it. An amount noun right before the pair or before
-    its "של" takes it whatever precedes.
+    The main predicate is the last listed verb, copula or participle
+    before the pair: every predicate before it belongs to a relative
+    clause in the subject ("שהבנק יקבע תהיה", "שבנק ישראל יקבע תהיה",
+    "שהבנק עומד לגבות היא"), whatever opened the clause. After the main
+    predicate only its connectors may stand -- prepositions and their
+    objects, comparatives and limits, prefixed phrases, attributives
+    ("תעמוד על", "תהיה לפחות", "תהיה בשיעור של"): an amount noun ("תהיה
+    לפי הקנס של") or any other content word ("יוטל קנס", "יוטל עונש")
+    takes the pair away. Before the main predicate, the subject's head is
+    the word its attributives, prefixed phrases and prepositional phrases
+    modify ("הקנס המרבי", "הקנס הקבוע בחוק"); a definite amount noun there
+    that no phrase holds is a new subject and takes the pair ("אז הקנס
+    יהיה", "מן המותר הקנס יהיה"), while one a preposition or a construct
+    holds ("על ההלוואה", "יתרת ההלוואה", "הסכם ההלוואה") is the rate's own
+    modifier. An amount noun right before the pair or before its "של"
+    takes the pair whatever precedes ("קנס של 50 או 2%").
     """
-    predicated = False
-    in_phrase = False
-    expect_object = construct
-    last_definite = False
-    # A relative clause whose subject stands in its opening word ("שהבנק",
-    # "אשר הבנק") has a predicate of its own still to come; that predicate
-    # is the clause's, not the rate's ("שהבנק יקבע תהיה").
-    relative_pending = False
 
     def _known_predicate(word: str) -> bool:
         return (
@@ -5205,85 +5200,113 @@ def _hebrew_rate_expression_governs(words: list[str], construct: bool) -> bool:
             or word in _HEBREW_RATE_PARTICIPLES
         )
 
+    def _prefixed(word: str) -> bool:
+        return word[:1] in "\u05d1\u05dc\u05de\u05db"
+
+    def _attributive(word: str) -> bool:
+        return (
+            _hebrew_word_is_definite(word) and not _hebrew_word_governs_an_amount(word)
+        ) or word.startswith("\u05e9")
+
     bares = [
         word[1:].lstrip("\u05be-")
         if word.startswith("\u05d5") and len(word) > 1
         else word
         for word in words
     ]
-    for index, bare in enumerate(bares):
-        if bare in _HEBREW_RATE_NEUTRAL_WORDS:
-            continue
-        if _known_predicate(bare):
-            if relative_pending:
-                relative_pending = False
+    main = max(
+        (
+            index
+            for index, bare in enumerate(bares)
+            if bare not in _HEBREW_RATE_NEUTRAL_WORDS and _known_predicate(bare)
+        ),
+        default=None,
+    )
+    # After the main predicate: its connectors only.
+    if main is not None:
+        expect_object = False
+        for bare in bares[main + 1 :]:
+            if bare in _HEBREW_RATE_NEUTRAL_WORDS:
                 continue
-            if predicated:
+            if bare in _HEBREW_RATE_PREPOSITIONS:
+                expect_object = True
+                continue
+            if _hebrew_word_governs_an_amount(bare):
                 return False
-            predicated = True
-            in_phrase = False
-            expect_object = False
-            last_definite = False
-            continue
-        if bare == "אשר":
-            relative_pending = True
+            if expect_object:
+                expect_object = False
+                continue
+            if (
+                bare in _HEBREW_RATE_COMPARATIVES
+                or _prefixed(bare)
+                or _attributive(bare)
+            ):
+                continue
+            return False
+    # Before it: which words a phrase holds.
+    subject = bares[:main] if main is not None else bares
+    held: list[bool] = []
+    in_phrase = False
+    expect_object = construct
+    last_definite = False
+    for bare in subject:
+        if bare in _HEBREW_RATE_NEUTRAL_WORDS or bare == "אשר":
+            held.append(True)
             continue
         if bare in _HEBREW_RATE_PREPOSITIONS:
             in_phrase = True
             expect_object = True
             last_definite = False
+            held.append(True)
             continue
-        if predicated:
-            if (
-                bare in _HEBREW_RATE_COMPARATIVES
-                or bare[:1] in "\u05d1\u05dc\u05de\u05db"
-            ):
-                continue
-            if _hebrew_word_governs_an_amount(bare):
-                return False
-            if bare.startswith(("\u05d4", "\u05e9")):
-                continue
-            return False
         if expect_object:
             expect_object = False
             last_definite = _hebrew_word_is_definite(bare)
+            held.append(True)
             continue
-        if bare.startswith("\u05e9"):
-            if bare[1:2] == "\u05d4":
-                relative_pending = True
+        if bare.startswith("\u05e9") or _known_predicate(bare):
+            held.append(True)
             continue
-        if bare[:1] in "\u05d1\u05dc\u05de\u05db":
+        if _prefixed(bare):
             in_phrase = True
             last_definite = False
+            held.append(True)
             continue
         if bare.startswith("\u05d4"):
-            if _hebrew_word_governs_an_amount(bare) and (
-                not in_phrase or last_definite
-            ):
-                # Its attributives ("הקנס המרבי") stand between it and its
-                # predicate.
-                following = next(
-                    (
-                        later
-                        for later in bares[index + 1 :]
-                        if later not in _HEBREW_RATE_NEUTRAL_WORDS
-                        and not (
-                            later.startswith("\u05d4")
-                            and not _hebrew_word_governs_an_amount(later)
-                        )
-                    ),
-                    None,
-                )
-                if following is not None and _known_predicate(following):
-                    return False
+            # A definite noun after a definite object is a new phrase; after
+            # a bare object it is the construct's complement.
+            held.append(in_phrase and not last_definite)
             last_definite = _hebrew_word_is_definite(bare)
             continue
-        # A bare word after a definite object ends the phrase ("מן המותר אז"):
-        # a definite noun closes a construct chain, so what follows is no
-        # complement of it. After a bare object it is one ("הלוואת עובד").
+        # A bare word after a definite object ends the phrase ("מן המותר אז").
         if last_definite:
             in_phrase = False
         last_definite = False
+        held.append(in_phrase)
+    # The subject's head: the word its modifiers modify.
+    index = len(subject) - 1
+    while index >= 0:
+        bare = subject[index]
+        if (
+            bare in _HEBREW_RATE_NEUTRAL_WORDS
+            or _attributive(bare)
+            or _prefixed(bare)
+            or _known_predicate(bare)
+        ):
+            index -= 1
+            continue
+        if index >= 1 and subject[index - 1] in _HEBREW_RATE_PREPOSITIONS:
+            index -= 2
+            continue
+        break
+    if (
+        index >= 0
+        and not (construct and index == 0)
+        and _hebrew_word_is_definite(subject[index])
+        and _hebrew_word_governs_an_amount(subject[index])
+        and not held[index]
+    ):
+        return False
     if words and _hebrew_word_governs_an_amount(words[-1]):
         return False
     return not (

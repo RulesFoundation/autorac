@@ -21041,6 +21041,37 @@ def test_a_relative_clause_has_its_own_predicate_and_a_subject_its_attributives(
         ), (text[:40], issue)
 
 
+def test_the_main_predicate_is_the_last_one_and_the_subject_head_is_walked_to():
+    # Review round 153 on #1585: the rate's main predicate is the last
+    # listed verb, copula or participle before the pair, so a relative
+    # clause keeps its own verb whatever opened it; and the consequent's
+    # subject is reached by walking back over all its modifiers, a
+    # prepositional one included.
+    rates = {0.1, 0.3}
+    fine = {50.0, 0.02}
+    heading = "הסכומים בשקלים: אם הריבית גבוהה מן המותר "
+    for text, expected, grounded, ungrounded in (
+        ("הריבית שבנק ישראל יקבע תהיה 10 או 30%", rates, "0.1", "10"),
+        ("הריבית שאדם משלם היא 10 או 30%", rates, "0.1", "10"),
+        (heading + "הקנס הקבוע בחוק יהיה 50 או 2% מהמחזור", fine, "50", "0.5"),
+        (heading + "אז הקנס הקבוע בחוק המרבי יהיה 50 או 2% מהמחזור", fine, "50", "0.5"),
+    ):
+        assert _hebrew_recall(text) == expected, text[:40]
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text[
+            :40
+        ]
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text[:40], issue)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
