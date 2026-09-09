@@ -12028,10 +12028,46 @@ def _strip_terminal_session_law_history(source_text: str) -> str:
     return source_text
 
 
+def _mask_spaced_german_sentence_labels(text: str) -> str:
+    """Mask a consecutive sentence-label chain, anchored to a paragraph start.
+
+    A German article/pronoun after each label distinguishes these labels from
+    quantities such as ``1 Euro`` or ``2 Personen``. A lone or broken sequence
+    is left intact; this does not reinterpret arbitrary numbered prose.
+    """
+
+    markers = list(_PARAGRAPH_MARKER.finditer(text))
+    spans: list[tuple[int, int]] = []
+    opening = r"(?:Der|Die|Das|Den|Dem|Des|Er|Sie|Es)\b"
+    pattern = re.compile(rf"(?<![\w])(?P<label>[1-9]\d?)[ \t]+(?={opening})")
+    for index, paragraph in enumerate(markers):
+        end = markers[index + 1].start() if index + 1 < len(markers) else len(text)
+        matches = list(pattern.finditer(text, paragraph.end(), end))
+        if len(matches) < 2:
+            continue
+        if text[paragraph.end() : matches[0].start()].strip():
+            continue
+        if [int(match.group("label")) for match in matches] != list(
+            range(1, len(matches) + 1)
+        ):
+            continue
+        if any(
+            not text[paragraph.end() : match.start()].rstrip().endswith((".", "!", "?"))
+            for match in matches[1:]
+        ):
+            continue
+        spans.extend(match.span("label") for match in matches)
+    for start, end in reversed(spans):
+        text = text[:start] + " " * (end - start) + text[end:]
+    return text
+
+
 def authoritative_numeric_recall_text(source_text: str) -> str:
     """Remove structural/citation ordinals, never substantive source values."""
 
-    cleaned = _strip_terminal_session_law_history(source_text)
+    cleaned = _mask_spaced_german_sentence_labels(
+        _strip_terminal_session_law_history(source_text)
+    )
     if _GLUED_SECTION_SENTENCE_MARKER.search(cleaned):
         # Strip only authenticated sentence labels, before removing the section
         # citation that distinguishes `2§ 64` from a substantive number 2.
@@ -22853,6 +22889,24 @@ def _formula_interval_from_text(
         )
         if not candidate_occurrences:
             continue
+        if candidate.group().lower() == "von":
+            # Bare ``von`` also introduces a fixed quantity (Arbeitszeit von
+            # zehn Wochenstunden). Require a range continuation, preserving
+            # existing units/abbreviations between the first two amounts.
+            after_first = text[candidate_occurrences[0].end :]
+            bounded_range = len(candidate_occurrences) >= 2 and re.search(
+                r"\bbis\b",
+                text[candidate_occurrences[0].end : candidate_occurrences[1].start],
+                flags=re.IGNORECASE,
+            )
+            open_range = re.match(
+                r"\s*(?:[^\W\d_]+(?:-[^\W\d_]+)?|[%€$£]|v\.\s*H\.)?\s+"
+                r"(?:an|aufwärts)\b",
+                after_first,
+                flags=re.IGNORECASE,
+            )
+            if not (bounded_range or open_range):
+                continue
         first_gap = text[candidate.end() : candidate_occurrences[0].start]
         spelled_parenthetical_gap = re.fullmatch(
             rf"\s*{_ENGLISH_CARDINAL_PHRASE}\s+"
