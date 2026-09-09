@@ -401,6 +401,22 @@ jobs:
           git -C axiom-corpus merge-base --is-ancestor HEAD refs/remotes/origin/main
           git -C axiom-rules-engine merge-base --is-ancestor HEAD refs/remotes/origin/main
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.7"
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install encoder
+        working-directory: axiom-encode
+        run: |
+          uv sync --locked --python 3.13 --extra api
+          rm -rf "$RUNNER_TEMP/axiom-verification-site-packages"
+          uv pip install --python .venv/bin/python \
+            --target "$RUNNER_TEMP/axiom-verification-site-packages" ".[api]"
+
       - name: Resolve trusted prior-run repair candidate
         id: repair_candidate
         if: ${{ inputs.repair_run_id != '' }}
@@ -458,7 +474,7 @@ jobs:
             repair_run_lane="dependent"
             repair_citation="$DEPENDENT_CITATION"
             repair_rulespec_path="$(
-              PYTHONPATH=axiom-encode/src python \
+              axiom-encode/.venv/bin/python \
                 axiom-encode/scripts/prepare_signed_backfill.py \
                 citation-rulespec-path "$DEPENDENT_CITATION"
             )"
@@ -590,19 +606,11 @@ jobs:
           echo "lane=$repair_run_lane" >> "$GITHUB_OUTPUT"
           echo "rulespec_path=$repair_rulespec_path" >> "$GITHUB_OUTPUT"
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-        with:
-          version: "0.11.7"
-
       - name: Set up Go 1.26.1
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: 1.26.1
           cache: false
-
-      - name: Set up Python
-        run: uv python install 3.13
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
@@ -612,14 +620,6 @@ jobs:
         run: |
           cargo build --release --locked
           test -x target/release/axiom-rules-engine
-
-      - name: Install encoder
-        working-directory: axiom-encode
-        run: |
-          uv sync --locked --python 3.13 --extra api
-          rm -rf "$RUNNER_TEMP/axiom-verification-site-packages"
-          uv pip install --python .venv/bin/python \
-            --target "$RUNNER_TEMP/axiom-verification-site-packages" ".[api]"
 
       - name: Validate atomic source inputs
         env:

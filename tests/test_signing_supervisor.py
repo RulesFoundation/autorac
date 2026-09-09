@@ -2270,7 +2270,12 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     )
     repair_preflight = repair_step["run"].split('api_version="', 1)[0]
     assert "split-atomic-source-input" in repair_preflight
-    assert ".venv/bin/python" not in repair_preflight
+    assert "axiom-encode/.venv/bin/python" in repair_preflight
+    assert steps.index(repair_step) > next(
+        index
+        for index, step in enumerate(steps)
+        if step.get("name") == "Install encoder"
+    )
     identity_step = next(
         step
         for step in steps
@@ -3043,9 +3048,7 @@ def test_repair_preflight_splits_atomic_source_before_encoder_install(
         "axiom-encode/scripts/prepare_signed_backfill.py",
         str(ROOT / "scripts/prepare_signed_backfill.py"),
     )
-    command = command.replace(
-        "PYTHONPATH=axiom-encode/src", f"PYTHONPATH={ROOT / 'src'}"
-    )
+    command = command.replace("axiom-encode/.venv/bin/python", sys.executable)
 
     completed = subprocess.run(
         ["bash", "-c", command],
@@ -3090,9 +3093,7 @@ def test_repair_preflight_accepts_one_bound_dependent_lane(tmp_path: Path) -> No
         "axiom-encode/scripts/prepare_signed_backfill.py",
         str(ROOT / "scripts/prepare_signed_backfill.py"),
     )
-    command = command.replace(
-        "PYTHONPATH=axiom-encode/src", f"PYTHONPATH={ROOT / 'src'}"
-    )
+    command = command.replace("axiom-encode/.venv/bin/python", sys.executable)
 
     completed = subprocess.run(
         ["bash", "-c", command],
