@@ -22996,6 +22996,27 @@ penalty waived under the voluntary disclosure program.
     ] == [("twenty-five\nthousand", 25000.0)]
 
 
+def test_statutory_proviso_starts_a_distinct_source_clause():
+    source = (
+        "The allotment equals the food plan reduced by 30 percent of income, "
+        "rounded down: Provided , That the minimum is 8 percent of the food "
+        "plan, rounded to the nearest dollar."
+    )
+
+    clauses = tuple(completeness_module._source_clause_spans(source, branches=()))
+
+    assert [clause for _start, _end, clause in clauses] == [
+        (
+            "The allotment equals the food plan reduced by 30 percent of income, "
+            "rounded down:"
+        ),
+        (
+            "Provided , That the minimum is 8 percent of the food plan, rounded "
+            "to the nearest dollar."
+        ),
+    ]
+
+
 @pytest.mark.parametrize(
     "reference",
     (
@@ -35701,6 +35722,270 @@ rules:
         ),
     )
 
+    assert not _has_issue(result, "rounding", "fractional"), "\n".join(result.issues)
+
+
+def test_nearest_lower_whole_dollar_is_downward_rounding():
+    source = "The amount is rounded to the nearest lower whole dollar."
+
+    assert completeness_module._rounding_direction(source) == "downward"
+
+
+@pytest.mark.parametrize(
+    ("source", "expected_directions"),
+    [
+        (
+            "Amount A is rounded down, and amount B is rounded up.",
+            ["downward", "upward"],
+        ),
+        (
+            "Amount A is rounded to the nearest whole dollar, and amount B "
+            "is rounded up.",
+            ["nearest", "upward"],
+        ),
+        (
+            "Amount A is rounded to the nearest lower whole dollar, and amount B "
+            "is rounded up.",
+            ["downward", "upward"],
+        ),
+    ],
+)
+def test_rounding_obligations_keep_match_local_directions(
+    source: str,
+    expected_directions: list[str],
+):
+    branches = recognize_source_structure(source)
+
+    obligations = completeness_module._source_rounding_obligations(
+        source,
+        branches=branches,
+        active_branches=branches,
+        deferred_paths=set(),
+    )
+
+    assert [direction for _, direction in obligations] == expected_directions
+
+
+def test_import_backed_assertion_can_corroborate_local_dependency_chain():
+    imported_amount = {
+        "name": "import_backed_amount",
+        "kind": "derived",
+        "metadata": {
+            "proof": {
+                "atoms": [
+                    {
+                        "path": "versions[0].formula",
+                        "kind": "import",
+                        "import": {
+                            "target": "us:statutes/source#external_amount",
+                            "output": "external_amount",
+                            "hash": "sha256:abc123",
+                        },
+                    }
+                ]
+            }
+        },
+        "versions": [{"formula": "max(0, external_amount)"}],
+    }
+    rounded_amount = {
+        "name": "rounded_amount",
+        "kind": "derived",
+        "versions": [{"formula": "floor(import_backed_amount)"}],
+    }
+    principal_rules = {
+        "import_backed_amount": imported_amount,
+        "rounded_amount": rounded_amount,
+    }
+    case = {
+        "input": {},
+        "output": {"import_backed_amount": 23.84, "rounded_amount": 23},
+    }
+
+    dependencies = completeness_module._case_asserted_dependency_environment(
+        principal_rules,
+        case,
+        formula_environment={},
+    )
+
+    assert dependencies == {
+        "import_backed_amount": 23.84,
+        "rounded_amount": 23,
+    }
+    imported_amount["metadata"]["proof"]["atoms"][0]["import"]["hash"] = "sha256:local"
+    assert not completeness_module._case_asserted_dependency_environment(
+        principal_rules,
+        case,
+        formula_environment={},
+    )
+
+
+def test_snap_proviso_rounding_uses_import_backed_selected_branch_evidence():
+    source = (
+        "The allotment equals the maximum allotment reduced by 30 percent of "
+        "income, rounded to the nearest lower whole dollar: Provided, That for "
+        "households of one and two persons the minimum allotment is 8 percent "
+        "of the cost for a household containing 1 member, rounded to the nearest "
+        "whole dollar."
+    )
+    content = """\
+format: rulespec/v1
+module:
+  source_verification:
+    corpus_citation_path: us/statute/7/2017/a
+imports:
+  - us:statutes/net-income#snap_net_income
+  - us:policies/maximum-allotments#snap_maximum_allotment
+  - us:policies/maximum-allotments#snap_one_person_food_plan_cost
+inputs:
+  - name: household_size
+    dtype: Count
+rules:
+  - name: contribution_rate
+    kind: parameter
+    versions: [{formula: 0.30}]
+  - name: minimum_rate
+    kind: parameter
+    versions: [{formula: 0.08}]
+  - name: size_limit
+    kind: parameter
+    versions: [{formula: 2}]
+  - name: one_member_size
+    kind: parameter
+    versions: [{formula: 1}]
+  - name: net_income_for_allotment
+    kind: derived
+    source: us/statute/7/2017/a
+    metadata:
+      proof:
+        atoms:
+          - path: versions[0].formula
+            kind: formula
+            source:
+              corpus_citation_path: us/statute/7/2017/a
+              excerpt: income
+          - path: versions[0].formula
+            kind: import
+            import:
+              target: us:statutes/net-income#snap_net_income
+              output: snap_net_income
+              hash: sha256:net
+    versions: [{formula: 'max(0, snap_net_income)'}]
+  - name: contribution
+    kind: derived
+    source: us/statute/7/2017/a
+    metadata:
+      proof:
+        atoms:
+          - path: versions[0].formula
+            kind: formula
+            source:
+              corpus_citation_path: us/statute/7/2017/a
+              excerpt: 30 percent of income
+    versions: [{formula: 'net_income_for_allotment * contribution_rate'}]
+  - name: allotment_before_rounding
+    kind: derived
+    source: us/statute/7/2017/a
+    metadata:
+      proof:
+        atoms:
+          - path: versions[0].formula
+            kind: formula
+            source:
+              corpus_citation_path: us/statute/7/2017/a
+              excerpt: maximum allotment reduced by 30 percent of income
+          - path: versions[0].formula
+            kind: import
+            import:
+              target: us:policies/maximum-allotments#snap_maximum_allotment
+              output: snap_maximum_allotment
+              hash: sha256:maximum
+    versions: [{formula: 'max(0, snap_maximum_allotment - contribution)'}]
+  - name: ordinary_allotment
+    kind: derived
+    source: us/statute/7/2017/a
+    metadata:
+      proof:
+        atoms:
+          - path: versions[0].formula
+            kind: ordering
+            source:
+              corpus_citation_path: us/statute/7/2017/a
+              excerpt: rounded to the nearest lower whole dollar
+    versions: [{formula: 'floor(allotment_before_rounding)'}]
+  - name: minimum_before_rounding
+    kind: derived
+    source: us/statute/7/2017/a
+    metadata:
+      proof:
+        atoms:
+          - path: versions[0].formula
+            kind: formula
+            source:
+              corpus_citation_path: us/statute/7/2017/a
+              excerpt: households of one and two persons the minimum allotment is 8 percent of the cost for a household containing 1 member
+          - path: versions[0].formula
+            kind: import
+            import:
+              target: us:policies/maximum-allotments#snap_one_person_food_plan_cost
+              output: snap_one_person_food_plan_cost
+              hash: sha256:one-person
+    versions:
+      - formula: >-
+          if household_size >= one_member_size and household_size <= size_limit:
+            snap_one_person_food_plan_cost * minimum_rate
+          else: 0
+  - name: minimum_allotment
+    kind: derived
+    source: us/statute/7/2017/a
+    metadata:
+      proof:
+        atoms:
+          - path: versions[0].formula
+            kind: ordering
+            source:
+              corpus_citation_path: us/statute/7/2017/a
+              excerpt: rounded to the nearest whole dollar
+    versions: [{formula: 'floor(minimum_before_rounding + (1 / 2))'}]
+"""
+    cases = [
+        {
+            "name": "ordinary fractional allotment",
+            "input": {"household_size": 3},
+            "output": {
+                "net_income_for_allotment": 100,
+                "contribution": 30,
+                "allotment_before_rounding": 100.49,
+                "ordinary_allotment": 100,
+                "minimum_before_rounding": 0,
+                "minimum_allotment": 0,
+            },
+        },
+        {
+            "name": "two-person rounded minimum",
+            "input": {"household_size": 2},
+            "output": {
+                "net_income_for_allotment": 100,
+                "contribution": 30,
+                "allotment_before_rounding": 0,
+                "ordinary_allotment": 0,
+                "minimum_before_rounding": 23.84,
+                "minimum_allotment": 24,
+            },
+        },
+    ]
+
+    result = _analyze(
+        content,
+        source,
+        corpus_citation_path="us/statute/7/2017/a",
+        test_cases=cases,
+        extract_numeric_occurrences=EN_NUMERIC_OCCURRENCE_EXTRACTOR,
+        extract_numeric_grounding_occurrences=(
+            EN_NUMERIC_GROUNDING_OCCURRENCE_EXTRACTOR
+        ),
+    )
+
+    assert not _has_issue(result, "formula branch", "test"), "\n".join(result.issues)
     assert not _has_issue(result, "rounding", "fractional"), "\n".join(result.issues)
 
 

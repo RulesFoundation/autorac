@@ -1218,7 +1218,8 @@ _ROUNDING_LANGUAGE = re.compile(
     flags=re.IGNORECASE,
 )
 _DOWN_ROUNDING_LANGUAGE = re.compile(
-    r"\b(?:abgerundet(?:e|en|er|es)?|abzurunden|round(?:ed|ing)?\s+down)\b",
+    r"\b(?:abgerundet(?:e|en|er|es)?|abzurunden|"
+    r"round(?:ed|ing)?\s+(?:down|to\s+the\s+nearest\s+lower))\b",
     flags=re.IGNORECASE,
 )
 _UP_ROUNDING_LANGUAGE = re.compile(
@@ -5006,6 +5007,8 @@ def _strip_source_clause_marker(text: str) -> str:
 def _rounding_direction(text: str) -> str | None:
     if not _ROUNDING_LANGUAGE.search(text):
         return None
+    if _DOWN_ROUNDING_LANGUAGE.search(text):
+        return "downward"
     if _NEAREST_ROUNDING_LANGUAGE.search(text):
         return "nearest"
     if _UP_ROUNDING_LANGUAGE.search(text):
@@ -15729,7 +15732,8 @@ def _source_clause_spans(
     """Yield offset-preserving clauses split at punctuation and structure."""
 
     boundary = re.compile(
-        r";|[.!?](?=(?:[ \t]+[A-ZÄÖÜ(]|\s*$))",
+        r";|:(?=\s*(?i:provided)\s*,?\s*(?i:that)\b)|"
+        r"[.!?](?=(?:[ \t]+[A-ZÄÖÜ(]|\s*$))",
         flags=re.MULTILINE,
     )
     inline_operand_list_spans = _formula_inline_operand_list_spans(source_text)
@@ -17755,7 +17759,15 @@ def _formula_execution_matches_source_branch(
     if not computation_occurrences:
         return True
 
-    leaf_names = set(_FORMULA_IDENTIFIER.findall(operative_leaf))
+    reached_selector_texts = tuple(
+        selector for step in execution.trace for selector in step.selectors
+    )
+    evidence_texts = (operative_leaf, *reached_selector_texts)
+    leaf_names = {
+        name
+        for evidence_text in evidence_texts
+        for name in _FORMULA_IDENTIFIER.findall(evidence_text)
+    }
     candidate_values = [
         float(value)
         for name, value in binding_environment.items()
@@ -17765,7 +17777,8 @@ def _formula_execution_matches_source_branch(
     ]
     candidate_values.extend(
         float(occurrence.value)
-        for occurrence in extract_numeric_occurrences(operative_leaf)
+        for evidence_text in evidence_texts
+        for occurrence in extract_numeric_occurrences(evidence_text)
     )
     if (
         "multiply" in source_operations
@@ -18779,7 +18792,19 @@ def _case_dependency_environment(
                 continue
             value = _evaluate_formula_selector(execution.leaf, environment)
             if value is _UNRESOLVED_CONDITION_VALUE:
-                continue
+                if not require_asserted_value:
+                    continue
+                asserted = _test_case_asserted_output_value(case, name)
+                if (
+                    asserted is _UNRESOLVED_CONDITION_VALUE
+                    or not _formula_execution_is_blocked_only_by_external_imports(
+                        rule,
+                        execution,
+                        environment=environment,
+                    )
+                ):
+                    continue
+                value = asserted
             if require_asserted_value:
                 asserted = _test_case_asserted_output_value(case, name)
                 if (
@@ -18793,6 +18818,56 @@ def _case_dependency_environment(
         if not changed:
             break
     return resolved
+
+
+def _formula_execution_is_blocked_only_by_external_imports(
+    rule: dict[str, Any],
+    execution: _FormulaExecution,
+    *,
+    environment: dict[str, Any],
+) -> bool:
+    """Allow engine-checked assertions to bridge opaque imported outputs."""
+
+    reached_names = _reached_formula_expression_identifier_names(
+        execution.leaf,
+        environment=environment,
+    )
+    reached_names.update(
+        name
+        for step in execution.trace
+        for selector in step.selectors
+        for name in _reached_formula_expression_identifier_names(
+            selector,
+            environment=environment,
+        )
+    )
+    unresolved_names = reached_names - environment.keys()
+    if not unresolved_names:
+        return False
+    return unresolved_names <= _rule_external_import_output_names(rule)
+
+
+def _rule_external_import_output_names(rule: dict[str, Any]) -> set[str]:
+    """Return proof-declared non-local outputs used by one rule formula."""
+
+    metadata = rule.get("metadata")
+    proof = metadata.get("proof") if isinstance(metadata, dict) else None
+    if not isinstance(proof, dict):
+        proof = rule.get("proof")
+    atoms = proof.get("atoms") if isinstance(proof, dict) else None
+    if not isinstance(atoms, list):
+        return set()
+    names: set[str] = set()
+    for atom in atoms:
+        imported = atom.get("import") if isinstance(atom, dict) else None
+        if not isinstance(imported, dict):
+            continue
+        if str(imported.get("hash") or "").strip() == "sha256:local":
+            continue
+        output = str(imported.get("output") or "").strip()
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", output):
+            names.add(output)
+    return names
 
 
 def _formula_runtime_values_equal(left: Any, right: Any) -> bool:
@@ -20948,9 +21023,31 @@ def _asserted_reached_rule_executions(
                 formula_environment=formula_environment,
                 dependency_environment=dependency_environment,
             )
-            if dependency_execution is None or not _formula_runtime_values_equal(
-                _formula_execution_runtime_value(dependency_execution),
-                dependency_environment[name],
+            if dependency_execution is None:
+                continue
+            dependency_runtime_value = _formula_execution_runtime_value(
+                dependency_execution
+            )
+            if not (
+                _formula_runtime_values_equal(
+                    dependency_runtime_value,
+                    dependency_environment[name],
+                )
+                or (
+                    dependency_runtime_value is _UNRESOLVED_CONDITION_VALUE
+                    and _formula_execution_is_blocked_only_by_external_imports(
+                        dependency_rule,
+                        dependency_execution,
+                        environment=(
+                            _case_formula_identifier_environment(
+                                case,
+                                formula_environment=formula_environment,
+                                dependency_environment=dependency_environment,
+                            )
+                            or {}
+                        ),
+                    )
+                )
             ):
                 continue
             seen_names.add(name)
@@ -23743,21 +23840,23 @@ def _source_rounding_obligations(
             0,
             len(source_text),
         )
-        matched_language = match.group(0)
         clause_start, clause_end, clause_text = next(
             (
                 (start, end, text)
                 for start, end, text in source_clauses
                 if start <= match.start() and match.end() <= end
             ),
-            (match.start(), match.end(), matched_language),
+            (match.start(), match.end(), match.group(0)),
         )
-        if _NEAREST_ROUNDING_LANGUAGE.search(matched_language):
-            direction = "nearest"
-        elif _UP_ROUNDING_LANGUAGE.search(matched_language):
-            direction = "upward"
-        else:
-            direction = "downward"
+        matched_language = match.group(0)
+        nearest_lower_suffix = re.match(
+            r"\s+lower\b",
+            source_text[match.end() :],
+            flags=re.IGNORECASE,
+        )
+        if nearest_lower_suffix is not None:
+            matched_language += nearest_lower_suffix.group(0)
+        direction = _rounding_direction(matched_language) or "downward"
         obligation_branch = SourceStructureBranch(
             owner.path,
             "rounding-clause",
@@ -26643,6 +26742,25 @@ def _fractional_rounding_case_witnesses(
             direction,
         ):
             continue
+        reached_executions = _asserted_reached_rule_executions(
+            rule,
+            execution,
+            principal_rules=principal_rules,
+            case=case,
+            dependency_environment=dependency_environment,
+            formula_environment=formula_environment,
+        )
+        source_binding_execution = _FormulaExecution(
+            tuple(
+                step
+                for _reached_rule, reached_execution in reached_executions
+                for step in reached_execution.trace
+            ),
+            execution.leaf,
+            execution.evaluated_value,
+            execution.evaluates_to_zero,
+            execution.constant_environment,
+        )
         operative_leaf = _simplified_formula_text(
             execution.leaf,
             environment=execution.constant_environment,
@@ -26698,7 +26816,7 @@ def _fractional_rounding_case_witnesses(
                     operand_value=float(operand_value),
                     direction=direction,
                     rule_name=rule_name,
-                    execution=execution,
+                    execution=source_binding_execution,
                     source_formula_branch=source_formula_branch,
                     formula_environment=formula_environment,
                     rounding_refers_to_result=rounding_refers_to_result,
@@ -26957,7 +27075,7 @@ def _rounding_call_matches_source_formula(
         extract_numeric_occurrences=extract_numeric_occurrences,
     )
     operand_execution = _FormulaExecution(
-        (),
+        execution.trace,
         operand,
         (type(operand_value).__name__, repr(operand_value)),
         operand_value == 0,
