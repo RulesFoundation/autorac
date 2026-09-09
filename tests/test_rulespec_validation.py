@@ -21100,6 +21100,57 @@ def test_the_subject_is_the_last_phrase_no_earlier_phrase_holds():
         assert issue.startswith("Ungrounded generated numeric literal: 0.5 "), issue
 
 
+def test_a_nouns_first_letter_is_a_letter_and_an_attached_object_keeps_its_article():
+    # Review round 155 on #1585: an amount noun is read by its own letters
+    # before a prefix is seen in them, and a preposition attached to its
+    # object keeps the object's article, so the phrase closes as it does
+    # when the preposition stands apart.
+    rates = {0.1, 0.3}
+    fine = {50.0, 0.02}
+    for text, expected, grounded, ungrounded in (
+        (
+            "הסכומים בשקלים: אם הריבית גבוהה מן המותר מענק הפיצוי יהיה 50 או 2% מהמחזור",
+            fine,
+            "50",
+            "0.5",
+        ),
+        (
+            "הסכומים בשקלים: אם הריבית גבוהה מן המותר שכר העובד יהיה 50 או 2% מהמחזור",
+            fine,
+            "50",
+            "0.5",
+        ),
+        (
+            "הסכומים בשקלים: אם הריבית גבוהה מהמותר הקנס יהיה 50 או 2% מהמחזור",
+            fine,
+            "50",
+            "0.5",
+        ),
+        (
+            "הסכומים בשקלים: אם הריבית גבוהה מהתקרה הקנס יהיה 50 או 2% מהמחזור",
+            fine,
+            "50",
+            "0.5",
+        ),
+        ("הריבית מהשכר החודשי תהיה 10 או 30%", rates, "0.1", "10"),
+        ("הריבית לפי הסכם ההלוואה בהסכם ההלוואה תהיה 10 או 30%", rates, "0.1", "10"),
+    ):
+        assert _hebrew_recall(text) == expected, text[:50]
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text[
+            :50
+        ]
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text[:50], issue)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

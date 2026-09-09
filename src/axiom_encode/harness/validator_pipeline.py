@@ -4971,6 +4971,24 @@ _NON_SPACE_TOKEN_PATTERN = re.compile(r"\S+")
 _HEBREW_MONEY_NOUN_WORD_PATTERN: "re.Pattern[str] | None" = None
 
 
+_HEBREW_BARE_MONEY_NOUN_PATTERN: "re.Pattern[str] | None" = None
+
+
+def _hebrew_word_is_an_amount_noun(word: str) -> bool:
+    """Whether ``word`` is an amount noun by its own letters, article or not.
+
+    "מענק" and "שכר" begin with letters that are also prefixes; read as a
+    word they are the grant and the wage, not "from" or "that" anything.
+    "מהשכר" is not: a preposition precedes its noun.
+    """
+    global _HEBREW_BARE_MONEY_NOUN_PATTERN
+    if _HEBREW_BARE_MONEY_NOUN_PATTERN is None:
+        _HEBREW_BARE_MONEY_NOUN_PATTERN = re.compile(
+            _HEBREW_OPTIONAL_ARTICLE + _HEBREW_MONEY_NOUN + "$"
+        )
+    return _HEBREW_BARE_MONEY_NOUN_PATTERN.match(word) is not None
+
+
 def _hebrew_word_governs_an_amount(word: str) -> bool:
     """Whether ``word`` is an amount noun, under a prefix or not ("קנס", "הסכום")."""
     global _HEBREW_MONEY_NOUN_WORD_PATTERN
@@ -5286,7 +5304,13 @@ def _hebrew_rate_expression_governs(words: list[str], construct: bool) -> bool:
             held.append(True)
             continue
         if not (
-            bare[:1] not in "\u05d1\u05dc\u05de\u05db\u05d4\u05e9"
+            (
+                bare[:1] not in "\u05d1\u05dc\u05de\u05db\u05d4\u05e9"
+                or (
+                    _hebrew_word_is_an_amount_noun(bare)
+                    and not _hebrew_word_is_definite(bare)
+                )
+            )
             and bare not in _HEBREW_RATE_PREPOSITIONS
             and not _known_predicate(bare)
             and bare != "אשר"
@@ -5298,7 +5322,8 @@ def _hebrew_rate_expression_governs(words: list[str], construct: bool) -> bool:
             held.append(True)
             relative = False
             continue
-        if bare == "אשר" or bare.startswith("\u05e9"):
+        amount_noun = _hebrew_word_is_an_amount_noun(bare)
+        if not amount_noun and (bare == "אשר" or bare.startswith("\u05e9")):
             # A clause whose verb is inside its opening word ("שנקבעה", ש
             # before a verb's first letter) is complete; one whose subject
             # is ("שהבנק", "שבנק ישראל", "אשר הבנק") runs to its verb.
@@ -5325,12 +5350,16 @@ def _hebrew_rate_expression_governs(words: list[str], construct: bool) -> bool:
             last_definite = _hebrew_word_is_definite(bare)
             held.append(True)
             continue
-        if _prefixed(bare):
+        if _prefixed(bare) and not amount_noun:
+            # The object inside the word keeps its article ("מהמותר",
+            # "מהתקרה") or lacks it ("בחוק", "בהסכם").
             in_phrase = True
-            last_definite = False
+            last_definite = _hebrew_word_is_definite(bare[1:].lstrip("\u05be-"))
             held.append(True)
             continue
-        if bare.startswith("\u05d4"):
+        if bare.startswith("\u05d4") or (
+            amount_noun and _hebrew_word_is_definite(bare)
+        ):
             if not _hebrew_word_governs_an_amount(bare):
                 # An attributive of the noun before it.
                 held.append(True)
