@@ -42973,6 +42973,38 @@ def test_eu_reference_formula_mask_preserves_unbound_or_partial_arithmetic(sourc
     assert completeness_module.source_states_explicit_computation(source)
 
 
+@pytest.mark.parametrize("operator", ["*", "+", "-", "/", "×", "plus", "minus", "mal"])
+@pytest.mark.parametrize("before", [False, True])
+def test_eu_reference_formula_mask_preserves_attached_numeric_operators(
+    operator, before
+):
+    citation = "Verordnung (EU) 2021/888"
+    source = f"2 {operator} {citation}" if before else f"{citation} {operator} 2"
+    assert completeness_module.source_states_explicit_computation(source)
+
+
+@pytest.mark.parametrize("operand", ["-2", "+2", "−2", ".5", ",5", "-.5", "+,5"])
+@pytest.mark.parametrize("operator", ["*", "/", "plus"])
+@pytest.mark.parametrize("before", [False, True])
+def test_eu_reference_formula_mask_preserves_signed_and_decimal_operands(
+    operand, operator, before
+):
+    citation = "Verordnung (EU) 2021/888"
+    source = (
+        f"{operand} {operator} {citation}"
+        if before
+        else f"{citation} {operator} {operand}"
+    )
+    assert completeness_module.source_states_explicit_computation(source)
+
+
+@pytest.mark.parametrize("suffix", [".", ",", ";", " – Aktuelle Fassung", " - Titel"])
+def test_eu_reference_formula_mask_accepts_ordinary_citation_punctuation(suffix):
+    assert not completeness_module.source_states_explicit_computation(
+        f"Verordnung (EU) 2021/888{suffix}"
+    )
+
+
 @pytest.mark.parametrize(
     "citation",
     [

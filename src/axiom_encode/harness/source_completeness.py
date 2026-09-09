@@ -4389,6 +4389,23 @@ def _has_substantive_arithmetic_expression(source_text: str) -> bool:
         _EU_REGULATION_NUMERIC_RECALL_CITATION,
     ):
         for metadata in metadata_pattern.finditer(source_text):
+            if metadata_pattern is _EU_REGULATION_NUMERIC_RECALL_CITATION and (
+                re.match(
+                    r"\s*(?:[+*/=×·•∗∙−–-]|(?:plus|minus|mal|less)\b)"
+                    r"\s*[+−-]?\s*(?:\d|[.,]\d)",
+                    source_text[metadata.end() :],
+                    flags=re.IGNORECASE,
+                )
+                or re.search(
+                    r"\d(?:[.,]\d+)?\s*"
+                    r"(?:[+*/=×·•∗∙−–-]|\b(?:plus|minus|mal|less))\s*$",
+                    source_text[: metadata.start()],
+                    flags=re.IGNORECASE,
+                )
+            ):
+                # A numeric operator attached to the reference is ambiguous:
+                # preserve it rather than hide an operand with the citation.
+                continue
             arithmetic_text[metadata.start() : metadata.end()] = " " * (
                 metadata.end() - metadata.start()
             )
