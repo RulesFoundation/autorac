@@ -2056,9 +2056,9 @@ _GERMAN_LEGAL_CITATION = re.compile(
 )
 _EU_REGULATION_NUMERIC_RECALL_CITATION = re.compile(
     r"\bVerordnung(?:en)?\s+\((?:EU|EG|EWG)\)\s+"
-    r"(?:Nr\.\s*)?\d{1,5}/\d{2,5}(?![\w/])"
+    r"(?:Nr\.\s*)?\d{1,5}/\d{2,5}(?![\w/]|[.,]\d)"
     r"(?:\s*(?:,\s*|und\s+)\((?:EU|EG|EWG)\)\s+"
-    r"(?:Nr\.\s*)?\d{1,5}/\d{2,5}(?![\w/]))*",
+    r"(?:Nr\.\s*)?\d{1,5}/\d{2,5}(?![\w/]|[.,]\d))*",
     flags=re.IGNORECASE,
 )
 _GERMAN_GAZETTE_NUMERIC_RECALL_CITATION = re.compile(
@@ -4384,10 +4384,31 @@ def _has_substantive_arithmetic_expression(source_text: str) -> bool:
     """Ignore prose conjunctions and year spans, retaining actual arithmetic."""
 
     arithmetic_text = list(_without_slash_conjunction_operators(source_text))
-    for date_match in _STATED_CONVERSION_DATE.finditer(source_text):
-        arithmetic_text[date_match.start() : date_match.end()] = " " * (
-            date_match.end() - date_match.start()
-        )
+    for metadata_pattern in (
+        _STATED_CONVERSION_DATE,
+        _EU_REGULATION_NUMERIC_RECALL_CITATION,
+    ):
+        for metadata in metadata_pattern.finditer(source_text):
+            if metadata_pattern is _EU_REGULATION_NUMERIC_RECALL_CITATION and (
+                re.match(
+                    r"\s*(?:[+*/=×·•∗∙−–-]|(?:plus|minus|mal|less)\b)"
+                    r"\s*[+−-]?\s*(?:\d|[.,]\d)",
+                    source_text[metadata.end() :],
+                    flags=re.IGNORECASE,
+                )
+                or re.search(
+                    r"\d(?:[.,]\d+)?\s*"
+                    r"(?:[+*/=×·•∗∙−–-]|\b(?:plus|minus|mal|less))\s*$",
+                    source_text[: metadata.start()],
+                    flags=re.IGNORECASE,
+                )
+            ):
+                # A numeric operator attached to the reference is ambiguous:
+                # preserve it rather than hide an operand with the citation.
+                continue
+            arithmetic_text[metadata.start() : metadata.end()] = " " * (
+                metadata.end() - metadata.start()
+            )
     masked_source_text = "".join(arithmetic_text)
     if _WORDED_ARITHMETIC_EXPRESSION.search(masked_source_text):
         return True

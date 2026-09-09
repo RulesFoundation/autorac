@@ -42921,6 +42921,93 @@ bis zu 20 Stunden regelmäßiger wöchentlicher Arbeitszeit."""
 @pytest.mark.parametrize(
     "citation",
     [
+        "Verordnung (EU) 2021/888",
+        "Verordnung (EG) Nr. 883/2004",
+        "Verordnung (EWG) Nr. 1408/71",
+        "Verordnungen (EU) 2018/1475 und (EU) Nr. 375/2014",
+        "Verordnungen (EU) 2018/1475, (EU) Nr. 375/2014",
+    ],
+)
+def test_eu_regulation_identifiers_are_not_division_formulas(citation):
+    assert not completeness_module.source_states_explicit_computation(citation)
+    # An equal-valued operation outside the citation remains a computation.
+    assert completeness_module.source_states_explicit_computation(
+        f"{citation}; Der Betrag ist 2021 / 888."
+    )
+
+
+def test_estg32_regulation_title_does_not_create_formula_clause_witnesses():
+    source = """(4) 1Ein Kind wird berücksichtigt, wenn es eine Freiwilligentätigkeit
+im Rahmen des Europäischen Solidaritätskorps im Sinne der
+Verordnung (EU) 2021/888 des Europäischen Parlaments und des Rates vom 20. Mai 2021
+zur Aufstellung des Programms für das Europäische Solidaritätskorps und zur Aufhebung
+der Verordnungen (EU) 2018/1475 und (EU) Nr. 375/2014 (ABl. L 202 vom 8.6.2021, S. 32)
+leistet. 2Der Betrag wird durch drei geteilt."""
+    branches = recognize_source_structure(source)
+    clauses = completeness_module._source_formula_branches(
+        source,
+        branches=branches,
+        active_branches=branches,
+        deferred_paths=set(),
+    )
+    assert len(clauses) == 1
+    assert "durch drei geteilt" in clauses[0].text
+    assert source[clauses[0].start : clauses[0].end] == clauses[0].text
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "Der Betrag ist 2021 / 888.",
+        "Der Betrag ist 883/2004.",
+        "Der Betrag ist 1408/71.",
+        "Verordnung (EU) 2021/888/32",
+        "Verordnung (EU) 2021/888888 Euro",
+        "Verordnung (EU) 2021/888.5",
+        "Verordnung (EU) 2021/888,5",
+        "Verordnungen (EU) 2018/1475 und (EU) Nr. 375/2014.5",
+        "Verordnungen (EU) 2018/1475 und (EU) Nr. 375/2014,5",
+    ],
+)
+def test_eu_reference_formula_mask_preserves_unbound_or_partial_arithmetic(source):
+    assert completeness_module.source_states_explicit_computation(source)
+
+
+@pytest.mark.parametrize("operator", ["*", "+", "-", "/", "×", "plus", "minus", "mal"])
+@pytest.mark.parametrize("before", [False, True])
+def test_eu_reference_formula_mask_preserves_attached_numeric_operators(
+    operator, before
+):
+    citation = "Verordnung (EU) 2021/888"
+    source = f"2 {operator} {citation}" if before else f"{citation} {operator} 2"
+    assert completeness_module.source_states_explicit_computation(source)
+
+
+@pytest.mark.parametrize("operand", ["-2", "+2", "−2", ".5", ",5", "-.5", "+,5"])
+@pytest.mark.parametrize("operator", ["*", "/", "plus"])
+@pytest.mark.parametrize("before", [False, True])
+def test_eu_reference_formula_mask_preserves_signed_and_decimal_operands(
+    operand, operator, before
+):
+    citation = "Verordnung (EU) 2021/888"
+    source = (
+        f"{operand} {operator} {citation}"
+        if before
+        else f"{citation} {operator} {operand}"
+    )
+    assert completeness_module.source_states_explicit_computation(source)
+
+
+@pytest.mark.parametrize("suffix", [".", ",", ";", " – Aktuelle Fassung", " - Titel"])
+def test_eu_reference_formula_mask_accepts_ordinary_citation_punctuation(suffix):
+    assert not completeness_module.source_states_explicit_computation(
+        f"Verordnung (EU) 2021/888{suffix}"
+    )
+
+
+@pytest.mark.parametrize(
+    "citation",
+    [
         "(ABl. L 202 vom 8.6.2021, S. 32)",
         "(ABl. C 110 vom 25.04.1983, S. 60)",
         "(ABl. L 202\nvom 8.6.2021,\nS. 32–40)",
