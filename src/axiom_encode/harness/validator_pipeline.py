@@ -11247,6 +11247,37 @@ class _TrackedText:
         offsets.extend(self.offsets[last:])
         return _TrackedText("".join(pieces), offsets)
 
+    def rewrite_mapped(
+        self,
+        pattern: "re.Pattern[str]",
+        repl: "Callable[[re.Match[str]], Sequence[tuple[str, int | None]]]",
+    ) -> "_TrackedText":
+        """Replace each match with characters that carry their own offsets.
+
+        ``repl`` returns the replacement as (character, offset in this text)
+        pairs of the matched width, for an edit that moves a character
+        rather than rewriting it in place: the character keeps its source.
+        """
+        pieces: list[str] = []
+        offsets: list[int | None] = []
+        last = 0
+        for match in pattern.finditer(self.text):
+            start, end = match.span()
+            replacement = list(repl(match))
+            if len(replacement) != end - start:
+                raise ValueError("Rewrite changed the width of the text")
+            pieces.append(self.text[last:start])
+            offsets.extend(self.offsets[last:start])
+            pieces.append("".join(character for character, _ in replacement))
+            offsets.extend(
+                None if position is None else self.offsets[position]
+                for _, position in replacement
+            )
+            last = end
+        pieces.append(self.text[last:])
+        offsets.extend(self.offsets[last:])
+        return _TrackedText("".join(pieces), offsets)
+
     def blank(self, start: int, end: int) -> "_TrackedText":
         """Replace a span with spaces of the same width, offsets kept in place."""
         return _TrackedText(
@@ -11272,6 +11303,23 @@ class _TrackedText:
         for part in parts:
             offsets.extend(part.offsets)
         return _TrackedText(text, offsets)
+
+
+_HEBREW_PREFIX_MAQAF_BEFORE_WORD_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])"
+    "(\u05d5[\u05d4\u05d1\u05db\u05dc\u05de\u05e9]|\u05db\u05e9|\u05e9\u05d4|\u05de\u05d4"
+    "|[\u05d5\u05d4\u05d1\u05db\u05dc\u05de\u05e9])\u05be(?=[\u0590-\u05ff])"
+)
+
+
+def _hebrew_attach_prefix_cluster(
+    match: "re.Match[str]",
+) -> list[tuple[str, int | None]]:
+    """Move a prefix cluster across its maqaf: "ו־עד" becomes " ועד"."""
+    start = match.start(1)
+    return [(" ", None)] + [
+        (character, start + index) for index, character in enumerate(match.group(1))
+    ]
 
 
 def _clean_source_text_for_numeric_extraction(
@@ -11372,6 +11420,17 @@ def _clean_source_text_for_numeric_extraction_tracked(
             "(?=[\u0590-\u05ff\\d\u00bc-\u00be\u2150-\u215e])"
         ),
         "\\1\u05be",
+    )
+    # A maqaf after a prefix cluster before a Hebrew letter ("ו־עד",
+    # "ו־המתינה", "ה־שיעורים", "וה־שני") binds the prefix to the word the
+    # way attachment does: the source means "ועד" whichever way it set the
+    # prefix. The cluster moves up to the word and the maqaf's slot becomes
+    # the space before it, one character for one, each letter keeping its
+    # own offset, so the attached, maqaf and hyphen spellings are one text
+    # to every reader. Only a cluster that is a prefix stack moves: a
+    # two-letter word ("כל־", "של־") stays where it is.
+    tracked = tracked.rewrite_mapped(
+        _HEBREW_PREFIX_MAQAF_BEFORE_WORD_PATTERN, _hebrew_attach_prefix_cluster
     )
     # Hebrew prose attaches the one-letter prefix preposition to a following
     # numeral with a maqaf, the Hebrew hyphen (U+05BE): mem-maqaf-84,120

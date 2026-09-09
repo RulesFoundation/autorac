@@ -48,6 +48,7 @@ from axiom_encode.harness.validator_pipeline import (
     HEBREW_HEADED_LIST_IN_CONDITION,
     NumericOccurrence,
     OracleSubprocessResult,
+    _clean_source_text_for_numeric_extraction_tracked,
     _corpus_citation_to_normalized_target,
     _extract_json_object,
     _formula_is_syntactically_unsatisfiable_false,
@@ -55,6 +56,7 @@ from axiom_encode.harness.validator_pipeline import (
     _literal_comparison_truth_value,
     _normalize_us_tax_filing_status,
     _normalize_validation_staging_text,
+    _NumericTextView,
     _policyengine_expected_float,
     _policyengine_period_string,
     _policyengine_us_snap_input_aliases,
@@ -20280,17 +20282,20 @@ def test_a_hyphen_after_a_prefix_is_the_maqaf_it_stands_for():
     ) == extract_numbers_from_text("על כל שקל חדש מ־84,120 – 10%")
 
 
-def test_every_pinned_maqaf_case_reads_the_same_with_a_hyphen():
+def test_every_pinned_maqaf_case_reads_the_same_with_a_hyphen_or_attached():
     # Every Hebrew literal this module pins that sets a maqaf after a prefix
-    # cluster has a hyphen twin, and every hyphen case a maqaf twin; the two
-    # spellings recall and extract the same values. The literals are read
-    # from this file so a new case joins the check as it is written.
+    # cluster has a hyphen twin and, before a letter, an attached twin, and
+    # every hyphen case a maqaf twin; the spellings recall and extract the
+    # same values. The literals are read from this file so a new case joins
+    # the check as it is written.
     source = Path(__file__).read_text(encoding="utf-8")
     literals = set(re.findall(r'"([^"\n\\]*[\u0590-\u05ff][^"\n\\]*)"', source))
     cluster = "([\u05d5\u05d4\u05d1\u05db\u05dc\u05de\u05e9]{1,2})"
     follower = "(?=[\u0590-\u05ff0-9])"
     prefix_maqaf = re.compile("(?<![\u0590-\u05ff])" + cluster + "\u05be" + follower)
     prefix_hyphen = re.compile("(?<![\u0590-\u05ff])" + cluster + "-" + follower)
+    stack = "(\u05d5[\u05d4\u05d1\u05db\u05dc\u05de\u05e9]|\u05db\u05e9|\u05e9\u05d4|\u05de\u05d4|[\u05d5\u05d4\u05d1\u05db\u05dc\u05de\u05e9])"
+    attached = re.compile("(?<![\u0590-\u05ff])" + stack + "\u05be(?=[\u0590-\u05ff])")
     checked = 0
     for literal in sorted(literals):
         twins = []
@@ -20298,6 +20303,8 @@ def test_every_pinned_maqaf_case_reads_the_same_with_a_hyphen():
             twins.append(prefix_maqaf.sub(r"\1-", literal))
         if prefix_hyphen.search(literal):
             twins.append(prefix_hyphen.sub("\\1\u05be", literal))
+        if attached.search(literal):
+            twins.append(attached.sub(r"\1", literal))
         for twin in twins:
             assert _hebrew_recall(twin) == _hebrew_recall(literal), (literal, twin)
             assert extract_numbers_from_text(twin) == extract_numbers_from_text(
@@ -20305,6 +20312,49 @@ def test_every_pinned_maqaf_case_reads_the_same_with_a_hyphen():
             ), (literal, twin)
             checked += 1
     assert checked >= 400, checked
+
+
+def test_a_maqaf_after_a_prefix_binds_the_word_as_attachment_does():
+    # Review round 140 on #1585: a prefix cluster before a maqaf and a
+    # Hebrew letter moves up to its word in the numeric text view, so a
+    # range connector, a duration verb and every other prefixed word read
+    # the same under the attached, maqaf and hyphen spellings, and
+    # grounding follows the reading.
+    cases = (
+        ("מאה ועד מאתיים אלף שקלים", {100_000.0, 200_000.0}, "100000", "100"),
+        ("מאה ו־עד מאתיים אלף שקלים", {100_000.0, 200_000.0}, "100000", "100"),
+        ("מאה ו-עד מאתיים אלף שקלים", {100_000.0, 200_000.0}, "100000", "100"),
+        ("הריבית תהיה מ־10 ועד 30 אחוזים.", {0.1, 0.3}, "0.1", "10"),
+        ("הריבית תהיה מ־10 ו־עד 30 אחוזים.", {0.1, 0.3}, "0.1", "10"),
+        ("הריבית תהיה מ-10 ו-עד 30 אחוזים.", {0.1, 0.3}, "0.1", "10"),
+        ("המערכת הופעלה והמתינה עשירית שנייה לאחר קבלת האות", {0.1}, "0.1", "10"),
+        ("המערכת הופעלה ו־המתינה עשירית שנייה לאחר קבלת האות", {0.1}, "0.1", "10"),
+        ("המערכת הופעלה ו-המתינה עשירית שנייה לאחר קבלת האות", {0.1}, "0.1", "10"),
+    )
+    for text, expected, grounded, ungrounded in cases:
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+    # The moved cluster keeps its provenance: the token "ועד" in the view
+    # maps to the source's "ו־עד", maqaf included; a two-letter word before
+    # a maqaf is not a prefix stack and stays where it is.
+    source = "מאה ו־עד מאתיים; כל־הסכומים"
+    view = _NumericTextView.tracked(
+        source, _clean_source_text_for_numeric_extraction_tracked(source)
+    )
+    assert view.text == "מאה  ועד מאתיים; כל־הסכומים"
+    start = view.text.index("ועד")
+    assert source[slice(*view.source_span((start, start + 3)))] == "ו־עד"
 
 
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
