@@ -2654,7 +2654,8 @@ _HEBREW_FRACTION_BASE_AMOUNT_PATTERN = re.compile(
 # יהיה". A verb or a noun of its own between them ("המענק יינתן למפעל
 # המעסיק לפחות") means the noun governs something else.
 _HEBREW_MONEY_CONTEXT_CONNECTORS = (
-    "של|בסך|בסכום|בגובה|בשיעור|בשווי|עד|לפחות|על|לא|יעלה|תעלה|עולה|העולה|"
+    "של|בסך|בסכום|בגובה|בשיעור|בשווי|עד|לפחות|על|לא|יעלה|תעלה|יעלו|תעלינה|"
+    "עולה|עולים|עולות|העולה|העולים|העולות|יפחתו|תפחתנה|"
     "יפחת|תפחת|פחות|הפחות|שלא|שאינו|שאינה|לכל|היותר|שנתי|שנתית|"
     "חודשי|חודשית|בסיסי|בסיסית|מרבי|מרבית|מזערי|מזערית|מינימלי|מינימלית|"
     "מקסימלי|מקסימלית|ממוצע|ממוצעת|הממוצע|יהיה|יהא|תהיה|תהא|הוא|היא|הם|הן|"
@@ -2681,16 +2682,43 @@ _HEBREW_RELATIVE_PARTICIPLES = (
 _HEBREW_MONEY_POSSESSOR_CONNECTORS = (
     "של|בסך|בסכום|בגובה|בשיעור|בשווי|עד|לפחות|לא|שלא|שאינו|שאינה|לכל|היותר|"
     "הפחות|"
-    "יעלה\\s+על|תעלה\\s+על|עולה\\s+על|העולה\\s+על|"
-    "יפחת\\s+\u05de[\u05be-]?|תפחת\\s+\u05de[\u05be-]?|פחות\\s+\u05de[\u05be-]?|"
+    "יעלה\\s+על|תעלה\\s+על|יעלו\\s+על|תעלינה\\s+על|עולה\\s+על|עולים\\s+על|"
+    "עולות\\s+על|העולה\\s+על|העולים\\s+על|העולות\\s+על|"
+    "יפחת\\s+\u05de[\u05be-]?|תפחת\\s+\u05de[\u05be-]?|יפחתו\\s+\u05de[\u05be-]?|"
+    "תפחתנה\\s+\u05de[\u05be-]?|פחות\\s+\u05de[\u05be-]?|"
     "יותר\\s+\u05de[\u05be-]?|למעלה\\s+\u05de[\u05be-]?|"
-    "יהיה|יהא|תהיה|תהא|הוא|היא|הם|הן|"
+    "יהיה|יהא|תהיה|תהא|יהיו|תהיינה|הוא|היא|הם|הן|"
     "\u05d4[\u05be-]?(?:שנתי|שנתית|חודשי|חודשית|בסיסי|בסיסית|מרבי|מרבית|"
-    "מזערי|מזערית|מינימלי|מינימלית|מקסימלי|מקסימלית|ממוצע|ממוצעת)"
+    "מזערי|מזערית|מינימלי|מינימלית|מקסימלי|מקסימלית|ממוצע|ממוצעת|"
+    "שנתיים|שנתיות|חודשיים|חודשיות|כוללים|כוללות|מרביים|מרביות|ממוצעים|ממוצעות)"
 )
+_HEBREW_FINAL_TO_MEDIAL = {
+    "\u05dd": "\u05de",  # ם → מ
+    "\u05df": "\u05e0",  # ן → נ
+    "\u05e5": "\u05e6",  # ץ → צ
+    "\u05e3": "\u05e4",  # ף → פ
+    "\u05da": "\u05db",  # ך → כ
+}
+
+
+def _hebrew_stems_with_medial_finals(stems: str) -> str:
+    """A stem alternation whose final letters also match their medial forms.
+
+    A suffix moves a stem's final letter to its medial form: "תשלום" is
+    "תשלומים" in the plural and "תשלומיו" with a possessive, "סכום" is
+    "סכומים". Each stem ending in a final letter matches either form.
+    """
+    return "|".join(
+        stem[:-1] + "[" + stem[-1] + _HEBREW_FINAL_TO_MEDIAL[stem[-1]] + "]"
+        if stem and stem[-1] in _HEBREW_FINAL_TO_MEDIAL
+        else stem
+        for stem in stems.split("|")
+    )
+
+
 _HEBREW_MONEY_NOUN = (
     "(?:(?:"
-    + _HEBREW_AMOUNT_NOUN_STEMS.replace("|מס|", "|")
+    + _hebrew_stems_with_medial_finals(_HEBREW_AMOUNT_NOUN_STEMS.replace("|מס|", "|"))
     + ")[\u0590-\u05ff]{0,6}|מס(?:ים|י)?)"
 )
 # A printed multiplier may stand between the noun and the scale word the
@@ -2716,7 +2744,8 @@ _HEBREW_MONEY_PRINTED_TAIL = (
 # it includes is a count of its own ("הסיוע כולל 3 אלפים ו־200 מיטות",
 # "התקציב הכולל לפחות 3 אלפים ו־200 עובדים").
 _HEBREW_MONEY_TOTAL_ADJECTIVE = (
-    "(?:\u05d4[\u05be-]?)?כולל(?:ת)?(?=\\s+(?:של|(?:שלא|לא)\\s+(?:יעלה|תעלה|יפחת|תפחת)|שאינו|שאינה|"
+    "(?:\u05d4[\u05be-]?)?כולל(?:ת|ים|ות)?(?=\\s+(?:של|(?:שלא|לא)\\s+"
+    "(?:יעלה|תעלה|יעלו|תעלינה|יפחת|תפחת|יפחתו|תפחתנה)|שאינו|שאינה|שאינם|שאינן|"
     "יהיה|יהא|תהיה|תהא|הוא|היא|הם|הן|"
     "\u05d4[\u05be-]?(?:שנתי|שנתית|חודשי|חודשית|בסיסי|בסיסית|מרבי|מרבית|מזערי|מזערית|"
     "מינימלי|מינימלית|מקסימלי|מקסימלית|ממוצע|ממוצעת))(?![\u0590-\u05ff]))"
@@ -5180,28 +5209,12 @@ def _hebrew_word_is_definite(word: str) -> bool:
 
 
 _HEBREW_RATE_NEUTRAL_WORDS = frozenset(
-    {
-        "לא",
-        "אינה",
-        "אינו",
-        "אינם",
-        "אינן",
-        "גם",
-        "רק",
-        "אף",
-        "כן",
-        "בלבד",
-        "אך",
-        # Clause adverbs and conjunctions that hold no phrase of their own.
-        "אז",
-        "לכן",
-        "לפיכך",
-        "אולם",
-        "אבל",
-        "אלא",
-        "כי",
-        "וכן",
-    }
+    {"לא", "אינה", "אינו", "אינם", "אינן", "גם", "רק", "אף", "כן", "בלבד", "אך"}
+)
+# Clause adverbs and conjunctions: they hold no phrase of their own and
+# close the phrase before them ("מהמותר בחוק אז הקנס").
+_HEBREW_RATE_CLAUSE_ADVERBS = frozenset(
+    {"אז", "לכן", "לפיכך", "אולם", "אבל", "אלא", "כי", "וכן", "ואז", "ולכן", "ולפיכך"}
 )
 
 
@@ -5265,7 +5278,10 @@ def _hebrew_rate_expression_governs(words: list[str], construct: bool) -> bool:
     if main is not None:
         expect_object = False
         for bare in bares[main + 1 :]:
-            if bare in _HEBREW_RATE_NEUTRAL_WORDS:
+            if (
+                bare in _HEBREW_RATE_NEUTRAL_WORDS
+                or bare in _HEBREW_RATE_CLAUSE_ADVERBS
+            ):
                 continue
             if bare in _HEBREW_RATE_PREPOSITIONS:
                 expect_object = True
@@ -5302,6 +5318,13 @@ def _hebrew_rate_expression_governs(words: list[str], construct: bool) -> bool:
     for bare in subject:
         if bare in _HEBREW_RATE_NEUTRAL_WORDS:
             held.append(True)
+            continue
+        if bare in _HEBREW_RATE_CLAUSE_ADVERBS:
+            held.append(True)
+            in_phrase = False
+            last_definite = False
+            construct_head = False
+            relative = False
             continue
         if not (
             (

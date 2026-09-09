@@ -21151,6 +21151,35 @@ def test_a_nouns_first_letter_is_a_letter_and_an_attached_object_keeps_its_artic
         ), (text[:50], issue)
 
 
+def test_an_amount_noun_is_known_inflected_and_an_adverb_closes_a_phrase():
+    # Review round 156 on #1585: an amount noun's stem matches its plural
+    # and suffixed forms, where a final letter turns medial, and a clause
+    # adverb closes the phrase before it, as a comma would.
+    fine = {50.0, 0.02}
+    heading = "הסכומים בשקלים: אם הריבית גבוהה מן המותר "
+    for text in (
+        heading + "התשלומים יהיו 50 או 2% מהמחזור",
+        heading + "הסכומים יהיו 50 או 2% מהמחזור",
+        heading + "תשלומיו יהיו 50 או 2% מהמחזור",
+        heading + "התשלום יהיה 50 או 2% מהמחזור",
+        "הסכומים בשקלים: אם הריבית גבוהה מהמותר בחוק אז הקנס יהיה 50 או 2% מהמחזור",
+        "הסכומים בשקלים: אם הריבית גבוהה מהמותר בחוק, הקנס יהיה 50 או 2% מהמחזור",
+    ):
+        assert _hebrew_recall(text) == fine, text[:50]
+        content = _danish_numeric_rulespec("50", citation_path="il/statute/example/1")
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text[
+            :50
+        ]
+        content = _danish_numeric_rulespec("0.5", citation_path="il/statute/example/1")
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith("Ungrounded generated numeric literal: 0.5 "), issue
+    # A plural money noun with plural connectors still carries its context.
+    assert _hebrew_recall("התשלומים הכוללים לא יעלו על 3 מיליון ו־30 ימי חופשה") == {
+        3_000_000.0,
+        30.0,
+    }
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
