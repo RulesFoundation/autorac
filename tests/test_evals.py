@@ -13247,6 +13247,51 @@ rules:
         assert _normalize_test_case_value("30 / 0") == "30 / 0"
 
     @pytest.mark.parametrize(
+        "literal", ("2024-12-31", "1990-11-30", "2025-01-01", "2024-02-30")
+    )
+    def test_normalize_test_case_value_preserves_date_facts(self, literal):
+        assert _normalize_test_case_value(literal) == literal
+        wrapped = {"entity": "person", "value": literal}
+        assert _normalize_test_case_value(wrapped) == wrapped
+        assert _normalize_test_case_value({"values": {"2025": literal}}) == literal
+        assert _normalize_test_case_value([literal]) == [literal]
+
+    def test_normalize_test_case_value_keeps_explicit_subtraction(self):
+        assert _normalize_test_case_value("2024 - 12 - 31") == 1981
+
+    def test_materialize_eval_artifact_preserves_quoted_date_facts(self, tmp_path):
+        output_file = tmp_path / "source" / "receipt.yaml"
+        response = """=== FILE: receipt.yaml ===
+format: rulespec/v1
+module:
+  summary: Compare a recorded receipt date with the end of the query month.
+inputs:
+  - name: receipt_date
+    entity: Person
+    dtype: Date
+    period: Month
+rules:
+  - name: receipt_cutoff_reached
+    kind: derived
+    entity: Person
+    dtype: Judgment
+    period: Month
+    versions:
+      - effective_from: '2025-01-01'
+        formula: receipt_date <= period_end
+=== FILE: receipt.test.yaml ===
+- name: prior_year_receipt
+  period: 2025-01
+  input:
+    receipt_date: '2024-12-31'
+  output:
+    receipt_cutoff_reached: holds
+"""
+        assert _materialize_eval_artifact(response, output_file)
+        cases = yaml.safe_load(output_file.with_suffix(".test.yaml").read_text())
+        assert cases[0]["input"]["receipt_date"] == "2024-12-31"
+
+    @pytest.mark.parametrize(
         "literal",
         (
             "432.09845",
