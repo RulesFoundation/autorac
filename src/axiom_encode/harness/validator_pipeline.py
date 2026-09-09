@@ -2319,11 +2319,15 @@ def _parse_hebrew_number_run(
     separate_after = False
     if money_context is None:
         # Callers with the text pass the context in; a bare run reads it
-        # from the words before its start.
+        # from the words of its own clause before its start.
+        clause = start
+        while clause > 0 and not any(
+            character in _HEBREW_CLAUSE_STOP_CHARACTERS
+            for character in words[clause - 1]
+        ):
+            clause -= 1
         money_context = (
-            _HEBREW_MONEY_CONTEXT_PATTERN.search(
-                " ".join(words[max(0, start - 8) : start]) + " "
-            )
+            _HEBREW_MONEY_CONTEXT_PATTERN.search(" ".join(words[clause:start]) + " ")
             is not None
         )
     if (
@@ -2733,7 +2737,7 @@ _HEBREW_MONEY_CONTEXT_PATTERN = re.compile(
     + _HEBREW_RELATIVE_PARTICIPLES
     + ")(?![\u0590-\u05ff]))\u05d4[\u05be-]?[\u0590-\u05ff]{2,}(?:\\s+(?:"
     + _HEBREW_MONEY_POSSESSOR_CONNECTORS
-    + ")(?![\u0590-\u05ff])){0,6}"
+    + ")(?![\u0590-\u05ff]))*"
     + _HEBREW_MONEY_PRINTED_TAIL
     + "|"
     "(?<![\u0590-\u05ff])"
@@ -2742,7 +2746,7 @@ _HEBREW_MONEY_CONTEXT_PATTERN = re.compile(
     + "(?![\u0590-\u05ff])"
     "(?:\\s+(?:\u05d4[\u05be-]?)?(?:"
     + _HEBREW_MONEY_CONTEXT_CONNECTORS
-    + ")[\u05be-]?){0,6}"
+    + ")[\u05be-]?)*"
     + _HEBREW_MONEY_PRINTED_TAIL
     + ")"
 )
@@ -4919,7 +4923,10 @@ def _hebrew_currency_gap_character(character: str) -> bool:
 # signed pair share too.
 _HEBREW_RATE_WORD_BEFORE_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])(?:(?:[\u05d1\u05d4\u05d5\u05dc\u05e9][\u05be-]?){0,2}שיעור(?:ים|י)?|אחוז(?:ים)?|(?:ה[\u05be-]?)?ריבית)"
-    "(?:\\s+[^\\s.;:,\\n]+){0,6}\\s*$"
+    # Any modifiers may stand between the rate word and the pair ("הריבית
+    # השנתית החלה על יתרת ההלוואה הכוללת תהיה 10 או 30%"); a clause stop
+    # ends the scope.
+    "(?:\\s+[^\\s.;:,\\n]+)*\\s*$"
 )
 _HEBREW_CLAUSE_STOP_CHARACTERS = frozenset(".;:,\n")
 
@@ -4932,8 +4939,6 @@ def _hebrew_rate_word_before(text: str, start: int) -> bool:
         and text[clause_start - 1] not in _HEBREW_CLAUSE_STOP_CHARACTERS
     ):
         clause_start -= 1
-        if start - clause_start > 48:
-            break
     return (
         _HEBREW_RATE_WORD_BEFORE_PATTERN.search(text, clause_start, start) is not None
     )
@@ -5639,8 +5644,8 @@ def _hebrew_list_heading_end(text: str, start: int, rate: bool) -> int | None:
                 if (
                     resumed < len(text)
                     and _hebrew_member_starts_at(text, resumed)
-                    and _HEBREW_SOFT_WRAP_BEFORE_PATTERN.search(
-                        text, max(0, clause_start - 24), clause_start - 1
+                    and _search_before(
+                        _HEBREW_SOFT_WRAP_BEFORE_PATTERN, text, clause_start - 1, 24
                     )
                     is not None
                 ):
@@ -5945,7 +5950,7 @@ def _hebrew_operand_is_denominated(text: str, start: int, end: int) -> bool:
     while before > 0 and _hebrew_currency_gap_character(text[before - 1]):
         before -= 1
     if (
-        _HEBREW_CURRENCY_MARK_BEFORE_PATTERN.search(text, max(0, before - 40), before)
+        _search_before(_HEBREW_CURRENCY_MARK_BEFORE_PATTERN, text, before, 40)
         is not None
     ):
         return True

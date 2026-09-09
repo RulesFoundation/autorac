@@ -20777,6 +20777,58 @@ def test_a_shared_unit_crosses_indentation_and_a_long_relative_clause():
     assert hebrew_ambiguous_reading_groups(split) == []
 
 
+def test_a_clause_is_the_scope_not_a_count_of_characters_or_words():
+    # Review round 147 on #1585. Padding before a line wrap hides nothing
+    # from the heading's soft-wrap check; a rate word reaches its pair
+    # across any modifiers in its clause, and a clause stop ends its reach;
+    # a money context reaches its amount across any of its connectors.
+    rates = {0.1, 0.2, 0.3}
+    amounts = {10_000_000.0, 20_000_000.0, 30_000_000.0}
+    padded = " " * 40 + "\n    "
+    for text, expected, grounded in (
+        ("השיעורים הם 10," + padded + "20 ו־30 אחוזים", rates, "0.1"),
+        ("הסכומים הם 10," + padded + "20 ו־30 מיליון שקלים", amounts, "10000000"),
+        ("השיעורים הם 10,\t\t\n\t20 ו־30 אחוזים", rates, "0.1"),
+        ("הריבית השנתית החלה על יתרת ההלוואה הכוללת תהיה 10 או 30%", {0.1, 0.3}, "0.1"),
+        (
+            "הריבית השנתית החלה על יתרת ההלוואה הכוללת של הלווה לפי הסכם ההלוואה"
+            " המקורי תהיה 10 או 30%",
+            {0.1, 0.3},
+            "0.1",
+        ),
+    ):
+        assert _hebrew_recall(text) == expected, text[:40]
+        assert extract_numbers_from_text(text) == expected, text[:40]
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text[
+            :40
+        ]
+        content = _danish_numeric_rulespec("10", citation_path="il/statute/example/1")
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith("Ungrounded generated numeric literal: 10 "), issue
+    # A blank line after the padding is still a paragraph boundary, and a
+    # clause stop between the rate word and the pair ends the rate's reach.
+    assert _hebrew_recall("השיעורים הם 10," + " " * 40 + "\n\n    20 ו־30 אחוזים") == {
+        10.0,
+        20.0,
+        0.3,
+    }
+    for text in (
+        "הריבית נקבעה בהסכם. הסכום הוא 10 או 30%",
+        "הריבית נקבעה בהסכם, והסכום הוא 10 או 30%",
+    ):
+        assert _hebrew_recall(text) == {10.0, 0.3}, text
+    # A money noun's connectors, eight of them, still carry the context to
+    # the amount: the thirty days after it are days, not a remainder.
+    assert _hebrew_recall(
+        "הסכום הכולל השנתי הממוצע המרבי הבסיסי החודשי המזערי לא יעלה על 3 מיליון"
+        " ו־30 ימי חופשה"
+    ) == {3_000_000.0, 30.0}
+    assert _hebrew_recall("יינתנו 3 מיליון ו־30 ימי חופשה") == {3_000_030.0}
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
