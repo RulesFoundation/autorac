@@ -2351,7 +2351,10 @@ def recognize_source_structure(source_text: str) -> tuple[SourceStructureBranch,
         *(match.start() for match in _NUMBER_MARKER.finditer(source_text)),
         *(match.start() for match in _LETTER_MARKER.finditer(source_text)),
         *(match.start() for match in _GLUED_SENTENCE_MARKER.finditer(source_text)),
-        *(match.start() for match in _GLUED_SECTION_SENTENCE_MARKER.finditer(source_text)),
+        *(
+            match.start()
+            for match in _GLUED_SECTION_SENTENCE_MARKER.finditer(source_text)
+        ),
         *(match.start() for match in _EXPLICIT_SENTENCE_MARKER.finditer(source_text)),
     }
     owner_paths = _most_specific_segment_paths_at_offsets(
