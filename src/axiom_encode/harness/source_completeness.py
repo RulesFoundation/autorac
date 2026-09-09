@@ -33,6 +33,7 @@ from typing import Any, Mapping, Protocol
 import yaml
 
 from axiom_encode.harness.proof_validator import _normalize_atom_path
+from axiom_encode.numeric_equality import rulespec_numeric_values_equal
 from axiom_encode.statute import (
     CitationParts,
     normalize_rulespec_path_segment,
@@ -18953,7 +18954,11 @@ def _case_dependency_environment(
                 asserted = _test_case_asserted_output_value(case, name)
                 if (
                     asserted is _UNRESOLVED_CONDITION_VALUE
-                    or not _formula_runtime_values_equal(value, asserted)
+                    or not _asserted_formula_runtime_values_equal(
+                        rule,
+                        value,
+                        asserted,
+                    )
                 ):
                     continue
             resolved[name] = value
@@ -19026,6 +19031,31 @@ def _formula_runtime_values_equal(left: Any, right: Any) -> bool:
     if left_number is not None and right_number is not None:
         return left_number == right_number
     return type(left) is type(right) and left == right
+
+
+def _asserted_formula_runtime_values_equal(
+    rule: Mapping[str, Any],
+    runtime: Any,
+    asserted: Any,
+) -> bool:
+    """Match engine-checked cent assertions despite binary64 residue."""
+
+    if _formula_runtime_values_equal(runtime, asserted):
+        return True
+    if rule.get("dtype") != "Money" or type(asserted) is not float:
+        return False
+    runtime_number = _rulespec_runtime_decimal(runtime)
+    asserted_number = _rulespec_runtime_decimal(asserted)
+    if runtime_number is None or asserted_number is None:
+        return False
+    if asserted_number.as_tuple().exponent < -2:
+        return False
+    return rulespec_numeric_values_equal(
+        runtime_number,
+        asserted_number,
+        actual_kind="integer" if type(runtime) is int else "decimal",
+        expected_kind="decimal",
+    )
 
 
 def _execute_formula_text(
