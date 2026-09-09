@@ -2103,7 +2103,7 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert concurrency_suffix("manual-user", "", "queue-generation", "run-3") == "run-3"
     assert concurrency_suffix("github-actions[bot]", "snap", "", "run-4") == "run-4"
     inputs = trigger["workflow_dispatch"]["inputs"]
-    assert len(inputs) == 25
+    assert len(inputs) == 26
     assert "allowlisted reviewed SHA" in inputs["rulespec_ref"]["description"]
     assert "artifact-only" in inputs["rulespec_ref"]["description"]
     assert inputs["country"] == {
@@ -2121,6 +2121,13 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
         ),
         "required": False,
         "type": "string",
+    }
+    assert inputs["repair_run_lane"] == {
+        "description": "Candidate lane to replay from the prior failed run",
+        "required": False,
+        "default": "target",
+        "type": "choice",
+        "options": ["target", "dependent"],
     }
     assert "repair_candidate_tests_only" not in inputs
     assert inputs["pr_base_branch"]["type"] == "string"
@@ -2326,6 +2333,9 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert repair_step["if"] == "${{ inputs.repair_run_id != '' }}"
     assert repair_step["env"]["GH_TOKEN"] == "${{ github.token }}"
     assert repair_step["env"]["REPAIR_RUN_ID"] == "${{ inputs.repair_run_id }}"
+    assert repair_step["env"]["REPAIR_RUN_LANE"] == (
+        "${{ inputs.repair_run_lane }}"
+    )
     assert repair_step["env"]["RULESPEC_CHECKOUT"] == ("rulespec-${{ inputs.country }}")
     assert "REPAIR_TESTS_ONLY" not in repair_step["env"]
     repair_command = repair_step["run"]
@@ -2346,6 +2356,7 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert "targeted-reencode-failure-${REPAIR_RUN_ID}-1" in repair_command
     assert "extract_repair_candidate.py" in repair_command
     assert '--atomic-source-json "$ATOMIC_SOURCE_JSON"' in repair_command
+    assert '--repair-lane "$REPAIR_RUN_LANE"' in repair_command
     for immutable_argument in (
         "--citation",
         "--country",

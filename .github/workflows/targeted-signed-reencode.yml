@@ -38,6 +38,14 @@ on:
         description: Prior failed protected run whose final candidate is replayed as untrusted repair context
         required: false
         type: string
+      repair_run_lane:
+        description: Candidate lane to replay from the prior failed run
+        required: false
+        default: target
+        type: choice
+        options:
+          - target
+          - dependent
       source_bundle_json:
         description: JSON citation array, canonical_refresh_bundle object, or atomic-source-transaction/v2/v3 envelope for an independent refresh transaction
         required: false
@@ -416,6 +424,7 @@ jobs:
           LEGACY_RETAINED_SUCCESSOR_RULESPEC_PATHS_JSON: ${{ inputs.legacy_retained_successor_rulespec_paths_json }}
           QUEUE_ID: ${{ inputs.queue_id }}
           REPAIR_RUN_ID: ${{ inputs.repair_run_id }}
+          REPAIR_RUN_LANE: ${{ inputs.repair_run_lane }}
           REPLACE_LEGACY_RULESPEC_PATH: ${{ inputs.replace_legacy_rulespec_path }}
           REPLACE_RULESPEC_PATH: ${{ inputs.replace_rulespec_path }}
           RULESPEC_CHECKOUT: rulespec-${{ inputs.country }}
@@ -425,6 +434,7 @@ jobs:
           SECOND_LEGACY_EXACT_DEPENDENT_RULESPEC_PATH: ${{ inputs.second_legacy_exact_dependent_rulespec_path }}
         run: |
           set -euo pipefail
+          : "${REPAIR_RUN_LANE:=target}"
           atomic_source_payload="$(
             python \
               axiom-encode/scripts/prepare_signed_backfill.py \
@@ -451,6 +461,14 @@ jobs:
             echo "repair_run_id must identify a different decimal workflow run" >&2
             exit 1
           fi
+          case "$REPAIR_RUN_LANE" in
+            target|dependent)
+              ;;
+            *)
+              echo "repair_run_lane must be target or dependent" >&2
+              exit 1
+              ;;
+          esac
           if [ -z "$REPLACE_RULESPEC_PATH" ] || \
              [ -n "$REPLACE_LEGACY_RULESPEC_PATH" ] || \
              [ -n "$LEGACY_EXACT_DEPENDENT_RULESPEC_PATH" ] || \
@@ -540,6 +558,7 @@ jobs:
             --rulespec-ref "$RULESPEC_REF" \
             --allow-rulespec-base-advance \
             --atomic-source-json "$ATOMIC_SOURCE_JSON" \
+            --repair-lane "$REPAIR_RUN_LANE" \
             --replace-rulespec-path "$REPLACE_RULESPEC_PATH" \
             --workflow-run-id "$REPAIR_RUN_ID" \
             > "$RUNNER_TEMP/repair-candidate.json"

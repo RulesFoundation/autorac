@@ -1,0 +1,1 @@
+Allow a checksum-bound candidate from a failed direct-dependent lane to be replayed as the immutable baseline of a standalone signed repair, so a successful prerequisite no longer has to be regenerated with every dependent fix attempt.

@@ -143,6 +143,40 @@ def _rewrite_metadata(
     return destination
 
 
+def _rewrite_as_dependent_candidate(
+    source_archive: Path,
+    destination: Path,
+    metadata: dict,
+) -> Path:
+    metadata.pop("source_bundle_input")
+    metadata["atomic_source_input"] = "[]"
+    metadata["citation"] = "us/guidance/primary/source"
+    metadata["replace_rulespec_path"] = "us/guidance/primary/source.yaml"
+    metadata["dependent_citation"] = "us/statute/42/1437c\u20131"
+    metadata["generated_lanes"] = ["dependent", "target"]
+    metadata["files"] = [
+        {**entry, "path": entry["path"].replace("target/", "dependent/", 1)}
+        for entry in metadata["files"]
+    ]
+    with (
+        tarfile.open(source_archive, "r") as source,
+        tarfile.open(destination, "w") as target,
+    ):
+        for member in source.getmembers():
+            extracted = source.extractfile(member)
+            assert extracted is not None
+            body = extracted.read()
+            if member.name == "metadata.json":
+                body = json.dumps(metadata).encode()
+            name = member.name.replace(
+                "generated/target/", "generated/dependent/", 1
+            )
+            info = tarfile.TarInfo(name)
+            info.size = len(body)
+            target.addfile(info, io.BytesIO(body))
+    return destination
+
+
 def _add_generated_payloads(
     source_archive: Path,
     destination: Path,
@@ -224,6 +258,40 @@ def test_prefers_integrity_bound_retained_best_candidate(tmp_path):
     root = Path(result["root"])
     assert result["runner"] == "retained-best"
     assert (root / result["path"]).read_bytes() == retained
+
+
+def test_extracts_dependent_candidate_for_standalone_repair(tmp_path):
+    archive, metadata = _archive(tmp_path)
+    replacement = _rewrite_as_dependent_candidate(
+        archive,
+        tmp_path / "dependent.tar",
+        metadata,
+    )
+
+    result = extract_candidate(
+        _args(tmp_path, replacement, repair_lane="dependent")
+    )
+
+    assert result["runner"] == "openai-gpt-5.6-sol"
+    assert result["path"] == "statutes/42/1437c-1.yaml"
+
+
+def test_rejects_dependent_candidate_with_different_citation(tmp_path):
+    archive, metadata = _archive(tmp_path)
+    replacement = _rewrite_as_dependent_candidate(
+        archive,
+        tmp_path / "dependent.tar",
+        metadata,
+    )
+    metadata["dependent_citation"] = "us/statute/42/different"
+    mismatch = _rewrite_metadata(
+        replacement,
+        tmp_path / "dependent-mismatch.tar",
+        metadata,
+    )
+
+    with pytest.raises(ValueError, match="single-target run: dependent_citation"):
+        extract_candidate(_args(tmp_path, mismatch, repair_lane="dependent"))
 
 
 def test_rejects_tampered_retained_best_candidate(tmp_path):
