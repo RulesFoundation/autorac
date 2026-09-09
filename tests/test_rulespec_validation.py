@@ -20233,6 +20233,80 @@ def test_one_separator_rule_for_every_hebrew_prefix():
     assert issue.startswith("Ungrounded generated numeric literal: 0.5 "), issue
 
 
+def test_a_hyphen_after_a_prefix_is_the_maqaf_it_stands_for():
+    # Review round 139 on #1585: the numeric text view rewrites a hyphen
+    # after a one- or two-letter prefix cluster into the maqaf before any
+    # pattern runs, so the spelled remainder, the unit modifier, the money
+    # context and the fraction word read the same under either spelling,
+    # and grounding follows the reading.
+    cases = (
+        ("סכום של 3 מיליון ו-מאתיים אלף שקלים", {3_200_000.0}, "3200000", "3000000"),
+        ("סכום של 3 מיליון ו־מאתיים אלף שקלים", {3_200_000.0}, "3200000", "3000000"),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מ-הכנסה נוספת, תחול ההוראה.",
+            {0.1, 0.2, 0.3},
+            "0.1",
+            "10",
+        ),
+        (
+            "אם השיעורים הם 10, 20 ו־30 אחוזים מ־הכנסה נוספת, תחול ההוראה.",
+            {0.1, 0.2, 0.3},
+            "0.1",
+            "10",
+        ),
+        ("ה-תקציב הכולל לפחות 3 אלפים ו־200 עובדים", {3200.0}, "3200", "200"),
+        ("ה־תקציב הכולל לפחות 3 אלפים ו־200 עובדים", {3200.0}, "3200", "200"),
+        ("השיעור הוא שלושה% ו-חצי", {0.035}, "0.035", "0.5"),
+        ("השיעור הוא שלושה% ו־חצי", {0.035}, "0.035", "0.5"),
+    )
+    for text, expected, grounded, ungrounded in cases:
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+    # A hyphen after "מ" before a printed number is the prefix's, never a
+    # minus: the two spellings extract the same values.
+    assert extract_numbers_from_text(
+        "על כל שקל חדש מ-84,120 – 10%"
+    ) == extract_numbers_from_text("על כל שקל חדש מ־84,120 – 10%")
+
+
+def test_every_pinned_maqaf_case_reads_the_same_with_a_hyphen():
+    # Every Hebrew literal this module pins that sets a maqaf after a prefix
+    # cluster has a hyphen twin, and every hyphen case a maqaf twin; the two
+    # spellings recall and extract the same values. The literals are read
+    # from this file so a new case joins the check as it is written.
+    source = Path(__file__).read_text(encoding="utf-8")
+    literals = set(re.findall(r'"([^"\n\\]*[\u0590-\u05ff][^"\n\\]*)"', source))
+    cluster = "([\u05d5\u05d4\u05d1\u05db\u05dc\u05de\u05e9]{1,2})"
+    follower = "(?=[\u0590-\u05ff0-9])"
+    prefix_maqaf = re.compile("(?<![\u0590-\u05ff])" + cluster + "\u05be" + follower)
+    prefix_hyphen = re.compile("(?<![\u0590-\u05ff])" + cluster + "-" + follower)
+    checked = 0
+    for literal in sorted(literals):
+        twins = []
+        if prefix_maqaf.search(literal):
+            twins.append(prefix_maqaf.sub(r"\1-", literal))
+        if prefix_hyphen.search(literal):
+            twins.append(prefix_hyphen.sub("\\1\u05be", literal))
+        for twin in twins:
+            assert _hebrew_recall(twin) == _hebrew_recall(literal), (literal, twin)
+            assert extract_numbers_from_text(twin) == extract_numbers_from_text(
+                literal
+            ), (literal, twin)
+            checked += 1
+    assert checked >= 400, checked
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

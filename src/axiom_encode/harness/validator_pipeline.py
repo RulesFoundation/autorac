@@ -3028,9 +3028,9 @@ _HEBREW_NOT_A_PARTITIVE_LOOKAHEAD = (
 )
 _HEBREW_FRACTION_WORD_PATTERN = re.compile(
     "(?<![֐-׿])"
-    "(?P<prefix>(?:[ובכלמש]־?){0,2})"
+    "(?P<prefix>(?:[ובכלמש][־-]?){0,2})"
     "(?:(?P<count>" + _hebrew_alternation(_HEBREW_FRACTION_COUNT_VALUES) + ")\\s+)?"
-    "(?P<article>ה?)"
+    "(?P<article>(?:ה[־-]?)?)"
     "(?P<fraction>"
     + _hebrew_alternation(
         set(_HEBREW_FRACTION_VALUES) | set(_HEBREW_FRACTION_CONSTRUCT_VALUES)
@@ -4230,7 +4230,9 @@ def _iter_hebrew_shared_scale_range_matches(
 
 
 # The whitespace before a vav-bound spelled remainder ("3 מיליון ומאתיים אלף").
-_HEBREW_SPELLED_REMAINDER_GAP_PATTERN = re.compile("\\s+(?=\u05d5[\u0590-\u05ff])")
+_HEBREW_SPELLED_REMAINDER_GAP_PATTERN = re.compile(
+    "\\s+(?=\u05d5[\u05be-]?[\u0590-\u05ff])"
+)
 _HEBREW_PRINTED_SCALE_VALUES = {
     **_HEBREW_BILLION_WORDS,
     **_HEBREW_MILLION_WORDS,
@@ -11221,6 +11223,30 @@ class _TrackedText:
         offsets.extend(self.offsets[last:])
         return _TrackedText("".join(pieces), offsets)
 
+    def rewrite(self, pattern: "re.Pattern[str]", repl: str) -> "_TrackedText":
+        """Replace each match with text of the same width, offsets kept in place.
+
+        For a character standing in for another (a hyphen typed for a maqaf)
+        the replacement keeps the matched character's offset, since it is
+        that character the source set there.
+        """
+        pieces: list[str] = []
+        offsets: list[int | None] = []
+        last = 0
+        for match in pattern.finditer(self.text):
+            start, end = match.span()
+            replacement = match.expand(repl)
+            if len(replacement) != end - start:
+                raise ValueError("Rewrite changed the width of the text")
+            pieces.append(self.text[last:start])
+            offsets.extend(self.offsets[last:start])
+            pieces.append(replacement)
+            offsets.extend(self.offsets[start:end])
+            last = end
+        pieces.append(self.text[last:])
+        offsets.extend(self.offsets[last:])
+        return _TrackedText("".join(pieces), offsets)
+
     def blank(self, start: int, end: int) -> "_TrackedText":
         """Replace a span with spaces of the same width, offsets kept in place."""
         return _TrackedText(
@@ -11332,6 +11358,21 @@ def _clean_source_text_for_numeric_extraction_tracked(
     # Strip the glued suffix so grouped-thousands parsing sees a clean
     # boundary; a spaced "=" (a real equation, "x = 5") is left untouched.
     tracked = tracked.sub(re.compile(r"(?<=\d)/?=(?=\s|$)"), _blank_match)
+    # A hyphen after a one- or two-letter prefix cluster at a word start
+    # ("ו-מאתיים", "ה-תקציב", "מ-הכנסה", "ל-3", "וה-שני") is the maqaf an
+    # editor's keyboard lacks: the source prints the prefix bound to its word
+    # either way, and every reader below was taught the maqaf. The hyphen
+    # becomes the maqaf in place, one character for one, keeping its offset,
+    # before the maqaf before a digit is detached below, so the two spellings
+    # are one text to every pattern. A hyphen between two words of two or
+    # more letters is a range or a compound and is left as it is.
+    tracked = tracked.rewrite(
+        re.compile(
+            "(?<![\u0590-\u05ff])([\u05d5\u05d4\u05d1\u05db\u05dc\u05de\u05e9]{1,2})-"
+            "(?=[\u0590-\u05ff\\d\u00bc-\u00be\u2150-\u215e])"
+        ),
+        "\\1\u05be",
+    )
     # Hebrew prose attaches the one-letter prefix preposition to a following
     # numeral with a maqaf, the Hebrew hyphen (U+05BE): mem-maqaf-84,120
     # ("from 84,120") in Income Tax Ordinance section 121, bet-maqaf-2.24
