@@ -21317,6 +21317,38 @@ def test_any_feminine_noun_keeps_its_ordinal_and_a_fraction_of_an_amount_is_no_r
     assert _hebrew_recall("תוספת שלישית לחוק") == set()
 
 
+def test_a_verb_is_clause_context_whatever_its_ending_and_every_partitive_keeps_a_fraction():
+    # Review round 162 on #1585: a copula or a verb of paying, receiving or
+    # deducting before a fraction word is clause context whatever letter it
+    # ends in, and a supplement of a fraction under any explicit partitive
+    # is an amount to encode, not a schedule reference.
+    for text, expected, grounded, ungrounded in (
+        ("המעסיקה שילמה חמישית השכר", {0.2}, "0.2", "5"),
+        ("הקצבה הייתה חמישית השכר", {0.2}, "0.2", "5"),
+        ("הקצבה מהווה חמישית השכר", {0.2}, "0.2", "5"),
+        ("המעסיק ניכה חמישית השכר", {0.2}, "0.2", "5"),
+        ("תוספת חמישית מן השכר תשולם לעובד", {0.2}, "0.2", "5"),
+        ("תוספת חמישית מתוך השכר תשולם", {0.2}, "0.2", "5"),
+        ("תוספת חמישית של השכר תשולם", {0.2}, "0.2", "5"),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+    # Schedule references stay masked, "של החוק" included.
+    assert _hebrew_recall("לפי התוספת השנייה של החוק ישולם 100") == {100.0}
+    assert _hebrew_recall("תוספת שלישית לחוק") == set()
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

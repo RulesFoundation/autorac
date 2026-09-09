@@ -2616,10 +2616,14 @@ def _parse_hebrew_number_run(
 # fifth grade, and "דרגה" is none of these.
 _HEBREW_FRACTION_COPULA_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])(?:יהיה|יהא|תהיה|תהא|הוא|היא|הם|הן|של|בשיעור|בגובה|בסך|סכום|"
+    "היה|הייתה|היתה|היו|מהווה|מהוות|מהווים|יהיו|תהיינה|"
     "כדי|עד|לפחות|לכל היותר|ניכוי|הפחתה|הנחה|קיזוז|הפרשה|החזר|"
-    "ישלם|תשלם|ישלמו|ישולם|תשולם|ישולמו|משלם|משלמת|משלמים|שילם|שולם|"
-    "יקבל|תקבל|יקבלו|מקבל|מקבלת|קיבל|"
-    "ינוכה|תנוכה|ינוכו|ינכה|תנכה|מנכה|נוכה|יופחת|תופחת|יופחתו|יוגדל|תוגדל|"
+    "ישלם|תשלם|ישלמו|ישולם|תשולם|ישולמו|משלם|משלמת|משלמים|שילם|שילמה|שילמו|שולם|"
+    "שולמה|שולמו|יקבל|תקבל|יקבלו|מקבל|מקבלת|קיבל|קיבלה|קיבלו|"
+    "ינוכה|תנוכה|ינוכו|ינכה|תנכה|מנכה|נוכה|ניכה|ניכתה|ניכו|יופחת|תופחת|יופחתו|"
+    "הופחת|הופחתה|הפחית|הפחיתה|הפחיתו|יוגדל|תוגדל|קיזז|קיזזה|קיזזו|קוזז|קוזזה|"
+    "החזיר|החזירה|החזירו|הוחזר|הוחזרה|הפריש|הפרישה|הפרישו|העביר|העבירה|העבירו|"
+    "גבה|גבתה|גבו|נשא|נשאה|נשאו|זכה|זכתה|זכו|קבע|קבעה|קבעו|נקבע|נקבעה|נקבעו|"
     "יקוזז|תקוזז|יוחזר|תוחזר|יחזיר|תחזיר|ישיב|תשיב|יפריש|תפריש|יפקיד|תפקיד|"
     "יינתן|תינתן|ינתן|ניתן|ניתנת|יועבר|תועבר|יזוכה|תזוכה|זכאי|זכאית|זכאים|"
     "לשלם|לקבל|לנכות|להפחית|להגדיל|לקזז|להחזיר|להשיב|להפריש|להפקיד|לתת|ליתן|"
@@ -2708,9 +2712,8 @@ _HEBREW_MONEY_NOUN = (
 # "מס" takes only its plural and construct ("מסים", "מסי"), so "המסומנת"
 # and "המספיקה" name no tax.
 _HEBREW_FRACTION_BASE_AMOUNT_PATTERN = re.compile(
-    "\\s+(?:\u05de[\u05be-]?(?:\u05d4[\u05be-]?)?|\u05d4[\u05be-]?)"
-    + _HEBREW_MONEY_NOUN
-    + "(?![\u0590-\u05ff])"
+    "\\s+(?:\u05de[\u05be-]?(?:\u05d4[\u05be-]?)?|(?:מן|מתוך|של)\\s+(?:\u05d4[\u05be-]?)?"
+    "|\u05d4[\u05be-]?)" + _HEBREW_MONEY_NOUN + "(?![\u0590-\u05ff])"
 )
 # A money context: an amount noun ("קנס", "סכום", "מחזור", "שכר") shortly
 # before a scaled number says the number is money, so a unit or count noun
@@ -3212,6 +3215,7 @@ def _iter_hebrew_fraction_word_matches(
                     base is not None
                     and not (
                         base.group(0).lstrip().startswith("\u05d4")
+                        and not _hebrew_fraction_context_before(text, match.start())
                         and _hebrew_word_before_can_be_feminine_singular(
                             text, match.start("fraction")
                         )
@@ -7785,7 +7789,7 @@ _HEBREW_STRUCTURAL_NOT_A_QUANTITY_TAILED = (
 # wage, an amount to encode, where "התוספת החמישית לחוק" is a schedule.
 _HEBREW_STRUCTURAL_NOT_A_QUANTITY = (
     "(?!\\s*(?:" + _HEBREW_STRUCTURAL_UNIT_NOUNS + "))"
-    "(?!\\s+\u05de[\u05be-]?(?:\u05d4[\u05be-]?)?"
+    "(?!\\s+(?:\u05de[\u05be-]?|(?:מן|מתוך|של)\\s+)(?:\u05d4[\u05be-]?)?"
     + _HEBREW_MONEY_NOUN
     + "(?![\u0590-\u05ff]))"
 )
