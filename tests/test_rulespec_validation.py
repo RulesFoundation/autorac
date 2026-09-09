@@ -21386,6 +21386,40 @@ def test_a_prefixed_predicate_counts_and_min_names_a_kind_or_a_whole():
     assert _hebrew_recall("תוספת שלישית לחוק") == set()
 
 
+def test_only_a_fraction_word_before_a_partitive_is_a_fraction():
+    # Review round 164 on #1585: the reference guard fires only for a
+    # fraction-shaped ordinal before an explicit partitive or an amount
+    # noun, so a verb after a schedule and a statute's construct form leave
+    # the reference a reference; "תהווה" is a predicate; and "מן" after an
+    # ordinal a feminine noun carries names a whole only over an amount.
+    for text, expected, grounded, ungrounded in (
+        ("הקצבה תהווה חמישית השכר", {0.2}, "0.2", "5"),
+        ("התקבלה פנייה חמישית מן הציבור", {5.0}, "5", "0.2"),
+        ("ניכוי חמישית מן השכר", {0.2}, "0.2", "5"),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+    for text in (
+        "התוספת השנייה מגדירה תשלום של 100 שקלים",
+        "התוספת החמישית מגדירה תשלום של 100 שקלים",
+        "לפי התוספת השנייה של פקודת מס הכנסה ישולם 100",
+        "לפי התוספת החמישית מהחוק ישולם 100",
+    ):
+        assert _hebrew_recall(text) == {100.0}, text
+    assert _hebrew_recall("תוספת חמישית מהתקבולים תשולם") == {0.2}
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
