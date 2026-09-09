@@ -19983,6 +19983,45 @@ def test_base_nouns_inflect_fractions_join_lists_and_percent_words_scale():
         assert extract_numbers_from_text(text) >= expected, text
 
 
+def test_feminine_possessives_glyphs_everywhere_and_honest_members():
+    # Review round 129 on #1585: a feminine ש-noun inflects on its ת stem;
+    # a glyph is a member in every position, wrapped or last; a member is
+    # named only through an occurrence extraction grounds.
+    split = {500.0, 2_000_000.0, 3_000_000.0}
+    for text in (
+        "אם התשלומים הם 500, 2 או 3 מיליון שקלים שליחתו תקבל את המענק, והיתרה תוחזר.",
+        "אם התשלומים הם 500, 2 או 3 מיליון שקלים שאלתו תועבר לוועדה, והיתרה תוחזר.",
+    ):
+        assert _hebrew_recall(text) == split, text
+        assert extract_numbers_from_text(text) == split, text
+        assert hebrew_ambiguous_reading_groups(text) == [], text
+    for text, expected in (
+        ("השיעורים הם 10, 20 ו־½ אחוז, בהתאמה.", {0.1, 0.2, 0.005}),
+        ("הסכומים הם 1, 2 ו־½ מיליון שקלים.", {1_000_000.0, 2_000_000.0, 500_000.0}),
+        ("השיעורים הם\n ½, 10 ו־30 אחוזים, בהתאמה.", {0.005, 0.1, 0.3}),
+        ("השיעורים הם\n -½, 10 ו־30 אחוזים, בהתאמה.", {-0.005, 0.1, 0.3}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) >= expected, text
+    for text, unscaled, scaled in (
+        (
+            "אם השיעורים הם 1/2, 10 ו־30 אחוזים מהכנסה נמוכה, תחול ההוראה.",
+            [0.5, 10.0],
+            [0.005, 0.1],
+        ),
+        (
+            "אם השיעורים הם 2½, 10 ו־30 אחוזים מהכנסה נמוכה, תחול ההוראה.",
+            [2.5, 10.0],
+            [0.025, 0.1],
+        ),
+    ):
+        assert _hebrew_recall(text) == set(unscaled) | {0.3}, text
+        assert extract_numbers_from_text(text) >= set(unscaled) | {0.3}, text
+        (group,) = hebrew_ambiguous_reading_groups(text)
+        assert [m.unscaled for m in group.members] == unscaled, text
+        assert [m.scaled for m in group.members] == scaled, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

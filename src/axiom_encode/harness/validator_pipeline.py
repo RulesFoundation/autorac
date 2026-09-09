@@ -3134,6 +3134,9 @@ _HEBREW_PERCENT_PHRASE_PATTERN = re.compile(
     "(?:(?P<digits>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
     + _WRAP_SPACE_FRAGMENT
     + "+"
+    "|(?:(?P<glyph_whole>\\d+)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*)?(?P<glyph>[\u00bc-\u00be\u2150-\u215e])"
+    + _WRAP_SPACE_FRAGMENT
+    + "+"
     "|(?:(?P<whole>\\d+)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]+)?(?P<numerator>\\d+)\\s*[/\u2044]\\s*(?P<denominator>\\d+)"
     + _WRAP_SPACE_FRAGMENT
     + "+)?"
@@ -3344,6 +3347,18 @@ def _iter_hebrew_percent_phrase_matches(
                 tokens = _HebrewWordTokens(text)
             if _hebrew_digits_continue_printed_scale_amount(text, count_start, tokens):
                 continue
+            if _hebrew_unary_sign_at(text, count_start - 1):
+                negative = True
+                count_start -= 1
+        elif match.group("glyph"):
+            # A vulgar-fraction glyph, alone or after a whole ("½ אחוז", "2½
+            # אחוזים"), is the count as printed.
+            count_value = unicodedata.numeric(match.group("glyph")) + float(
+                match.group("glyph_whole") or 0
+            )
+            count_start = match.start(
+                "glyph_whole" if match.group("glyph_whole") else "glyph"
+            )
             if _hebrew_unary_sign_at(text, count_start - 1):
                 negative = True
                 count_start -= 1
@@ -3568,7 +3583,8 @@ _HEBREW_PRINTED_SCALE_PATTERN = re.compile(
     # A printed fraction, mixed ("2 1⁄2") or bare ("1⁄2", "1⁄ 2"), or a
     # decimal; each is a complete multiplier.
     "(?:(?:(?P<whole>\\d+)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]+)?(?P<numerator>\\d+)\\s*[/\u2044]\\s*(?P<denominator>\\d+)"
-    "|(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?))"
+    "|(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
+    "|(?:(?P<glyph_whole>\\d+)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*)?(?P<glyph>[\u00bc-\u00be\u2150-\u215e]))"
     # A vav-bound fractional tail before the scale word: one fraction word
     # ("3 וחצי מיליון") or a counted fraction ("3 ושלושה רבעים מיליון").
     "(?:"
@@ -4320,6 +4336,10 @@ def _hebrew_printed_scale_part(
             return None
         value = float(match.group("whole") or 0) + float(match.group("numerator")) / (
             denominator
+        )
+    elif match.group("glyph"):
+        value = unicodedata.numeric(match.group("glyph")) + float(
+            match.group("glyph_whole") or 0
         )
     else:
         value = float(match.group("number").replace(",", ""))
@@ -5280,17 +5300,30 @@ _HEBREW_LEXICAL_SHIN_FIXED_FORMS = frozenset(
     "שוכרת שוכרים שולחת שולחים שגרירות שלטים שירה שכונת שאלות שדרות שלוחת שליטת "
     "שמי שמו שמה שמם שרה שרון שמעון שאול שלומית שולה".split()
 )
-_HEBREW_LEXICAL_SHIN_WORD_PATTERN = re.compile(
-    "(?:"
-    + "|".join(
+_HEBREW_SHIN_SUFFIXES = "(?:ים|ות|יו|יה|יהם|יהן|נו|י|ו|ה|ם|ן|ת)"
+
+
+def _hebrew_lexical_shin_variants(stem: str) -> str:
+    """The stem and the inflections it takes: a feminine stem on its ת
+    construct stem ("שאלה" gives "שאלתו"), a fixed form none, any other on
+    its medial final letter ("שכן" gives "שכנו")."""
+    if stem.endswith("\u05d4"):
+        return stem + "|" + stem[:-1] + "\u05ea" + _HEBREW_SHIN_SUFFIXES
+    if stem in _HEBREW_LEXICAL_SHIN_FIXED_FORMS:
+        return stem
+    return (
         stem
-        if stem in _HEBREW_LEXICAL_SHIN_FIXED_FORMS
-        else stem
         + "|"
         + stem[:-1]
         + stem[-1].translate(_HEBREW_MEDIAL_FORMS)
-        + "(?:ים|ות|יו|יה|יהם|יהן|נו|י|ו|ה|ם|ן|ת)"
-        for stem in _HEBREW_LEXICAL_SHIN_STEMS
+        + _HEBREW_SHIN_SUFFIXES
+    )
+
+
+_HEBREW_LEXICAL_SHIN_WORD_PATTERN = re.compile(
+    "(?:"
+    + "|".join(
+        _hebrew_lexical_shin_variants(stem) for stem in _HEBREW_LEXICAL_SHIN_STEMS
     )
     + ")$"
 )
@@ -5432,6 +5465,25 @@ _HEBREW_LIST_COLON_WORDS = (
 )
 
 
+def _hebrew_member_starts_at(text: str, index: int) -> bool:
+    """Whether a list member -- a digit, a number word, a fraction glyph, or
+    a sign before one of them -- starts at ``index``."""
+    if index >= len(text):
+        return False
+    character = text[index]
+    if character in "-\u2212":
+        return (
+            _hebrew_member_starts_at(text, index + 1)
+            and text[index + 1] not in "-\u2212"
+        )
+    return (
+        character.isdigit()
+        or "\u0590" <= character <= "\u05ff"
+        or "\u00bc" <= character <= "\u00be"
+        or "\u2150" <= character <= "\u215e"
+    )
+
+
 def _is_horizontal_space(character: str) -> bool:
     """A space of any width that is no line break (U+00A0, U+2003 included)."""
     return character.isspace() and character not in "\n\r\x0b\x0c\x85\u2028\u2029"
@@ -5462,18 +5514,7 @@ def _hebrew_list_heading_end(text: str, start: int, rate: bool) -> int | None:
                     resumed += 1
                 if (
                     resumed < len(text)
-                    and (
-                        text[resumed].isdigit()
-                        or "\u0590" <= text[resumed] <= "\u05ff"
-                        or (
-                            text[resumed] in "-\u2212"
-                            and resumed + 1 < len(text)
-                            and (
-                                text[resumed + 1].isdigit()
-                                or "\u0590" <= text[resumed + 1] <= "\u05ff"
-                            )
-                        )
-                    )
+                    and _hebrew_member_starts_at(text, resumed)
                     and _HEBREW_SOFT_WRAP_BEFORE_PATTERN.search(
                         text, max(0, clause_start - 24), clause_start - 1
                     )
@@ -5556,20 +5597,19 @@ class AmbiguousReadingGroup:
     members: tuple[AmbiguousReadingMember, ...]
 
 
-_HEBREW_PRINTED_MEMBER_PATTERN = re.compile("-?\\d[\\d,]*(?:\\.\\d+)?")
-_GLYPH_FRACTION_MEMBER_PATTERN = re.compile(
-    "(?P<sign>-)?(?:(?P<whole>\\d+)\\s*)?(?P<glyph>[\u00bc-\u00be\u2150-\u215e])"
-)
-_MIXED_FRACTION_MEMBER_PATTERN = re.compile(
-    "(?P<sign>-)?(?:(?P<whole>\\d+)\\s+)?(?P<num>\\d+)\\s*[/\u2044]\\s*(?P<den>\\d+)"
-)
 # A printed mixed number with an ASCII slash in Hebrew text ("2 1/2, 10
 # ו־30 אחוזים") is one number, as it is with the fraction slash; a Hebrew
 # letter or a list mark must follow, so a date or a ratio never joins.
 _HEBREW_ASCII_MIXED_FRACTION_PATTERN = re.compile(
     "(?<![\\d.,/])(?:(?<![\u05d0-\u05ea])(?P<sign>[-\u2212]))?"
-    "(?P<whole>\\d+)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]+(?P<numerator>\\d+)\\s*/\\s*(?P<denominator>\\d+)"
+    "(?:(?P<whole>\\d+)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]+)?(?P<numerator>\\d+)\\s*/\\s*(?P<denominator>\\d+)"
     "(?![\\d/])(?=\\s*(?:[\u0590-\u05ff,;.]|$))"
+)
+# A whole with a vulgar-fraction glyph in Hebrew text ("2½, 10 ו־30 אחוזים")
+# is one number; the bare glyph the general reader takes.
+_HEBREW_GLYPH_NUMBER_PATTERN = re.compile(
+    "(?<![\\d.,/])(?:(?<![\u05d0-\u05ea])(?P<sign>[-\u2212]))?"
+    "(?P<whole>\\d+)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?P<glyph>[\u00bc-\u00be\u2150-\u215e])(?![\\d])"
 )
 
 
@@ -5591,33 +5631,8 @@ def _hebrew_member_unscaled_value(
     for occurrence in grounded:
         if occurrence.start == piece_start and occurrence.end == piece_end:
             return occurrence.value
-    glyph = _GLYPH_FRACTION_MEMBER_PATTERN.fullmatch(piece.replace("\u2212", "-"))
-    if glyph is not None:
-        value = unicodedata.numeric(glyph.group("glyph")) + float(
-            glyph.group("whole") or 0
-        )
-        return -value if glyph.group("sign") else value
-    mixed = _MIXED_FRACTION_MEMBER_PATTERN.fullmatch(piece.replace("\u2212", "-"))
-    if mixed is not None:
-        try:
-            value = float(mixed.group("whole") or 0) + float(
-                mixed.group("num")
-            ) / float(mixed.group("den"))
-        except (ValueError, ZeroDivisionError):
-            return None
-        return -value if mixed.group("sign") else value
-    printed = _HEBREW_PRINTED_MEMBER_PATTERN.fullmatch(piece.replace("\u2212", "-"))
-    if printed is not None:
-        try:
-            return float(printed.group(0).replace(",", ""))
-        except ValueError:
-            return None
-    spelled = _hebrew_number_run_ending_at(
-        cleaned, span[1], _HebrewWordTokens(cleaned), True
-    )
-    if spelled is None:
-        return None
-    return -spelled[1] if cleaned[span[0]] in "-\u2212" else spelled[1]
+    # A member no occurrence spans grounds as nothing the report may claim.
+    return None
 
 
 def hebrew_ambiguous_reading_groups(text: str) -> list[AmbiguousReadingGroup]:
@@ -11221,7 +11236,7 @@ def _clean_source_text_for_numeric_extraction_tracked(
     # above are detached; an ASCII hyphen in the same position already parses
     # correctly. The lookahead fires only before a digit, so a maqaf between
     # two Hebrew words is left untouched.
-    tracked = tracked.sub(re.compile("\u05be(?=\\d)"), " ")
+    tracked = tracked.sub(re.compile("\u05be(?=[\\d\u00bc-\u00be\u2150-\u215e])"), " ")
     cleaned_lines: list[_TrackedText] = []
     preserve_split_schedule_value = False
     for tracked_line in tracked.lines():
@@ -14357,11 +14372,26 @@ def _tokenize_numeric_occurrences_from_text(
             grounding_spans.append(span)
             inventory_spans.append(span)
 
+    hebrew_text = re.search("[\u0590-\u05ff]", cleaned) is not None
     hebrew_ascii_mixed = (
         list(_HEBREW_ASCII_MIXED_FRACTION_PATTERN.finditer(cleaned))
-        if re.search("[\u0590-\u05ff]", cleaned)
+        if hebrew_text
         else []
     )
+    if hebrew_text:
+        for match in _HEBREW_GLYPH_NUMBER_PATTERN.finditer(cleaned):
+            if _span_overlaps(match.span(), inventory_spans) or _span_overlaps(
+                match.span(), grounding_spans
+            ):
+                continue
+            value = unicodedata.numeric(match.group("glyph")) + float(
+                match.group("whole")
+            )
+            if match.group("sign"):
+                value = -value
+            add_both(cleaned_view, match.span(), value)
+            grounding_spans.append(match.span())
+            inventory_spans.append(match.span())
     for match in (*hebrew_ascii_mixed, *_FRACTION_SLASH_PATTERN.finditer(cleaned)):
         with contextlib.suppress(ValueError, ZeroDivisionError):
             whole = float(match.group("whole") or 0)
