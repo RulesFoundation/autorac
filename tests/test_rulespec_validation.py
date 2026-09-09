@@ -21420,6 +21420,39 @@ def test_only_a_fraction_word_before_a_partitive_is_a_fraction():
     assert _hebrew_recall("תוספת חמישית מהתקבולים תשולם") == {0.2}
 
 
+def test_a_reference_yields_only_to_a_fraction_actually_read():
+    # Review round 165 on #1585: a structural span yields where the fraction
+    # reader itself reads a fraction on the word, so a verb in מה after a
+    # schedule unmasks nothing; and a verb of paying, including or
+    # constituting anywhere earlier in the clause says a fraction follows,
+    # a recipient between them or not.
+    for text, expected, grounded, ungrounded in (
+        ("המעסיק שילם לעובדת החדשה חמישית השכר", {0.2}, "0.2", "5"),
+        ("המעסיק שילם לעובד החדש חמישית השכר", {0.2}, "0.2", "5"),
+        ("הקצבה כוללת חמישית מן התקבולים", {0.2}, "0.2", "5"),
+        ("תוספת חמישית מהתקבולים תשולם", {0.2}, "0.2", "5"),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+    for text in (
+        "התוספת החמישית מהווה חלק מהחוק וקובעת תשלום של 100 שקלים",
+        "התוספת החמישית מהדקת את ההסדר וקובעת תשלום של 100 שקלים",
+        "תוספת חמישית של הפקודה קובעת 100",
+    ):
+        assert _hebrew_recall(text) == {100.0}, text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

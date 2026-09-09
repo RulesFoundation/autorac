@@ -2614,10 +2614,12 @@ def _parse_hebrew_number_run(
 # quantity word, or a verb of paying, receiving, deducting or granting --
 # "ישלם חמישית ההכנסה" pays a fifth of the income; "דרגה חמישית המקנה" is a
 # fifth grade, and "דרגה" is none of these.
-_HEBREW_FRACTION_COPULA_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?:[\u05d5\u05e9][\u05be-]?){0,2}"
+# The words of a clause that say a fraction follows: a copula, a quantity
+# word, a verb of paying, receiving, deducting, including or constituting.
+_HEBREW_FRACTION_CONTEXT_WORDS = (
     "(?:יהיה|יהא|תהיה|תהא|הוא|היא|הם|הן|של|בשיעור|בגובה|בסך|סכום|"
     "היה|הייתה|היתה|היו|מהווה|מהוות|מהווים|יהווה|תהווה|יהוו|תהוונה|היווה|היוותה|היוו|"
+    "כולל|כוללת|כוללים|כוללות|יכלול|תכלול|יכללו|כלל|כללה|כללו|מכיל|מכילה|מכילים|"
     "יהיו|תהיינה|"
     "כדי|עד|לפחות|לכל היותר|ניכוי|הפחתה|הנחה|קיזוז|הפרשה|החזר|תוספת|הקצאה|"
     "ישלם|תשלם|ישלמו|ישולם|תשולם|ישולמו|משלם|משלמת|משלמים|שילם|שילמה|שילמו|שולם|"
@@ -2629,7 +2631,19 @@ _HEBREW_FRACTION_COPULA_PATTERN = re.compile(
     "יקוזז|תקוזז|יוחזר|תוחזר|יחזיר|תחזיר|ישיב|תשיב|יפריש|תפריש|יפקיד|תפקיד|"
     "יינתן|תינתן|ינתן|ניתן|ניתנת|יועבר|תועבר|יזוכה|תזוכה|זכאי|זכאית|זכאים|"
     "לשלם|לקבל|לנכות|להפחית|להגדיל|לקזז|להחזיר|להשיב|להפריש|להפקיד|לתת|ליתן|"
-    "להעביר|לגבות|לשאת|לזכות|ישא|יישא|תישא|יגבה|תגבה|יגבו)\\s+$"
+    "להעביר|לגבות|לשאת|לזכות|ישא|יישא|תישא|יגבה|תגבה|יגבו)"
+)
+_HEBREW_FRACTION_COPULA_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])(?:[\u05d5\u05e9][\u05be-]?){0,2}"
+    + _HEBREW_FRACTION_CONTEXT_WORDS
+    + "\\s+$"
+)
+# The same words anywhere earlier in the clause: a recipient may stand
+# between the verb and the fraction ("שילם לעובדת החדשה חמישית השכר").
+_HEBREW_FRACTION_CONTEXT_IN_CLAUSE_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])(?:[\u05d5\u05e9][\u05be-]?){0,2}"
+    + _HEBREW_FRACTION_CONTEXT_WORDS
+    + "(?![\u0590-\u05ff])"
 )
 # A partitive or a construct that names the amount a fraction is taken of:
 # "משכרו" (of his wage), "מהכנסתה" (of her income), "משכר העובד" (of the
@@ -3167,6 +3181,15 @@ def _search_before(
 _HEBREW_CLAUSE_BOUNDARY_CHARACTERS = frozenset(",;:.()[]\"'\u05f3\u05f4-\u2013\u2014\n")
 
 
+def _hebrew_fraction_context_in_clause(text: str, start: int) -> bool:
+    """Whether a word that says a fraction follows stands anywhere earlier in the clause."""
+    clause_start = _hebrew_clause_start_before(text, start)
+    return (
+        _HEBREW_FRACTION_CONTEXT_IN_CLAUSE_PATTERN.search(text, clause_start, start)
+        is not None
+    )
+
+
 def _hebrew_fraction_context_before(text: str, start: int) -> bool:
     """Whether the clause before ``start`` says a fraction follows.
 
@@ -3218,6 +3241,7 @@ def _iter_hebrew_fraction_word_matches(
                     and not (
                         base.group(0).lstrip().startswith("\u05d4")
                         and not _hebrew_fraction_context_before(text, match.start())
+                        and not _hebrew_fraction_context_in_clause(text, match.start())
                         and _hebrew_word_before_can_be_feminine_singular(
                             text, match.start("fraction")
                         )
@@ -3266,6 +3290,7 @@ def _iter_hebrew_fraction_word_matches(
                     and partitive.lstrip().startswith("מן")
                     and not names_an_amount
                     and not _hebrew_fraction_context_before(text, match.start())
+                    and not _hebrew_fraction_context_in_clause(text, match.start())
                     and _hebrew_word_before_can_be_feminine_singular(
                         text, match.start("fraction")
                     )
@@ -7815,13 +7840,11 @@ _HEBREW_STRUCTURAL_NOT_A_QUANTITY = (
     "(?!(?:\u05d4[\u05be-]?)?(?:חוק|חוקי|חוקת|פקודה|פקודת|תקנות|תקנה|צו|צווי|הוראה|"
     "הוראות|כללים|כללי|תכנית|תכניות|החלטה|החלטות|הסכם|הסכמי|הסכמים)(?![\u0590-\u05ff]))"
     "(?:\u05d4[\u05be-]?)?[\u0590-\u05ff]{2,}"
-    # An attached מ before a definite noun ("מהתקבולים") or an amount noun
-    # ("משכרו") is the partitive; before a verb ("מגדירה") it is a letter.
-    "|\u05de[\u05be-]?(?:\u05d4[\u05be-]?(?!(?:חוק|חוקי|חוקת|פקודה|פקודת|תקנות|תקנה|צו|"
-    "צווי|הוראה|הוראות|כללים|כללי|תכנית|תכניות|החלטה|החלטות|הסכם|הסכמי|הסכמים)"
-    "(?![\u0590-\u05ff]))[\u0590-\u05ff]{2,}|"
+    # An attached מ before an amount noun ("משכרו") is the partitive; any
+    # other reading of an attached מ is the fraction reader's to make.
+    "|\u05de[\u05be-]?(?:\u05d4[\u05be-]?)?"
     + _HEBREW_MONEY_NOUN
-    + "(?![\u0590-\u05ff]))))"
+    + "(?![\u0590-\u05ff])))"
 )
 _HEBREW_STRUCTURAL_LIST_JOIN = "(?:\u05d5[\u05be-]?|או)"
 _HEBREW_STRUCTURAL_RANGE_JOIN = "(?:עד|[-\u2013\u2014])"
@@ -14532,6 +14555,23 @@ def _temporal_numeric_component_spans(
     return tuple(sorted(spans))
 
 
+_HEBREW_FRACTION_IN_REFERENCE_AFTER_PATTERN = re.compile(
+    "\\s+(?:ל[\u05be-]?(?:חוק|פקודה|תקנות|צו)|של\\s+(?:ה[\u05be-]?)?(?:חוק|פקודה|תקנות|צו))(?![\u0590-\u05ff])"
+)
+
+
+def _hebrew_fraction_is_an_ordinal_in_a_reference(
+    text: str, span: tuple[int, int]
+) -> bool:
+    """Whether a fraction-shaped word the reader took is a schedule's ordinal.
+
+    The reader takes "חמישית" as a fraction on its own evidence; "התוספת
+    החמישית לחוק" and "תוספת חמישית של הפקודה" name a schedule whatever the
+    word's shape, and stay labels.
+    """
+    return _HEBREW_FRACTION_IN_REFERENCE_AFTER_PATTERN.match(text, span[1]) is not None
+
+
 def _structural_numeric_component_spans(
     text: str,
     *,
@@ -14560,6 +14600,21 @@ def _structural_numeric_component_spans(
         )
     spans = {match.span() for pattern in patterns for match in pattern.finditer(text)}
     spans.update(_hebrew_structural_word_reference_spans(text))
+    # A spelled reference the fraction reader reads as a fraction, in its
+    # own clause context ("תוספת חמישית מהתקבולים תשולם", "הקצבה כוללת
+    # חמישית מן התקבולים"), is an amount and no label: the structural span
+    # yields to the reading actually made, not to a guess at one.
+    fraction_spans = [
+        span
+        for span, _value in _iter_hebrew_fraction_word_matches(text)
+        if not _hebrew_fraction_is_an_ordinal_in_a_reference(text, span)
+    ]
+    if fraction_spans:
+        spans = {
+            span
+            for span in spans
+            if not any(_span_overlaps(span, [fraction]) for fraction in fraction_spans)
+        }
     if profile == "da-DK":
         spans.update(danish_spans)
     spans.update(
