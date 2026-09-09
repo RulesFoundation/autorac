@@ -46,6 +46,10 @@ on:
         options:
           - target
           - dependent
+      repair_rulespec_path:
+        description: Exact RuleSpec path of a non-target lane selected for repair replay
+        required: false
+        type: string
       source_bundle_json:
         description: JSON citation array, canonical_refresh_bundle object, or atomic-source-transaction/v2/v3 envelope for an independent refresh transaction
         required: false
@@ -425,6 +429,7 @@ jobs:
           QUEUE_ID: ${{ inputs.queue_id }}
           REPAIR_RUN_ID: ${{ inputs.repair_run_id }}
           REPAIR_RUN_LANE: ${{ inputs.repair_run_lane }}
+          REPAIR_RULESPEC_PATH: ${{ inputs.repair_rulespec_path }}
           REPLACE_LEGACY_RULESPEC_PATH: ${{ inputs.replace_legacy_rulespec_path }}
           REPLACE_RULESPEC_PATH: ${{ inputs.replace_rulespec_path }}
           RULESPEC_CHECKOUT: rulespec-${{ inputs.country }}
@@ -461,8 +466,24 @@ jobs:
             echo "repair_run_id must identify a different decimal workflow run" >&2
             exit 1
           fi
+          repair_citation="$CITATION"
+          repair_rulespec_path="$REPLACE_RULESPEC_PATH"
           case "$REPAIR_RUN_LANE" in
-            target|dependent)
+            target)
+              if [ -n "$DEPENDENT_CITATION" ] || \
+                 [ -n "$REPAIR_RULESPEC_PATH" ]; then
+                echo "target repair replay cannot select a dependent transaction" >&2
+                exit 1
+              fi
+              ;;
+            dependent)
+              if [ -z "$DEPENDENT_CITATION" ] || \
+                 [ -z "$REPAIR_RULESPEC_PATH" ]; then
+                echo "dependent repair replay requires its citation and exact RuleSpec path" >&2
+                exit 1
+              fi
+              repair_citation="$DEPENDENT_CITATION"
+              repair_rulespec_path="$REPAIR_RULESPEC_PATH"
               ;;
             *)
               echo "repair_run_lane must be target or dependent" >&2
@@ -473,7 +494,6 @@ jobs:
              [ -n "$REPLACE_LEGACY_RULESPEC_PATH" ] || \
              [ -n "$LEGACY_EXACT_DEPENDENT_RULESPEC_PATH" ] || \
              [ -n "$SECOND_LEGACY_EXACT_DEPENDENT_RULESPEC_PATH" ] || \
-             [ -n "$DEPENDENT_CITATION" ] || \
              [ -n "$SECOND_DEPENDENT_CITATION" ] || \
              [ -n "$QUEUE_ID" ] || \
              ! jq -e 'type == "array" and length == 0' \
@@ -486,7 +506,7 @@ jobs:
              ! jq -e 'type == "array" and length == 0' \
                <<< "${LEGACY_RETAINED_SUCCESSOR_RULESPEC_PATHS_JSON:-[]}" \
                > /dev/null; then
-            echo "repair replay is limited to one non-legacy target with at most one exact source or test bundle, without refreshes, imports, dependents, or queue authorization" >&2
+            echo "repair replay is limited to one non-legacy target and at most one direct dependent, with at most one exact source or test bundle and without refreshes, imports, second dependents, or queue authorization" >&2
             exit 1
           fi
 
@@ -550,7 +570,7 @@ jobs:
           test -f "$repair_archive" && test ! -L "$repair_archive"
           python3 axiom-encode/scripts/extract_repair_candidate.py \
             "$repair_archive" "$RUNNER_TEMP/repair-candidate" \
-            --citation "$CITATION" \
+            --citation "$repair_citation" \
             --country "$COUNTRY" \
             --encoder-commit "$repair_encoder_commit" \
             --corpus-ref "$CORPUS_REF" \
@@ -559,7 +579,9 @@ jobs:
             --allow-rulespec-base-advance \
             --atomic-source-json "$ATOMIC_SOURCE_JSON" \
             --repair-lane "$REPAIR_RUN_LANE" \
-            --replace-rulespec-path "$REPLACE_RULESPEC_PATH" \
+            --replace-rulespec-path "$repair_rulespec_path" \
+            --transaction-citation "$CITATION" \
+            --transaction-rulespec-path "$REPLACE_RULESPEC_PATH" \
             --workflow-run-id "$REPAIR_RUN_ID" \
             > "$RUNNER_TEMP/repair-candidate.json"
           jq -e '
@@ -579,7 +601,7 @@ jobs:
             --source-ref "$repair_source_rulespec_ref" \
             --current-ref "$RULESPEC_REF" \
             --candidate-path "$repair_candidate_path" \
-            --rulespec-path "$REPLACE_RULESPEC_PATH"
+            --rulespec-path "$repair_rulespec_path"
           echo "root=$(jq -r '.root' "$RUNNER_TEMP/repair-candidate.json")" \
             >> "$GITHUB_OUTPUT"
           echo "path=$(jq -r '.path' "$RUNNER_TEMP/repair-candidate.json")" \
@@ -1136,6 +1158,7 @@ jobs:
           REPAIR_CANDIDATE_TESTS_SHA256: ${{ steps.repair_candidate.outputs.tests_sha256 }}
           REPAIR_TESTS_ONLY: ${{ steps.repair_candidate.outputs.tests_only }}
           REPAIR_RUN_ID: ${{ inputs.repair_run_id }}
+          REPAIR_RUN_LANE: ${{ inputs.repair_run_lane }}
           REPLACE_RULESPEC_PATH: ${{ inputs.replace_rulespec_path }}
           REPLACE_LEGACY_RULESPEC_PATH: ${{ inputs.replace_legacy_rulespec_path }}
           LEGACY_EXACT_DEPENDENT_RULESPEC_PATH: ${{ inputs.legacy_exact_dependent_rulespec_path }}
@@ -1153,6 +1176,7 @@ jobs:
         run: |
           set -euo pipefail
           : "${REPAIR_TESTS_ONLY:=false}"
+          : "${REPAIR_RUN_LANE:=target}"
           : "${QUEUE_ID:=}"
           : "${REPLACE_RULESPEC_PATH:=}"
           : "${REPLACE_LEGACY_RULESPEC_PATH:=}"
@@ -1328,6 +1352,9 @@ jobs:
               )
             fi
             if [ -n "${REPAIR_CANDIDATE_ROOT:-}" ] && \
+               { [ "$output_lane" = "$REPAIR_RUN_LANE" ] || \
+                 { [ "$REPAIR_RUN_LANE" = "target" ] && \
+                   [[ "$output_lane" =~ ^target(-preflight)?$ ]]; }; } && \
                [ -n "$replacement_path" ]; then
               candidate_root="$REPAIR_CANDIDATE_ROOT"
               candidate_path="$REPAIR_CANDIDATE_PATH"

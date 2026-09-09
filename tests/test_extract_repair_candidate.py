@@ -258,7 +258,7 @@ def test_prefers_integrity_bound_retained_best_candidate(tmp_path):
     assert (root / result["path"]).read_bytes() == retained
 
 
-def test_extracts_dependent_candidate_for_standalone_repair(tmp_path):
+def test_extracts_dependent_candidate_for_atomic_repair(tmp_path):
     archive, metadata = _archive(tmp_path)
     replacement = _rewrite_as_dependent_candidate(
         archive,
@@ -266,7 +266,15 @@ def test_extracts_dependent_candidate_for_standalone_repair(tmp_path):
         metadata,
     )
 
-    result = extract_candidate(_args(tmp_path, replacement, repair_lane="dependent"))
+    result = extract_candidate(
+        _args(
+            tmp_path,
+            replacement,
+            repair_lane="dependent",
+            transaction_citation="us/guidance/primary/source",
+            transaction_rulespec_path="us/guidance/primary/source.yaml",
+        )
+    )
 
     assert result["runner"] == "openai-gpt-5.6-sol"
     assert result["path"] == "statutes/42/1437c-1.yaml"
@@ -287,7 +295,15 @@ def test_rejects_dependent_candidate_with_different_citation(tmp_path):
     )
 
     with pytest.raises(ValueError, match="single-target run: dependent_citation"):
-        extract_candidate(_args(tmp_path, mismatch, repair_lane="dependent"))
+        extract_candidate(
+            _args(
+                tmp_path,
+                mismatch,
+                repair_lane="dependent",
+                transaction_citation="us/guidance/primary/source",
+                transaction_rulespec_path="us/guidance/primary/source.yaml",
+            )
+        )
 
 
 def test_rejects_tampered_retained_best_candidate(tmp_path):

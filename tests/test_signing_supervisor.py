@@ -2103,7 +2103,7 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert concurrency_suffix("manual-user", "", "queue-generation", "run-3") == "run-3"
     assert concurrency_suffix("github-actions[bot]", "snap", "", "run-4") == "run-4"
     inputs = trigger["workflow_dispatch"]["inputs"]
-    assert len(inputs) == 26
+    assert len(inputs) == 27
     assert "allowlisted reviewed SHA" in inputs["rulespec_ref"]["description"]
     assert "artifact-only" in inputs["rulespec_ref"]["description"]
     assert inputs["country"] == {
@@ -2128,6 +2128,13 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
         "default": "target",
         "type": "choice",
         "options": ["target", "dependent"],
+    }
+    assert inputs["repair_rulespec_path"] == {
+        "description": (
+            "Exact RuleSpec path of a non-target lane selected for repair replay"
+        ),
+        "required": False,
+        "type": "string",
     }
     assert "repair_candidate_tests_only" not in inputs
     assert inputs["pr_base_branch"]["type"] == "string"
@@ -2334,6 +2341,9 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert repair_step["env"]["GH_TOKEN"] == "${{ github.token }}"
     assert repair_step["env"]["REPAIR_RUN_ID"] == "${{ inputs.repair_run_id }}"
     assert repair_step["env"]["REPAIR_RUN_LANE"] == ("${{ inputs.repair_run_lane }}")
+    assert repair_step["env"]["REPAIR_RULESPEC_PATH"] == (
+        "${{ inputs.repair_rulespec_path }}"
+    )
     assert repair_step["env"]["RULESPEC_CHECKOUT"] == ("rulespec-${{ inputs.country }}")
     assert "REPAIR_TESTS_ONLY" not in repair_step["env"]
     repair_command = repair_step["run"]
@@ -2363,6 +2373,8 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
         "--rules-engine-ref",
         "--rulespec-ref",
         "--replace-rulespec-path",
+        "--transaction-citation",
+        "--transaction-rulespec-path",
         "--workflow-run-id",
     ):
         assert immutable_argument in repair_command
@@ -2371,7 +2383,7 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert '--source-ref "$repair_source_rulespec_ref"' in repair_command
     assert '--current-ref "$RULESPEC_REF"' in repair_command
     assert '--candidate-path "$repair_candidate_path"' in repair_command
-    assert '--rulespec-path "$REPLACE_RULESPEC_PATH"' in repair_command
+    assert '--rulespec-path "$repair_rulespec_path"' in repair_command
     assert 'echo "runner=$(jq -r' in repair_command
     assert 'echo "source_rulespec_ref=$repair_source_rulespec_ref"' in repair_command
 
@@ -2494,6 +2506,9 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert '--repair-candidate-root "$candidate_root"' in command
     assert (
         'if [ -n "${REPAIR_CANDIDATE_ROOT:-}" ] && \\\n'
+        '     { [ "$output_lane" = "$REPAIR_RUN_LANE" ] || \\\n'
+        '       { [ "$REPAIR_RUN_LANE" = "target" ] && \\\n'
+        '         [[ "$output_lane" =~ ^target(-preflight)?$ ]]; }; } && \\\n'
         '     [ -n "$replacement_path" ]; then'
     ) in command
     assert '--repair-candidate-path "$candidate_path"' in command
@@ -2531,6 +2546,7 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert apply_step["env"]["REPAIR_TESTS_ONLY"] == (
         "${{ steps.repair_candidate.outputs.tests_only }}"
     )
+    assert apply_step["env"]["REPAIR_RUN_LANE"] == "${{ inputs.repair_run_lane }}"
     assert ': "${REPAIR_TESTS_ONLY:=false}"' in command
     assert "REPAIR_TESTS_ONLY=false" not in command
     assert "REPAIR_TESTS_ONLY=true" not in command
@@ -3040,6 +3056,7 @@ def test_repair_preflight_splits_atomic_source_before_encoder_install(
         env={
             **os.environ,
             "ATOMIC_SOURCE_JSON": atomic_source_json,
+            "CITATION": "us-ri/statute/44-30-2.6",
             "DEPENDENT_CITATION": "",
             "EXISTING_SIGNED_IMPORTS_JSON": "[]",
             "GITHUB_OUTPUT": str(tmp_path / "github-output"),
@@ -3048,6 +3065,7 @@ def test_repair_preflight_splits_atomic_source_before_encoder_install(
             "LEGACY_RETAINED_SUCCESSOR_RULESPEC_PATHS_JSON": "[]",
             "QUEUE_ID": "",
             "REPAIR_RUN_ID": "100",
+            "REPAIR_RULESPEC_PATH": "",
             "REPLACE_LEGACY_RULESPEC_PATH": "",
             "REPLACE_RULESPEC_PATH": "us-ri/statutes/44-30-2.6.yaml",
             "SECOND_DEPENDENT_CITATION": "",

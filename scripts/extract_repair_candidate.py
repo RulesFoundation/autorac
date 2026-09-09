@@ -407,20 +407,20 @@ def extract_candidate(args: argparse.Namespace) -> dict[str, object]:
     requested_repair_lane = getattr(args, "repair_lane", "target")
     if requested_repair_lane not in REPAIR_LANES:
         raise ValueError("repair lane must be target or dependent")
+    transaction_citation = getattr(args, "transaction_citation", None) or args.citation
+    transaction_rulespec_path = (
+        getattr(args, "transaction_rulespec_path", None) or args.replace_rulespec_path
+    )
     expected_fields = {
+        "citation": transaction_citation,
         "country": args.country,
         "encoder_commit": args.encoder_commit,
         "corpus_ref": args.corpus_ref,
+        "replace_rulespec_path": transaction_rulespec_path,
         "rules_engine_ref": args.rules_engine_ref,
         "workflow_run_id": args.workflow_run_id,
     }
-    if requested_repair_lane == "target":
-        expected_fields.update(
-            {
-                "citation": args.citation,
-                "replace_rulespec_path": args.replace_rulespec_path,
-            }
-        )
+    _expected_module_path(args.country, transaction_rulespec_path)
     expected_module = _expected_module_path(
         args.country,
         args.replace_rulespec_path,
@@ -601,6 +601,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--replace-rulespec-path", required=True)
     parser.add_argument("--repair-lane", choices=sorted(REPAIR_LANES), default="target")
     parser.add_argument("--source-rulespec-paths-json")
+    parser.add_argument("--transaction-citation")
+    parser.add_argument("--transaction-rulespec-path")
     parser.add_argument("--workflow-run-id", required=True)
     return parser
 
