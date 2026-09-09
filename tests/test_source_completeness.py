@@ -42954,3 +42954,144 @@ def test_german_instrument_citation_cleanup_preserves_equal_operative_values(cit
 )
 def test_german_instrument_cleanup_does_not_hide_mixed_or_partial_text(source):
     assert authoritative_numeric_recall_text(source) == source
+
+
+def _closed_statutory_rounding_example():
+    source = (
+        "(3) Werden die Freibeträge für Kinder nach § 31 Satz 1 in Verbindung "
+        "mit § 32 Absatz 6 Satz 1 angehoben, wird das Kindergeld entsprechend "
+        "erhöht. Das Kindergeld ist dabei auf volle Euro kaufmännisch zu runden."
+    )
+    parameters = {
+        "base": "255",
+        "new_allowance": "4878",
+        "old_allowance": "4800",
+        "half": "1 / 2",
+        "unit": "1",
+    }
+    rules = [
+        {
+            "name": name,
+            "kind": "parameter",
+            "dtype": "Decimal",
+            "source": "de/statute/estg/66(3)",
+            "versions": [{"effective_from": "2026-01-01", "formula": formula}],
+        }
+        for name, formula in parameters.items()
+    ]
+    rules += [
+        {
+            "name": name,
+            "kind": "derived",
+            "dtype": "Money",
+            "source": "de/statute/estg/66(3)",
+            "versions": [{"effective_from": "2026-01-01", "formula": formula}],
+        }
+        for name, formula in {
+            "unrounded": "base * new_allowance / old_allowance",
+            "rounded": "floor(unrounded / unit + half) * unit",
+        }.items()
+    ]
+    payload = {
+        "format": "rulespec/v1",
+        "module": {
+            "source_verification": {"corpus_citation_path": "de/statute/estg/66"}
+        },
+        "rules": rules,
+    }
+    case = {
+        "period": "2026",
+        "input": {},
+        "output": {"unrounded": 259.14375, "rounded": 259},
+    }
+    return source, payload, case
+
+
+@pytest.mark.parametrize("multiline", [False, True])
+def test_closed_statutory_rounding_accepts_named_half_and_asserted_fraction(multiline):
+    source, payload, case = _closed_statutory_rounding_example()
+    if multiline:
+        for rule in payload["rules"]:
+            formula = rule["versions"][0]["formula"]
+            rule["versions"][0]["formula"] = formula.replace(" + ", "\n    + ").replace(
+                " * ", "\n    * "
+            )
+    result = _analyze(
+        yaml.safe_dump(payload),
+        source,
+        corpus_citation_path="de/statute/estg/66",
+        test_cases=[case],
+    )
+    assert not _has_issue(result, "rounding"), "\n".join(result.issues)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "wrong_half",
+        "other_period_half",
+        "input_half",
+        "import_half",
+        "hidden_input",
+        "integral_operand",
+        "wrong_result",
+        "missing_intermediate",
+        "cycle",
+        "unavailable_version",
+        "missing_period",
+        "conflicting_override",
+        "inactive_rounding",
+    ],
+)
+def test_closed_statutory_rounding_rejects_unproved_witnesses(mutation: str):
+    source, payload, case = _closed_statutory_rounding_example()
+    rules = {rule["name"]: rule for rule in payload["rules"]}
+    if mutation == "wrong_half":
+        rules["half"]["versions"][0]["formula"] = "0.49"
+    elif mutation == "other_period_half":
+        rules["half"]["versions"].append(
+            {"effective_from": "2027-01-01", "formula": "0.49"}
+        )
+        case["period"] = "2027"
+    elif mutation == "input_half":
+        payload["rules"].remove(rules["half"])
+        payload["inputs"] = [{"name": "half", "dtype": "Decimal"}]
+        case["input"]["half"] = 0.5
+    elif mutation == "import_half":
+        rules["half"]["kind"] = "derived"
+        rules["half"]["versions"][0]["formula"] = "external_half"
+        case["output"]["half"] = 0.5
+    elif mutation == "hidden_input":
+        rules["old_allowance"]["versions"][0]["formula"] = "4800 + hidden - hidden"
+        payload["inputs"] = [{"name": "hidden", "dtype": "Decimal"}]
+        case["input"]["hidden"] = 1
+    elif mutation == "integral_operand":
+        rules["new_allowance"]["versions"][0]["formula"] = "4800"
+        case["output"] = {"unrounded": 255, "rounded": 255}
+    elif mutation == "wrong_result":
+        case["output"]["rounded"] = 260
+    elif mutation == "missing_intermediate":
+        del case["output"]["unrounded"]
+    elif mutation == "cycle":
+        rules["old_allowance"]["versions"][0]["formula"] = "new_allowance"
+        rules["new_allowance"]["versions"][0]["formula"] = "old_allowance"
+    elif mutation == "unavailable_version":
+        rules["base"]["versions"][0]["effective_from"] = "2027-01-01"
+    elif mutation == "missing_period":
+        del case["period"]
+    elif mutation == "conflicting_override":
+        case["input"]["base"] = 256
+    elif mutation == "inactive_rounding":
+        rules["rounded"]["versions"][0]["formula"] = (
+            "if enabled:\n  floor(unrounded / unit + half) * unit\nelse: base"
+        )
+        payload["inputs"] = [{"name": "enabled", "dtype": "Boolean"}]
+        case["input"]["enabled"] = False
+        case["output"]["rounded"] = 255
+    result = _analyze(
+        yaml.safe_dump(payload),
+        source,
+        corpus_citation_path="de/statute/estg/66",
+        test_cases=[case],
+    )
+    assert _has_issue(result, "rounding"), "\n".join(result.issues)

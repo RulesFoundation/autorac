@@ -15348,6 +15348,17 @@ def _companion_test_issues(
             name
             for name in _rules_covering_branch(branch, principal_rule_paths)
             if _rule_implements_rounding(principal_rules[name], direction)
+            or any(
+                _rule_implements_rounding(
+                    principal_rules[name],
+                    direction,
+                    environment=_closed_rounding_arithmetic_environment(
+                        parameter_rules, case
+                    ),
+                    case=case,
+                )
+                for case in asserted_by_rule.get(name, ())
+            )
         }
         if not rule_names:
             missing_rounding_formula.append(obligation)
@@ -15358,6 +15369,7 @@ def _companion_test_issues(
                     name,
                     principal_rules[name],
                     principal_rules=principal_rules,
+                    parameter_rules=parameter_rules,
                     asserted_by_rule=asserted_by_rule,
                     direction=direction,
                     formula_environment=formula_environment,
@@ -26732,11 +26744,138 @@ def _ordinary_semantic_identifier(identifier: str) -> bool:
     )
 
 
-def _rule_implements_rounding(rule: dict[str, Any], direction: str) -> bool:
-    formula_text = _rule_formula_text(rule)
+def _closed_rounding_arithmetic_environment(
+    rules: Mapping[str, dict[str, Any]],
+    case: dict[str, Any],
+) -> dict[str, Any]:
+    """Evaluate local arithmetic without input, import, or assertion seeds.
+
+    Only arithmetic ASTs qualify. Unresolved names and cycles never enter the
+    environment, even when algebraic cancellation could hide their dependency.
+    Temporal formulas must be selected by an explicit companion-case period.
+    """
+
+    environment: dict[str, Any] = {}
+    inputs = _case_input_formula_environment(case)
+    if inputs is None:
+        return environment
+    allowed_nodes = (
+        ast.Expression,
+        ast.BinOp,
+        ast.UnaryOp,
+        ast.Name,
+        ast.Load,
+        ast.Constant,
+        ast.Add,
+        ast.Sub,
+        ast.Mult,
+        ast.Div,
+        ast.USub,
+        ast.UAdd,
+    )
+    candidates: dict[str, ast.Expression] = {}
+    for name, rule in rules.items():
+        if str(rule.get("kind") or "").lower() not in {"parameter", "derived"}:
+            continue
+        versions = rule.get("versions")
+        if not isinstance(versions, list):
+            continue
+        if any(
+            isinstance(version, dict)
+            and (version.get("effective_from") or version.get("effective_to"))
+            for version in versions
+        ) and not _is_iso_calendar_date(_normalized_case_period(case)):
+            continue
+        formula = _rule_formula_text_for_case(rule, case)
+        if formula is None:
+            continue
+        with contextlib.suppress(SyntaxError):
+            expression = ast.parse(f"({formula.strip()})", mode="eval")
+            if all(isinstance(node, allowed_nodes) for node in ast.walk(expression)):
+                candidates[name] = expression
+    for _ in range(len(candidates) + 1):
+        changed = False
+        for name, expression in candidates.items():
+            if name in environment:
+                continue
+            names = {
+                node.id for node in ast.walk(expression) if isinstance(node, ast.Name)
+            }
+            if not names <= environment.keys():
+                continue
+            value = _known_numeric_formula_value(expression.body, environment)
+            if value is None:
+                continue
+            if name in inputs and not _formula_runtime_values_equal(
+                value, inputs[name]
+            ):
+                continue
+            environment[name] = value
+            changed = True
+        if not changed:
+            break
+    return environment
+
+
+def _closed_fractional_rounding_operand_witness(
+    operand: str,
+    *,
+    case: dict[str, Any],
+    parameter_rules: Mapping[str, dict[str, Any]],
+    principal_rules: dict[str, dict[str, Any]],
+    dependency_environment: dict[str, Any],
+    operand_value: Any,
+    rule_name: str,
+    execution: _FormulaExecution,
+) -> bool:
+    """Require an asserted reached intermediate computed from closed parameters."""
+
+    closed = _closed_rounding_arithmetic_environment(
+        {**parameter_rules, **principal_rules}, case
+    )
+    names = set(_FORMULA_IDENTIFIER.findall(operand))
+    derived_names = names & principal_rules.keys()
+    if not derived_names or not names <= closed.keys():
+        return False
+    if not all(
+        name in dependency_environment
+        and _formula_runtime_values_equal(closed[name], dependency_environment[name])
+        and _formula_runtime_values_equal(
+            closed[name], _test_case_asserted_output_value(case, name)
+        )
+        for name in derived_names
+    ):
+        return False
+    value = _evaluate_formula_selector(operand, closed)
+    return (
+        _rulespec_runtime_decimal(value) is not None
+        and not float(value).is_integer()
+        and _formula_runtime_values_equal(value, operand_value)
+        and _formula_runtime_values_equal(
+            _formula_execution_runtime_value(execution),
+            _test_case_asserted_output_value(case, rule_name),
+        )
+    )
+
+
+def _rule_implements_rounding(
+    rule: dict[str, Any],
+    direction: str,
+    *,
+    environment: dict[str, Any] | None = None,
+    case: dict[str, Any] | None = None,
+) -> bool:
+    formula_text = (
+        _rule_formula_text(rule)
+        if case is None
+        else (_rule_formula_text_for_case(rule, case) or "")
+    )
     if direction == "nearest":
         return any(
-            _rounding_demonstrated_operand(operand, direction=direction) is not None
+            _rounding_demonstrated_operand(
+                operand, direction=direction, environment=environment
+            )
+            is not None
             for operand in _balanced_call_operands(formula_text, "floor")
         )
     function_name = "ceil" if direction == "upward" else "floor"
@@ -26748,6 +26887,7 @@ def _fractional_rounding_case_witnesses(
     rule: dict[str, Any],
     *,
     principal_rules: dict[str, dict[str, Any]],
+    parameter_rules: Mapping[str, dict[str, Any]],
     asserted_by_rule: dict[str, list[dict[str, Any]]],
     direction: str,
     formula_environment: dict[str, Any],
@@ -26767,20 +26907,25 @@ def _fractional_rounding_case_witnesses(
         inputs = case.get("input")
         if not isinstance(inputs, dict):
             continue
+        parameter_environment = _closed_rounding_arithmetic_environment(
+            parameter_rules, case
+        )
+        case_formula_environment = {**formula_environment, **parameter_environment}
         dependency_environment = _case_asserted_dependency_environment(
             principal_rules,
             case,
-            formula_environment=formula_environment,
+            formula_environment=case_formula_environment,
         )
         execution = _case_formula_execution(
             rule,
             case,
-            formula_environment=formula_environment,
+            formula_environment=case_formula_environment,
             dependency_environment=dependency_environment,
         )
         if execution is None or not _formula_execution_implements_rounding(
             execution,
             direction,
+            environment=parameter_environment,
         ):
             continue
         reached_executions = _asserted_reached_rule_executions(
@@ -26789,7 +26934,7 @@ def _fractional_rounding_case_witnesses(
             principal_rules=principal_rules,
             case=case,
             dependency_environment=dependency_environment,
-            formula_environment=formula_environment,
+            formula_environment=case_formula_environment,
         )
         source_binding_execution = _FormulaExecution(
             tuple(
@@ -26816,10 +26961,12 @@ def _fractional_rounding_case_witnesses(
             operative_leaf,
             functions=functions,
             root_only=rounding_refers_to_result,
+            environment=parameter_environment,
         ):
             effective_operand = _rounding_demonstrated_operand(
                 operand,
                 direction=direction,
+                environment=parameter_environment,
             )
             if effective_operand is None:
                 continue
@@ -26827,7 +26974,7 @@ def _fractional_rounding_case_witnesses(
                 effective_operand,
                 principal_rules=principal_rules,
                 case=case,
-                formula_environment=formula_environment,
+                formula_environment=case_formula_environment,
                 dependency_environment=dependency_environment,
             )
             operand_value = _evaluate_formula_selector(
@@ -26837,16 +26984,28 @@ def _fractional_rounding_case_witnesses(
             if (
                 _rulespec_runtime_decimal(operand_value) is None
                 or float(operand_value).is_integer()
-                or not _fractional_input_materially_affects_operand(
-                    case,
-                    effective_operand,
-                    evaluation_environment=evaluation_environment,
-                    operand_value=float(operand_value),
-                    rule=rule,
-                    execution=execution,
-                    principal_rules=principal_rules,
-                    formula_environment=formula_environment,
-                    dependency_names=set(dependency_environment),
+                or not (
+                    _closed_fractional_rounding_operand_witness(
+                        effective_operand,
+                        case=case,
+                        parameter_rules=parameter_rules,
+                        principal_rules=principal_rules,
+                        dependency_environment=dependency_environment,
+                        operand_value=operand_value,
+                        rule_name=rule_name,
+                        execution=execution,
+                    )
+                    or _fractional_input_materially_affects_operand(
+                        case,
+                        effective_operand,
+                        evaluation_environment=evaluation_environment,
+                        operand_value=float(operand_value),
+                        rule=rule,
+                        execution=execution,
+                        principal_rules=principal_rules,
+                        formula_environment=case_formula_environment,
+                        dependency_names=set(dependency_environment),
+                    )
                 )
             ):
                 continue
@@ -26859,7 +27018,7 @@ def _fractional_rounding_case_witnesses(
                     rule_name=rule_name,
                     execution=source_binding_execution,
                     source_formula_branch=source_formula_branch,
-                    formula_environment=formula_environment,
+                    formula_environment=case_formula_environment,
                     rounding_refers_to_result=rounding_refers_to_result,
                     require_clause_binding=require_clause_binding,
                     extract_numeric_occurrences=extract_numeric_occurrences,
@@ -26885,10 +27044,15 @@ def _fractional_rounding_case_witnesses(
 def _formula_execution_implements_rounding(
     execution: _FormulaExecution,
     direction: str,
+    *,
+    environment: dict[str, Any] | None = None,
 ) -> bool:
     if direction == "nearest":
         return any(
-            _rounding_demonstrated_operand(operand, direction=direction) is not None
+            _rounding_demonstrated_operand(
+                operand, direction=direction, environment=environment
+            )
+            is not None
             for operand in _balanced_call_operands(execution.leaf, "floor")
         )
     function_name = "ceil" if direction == "upward" else "floor"
@@ -26906,6 +27070,7 @@ def _rounding_call_operands(
     *,
     functions: set[str],
     root_only: bool = False,
+    environment: dict[str, Any] | None = None,
 ) -> tuple[tuple[str, str], ...]:
     calls: list[tuple[str, str]] = []
     function_names = {"floor", "ceil"} & functions
@@ -26927,6 +27092,7 @@ def _rounding_call_operands(
                     or _rounding_demonstrated_operand(
                         operand,
                         direction="nearest",
+                        environment=environment,
                     )
                     is not None
                 ):
@@ -26939,6 +27105,7 @@ def _rounding_call_operands(
                 and _rounding_demonstrated_operand(
                     operand,
                     direction="nearest",
+                    environment=environment,
                 )
                 is None
             ):
@@ -26951,14 +27118,15 @@ def _rounding_demonstrated_operand(
     operand: str,
     *,
     direction: str,
+    environment: dict[str, Any] | None = None,
 ) -> str | None:
     if direction != "nearest":
         return operand
     with contextlib.suppress(SyntaxError):
-        expression = ast.parse(operand.strip(), mode="eval").body
+        expression = ast.parse(f"({operand.strip()})", mode="eval").body
         terms = _flatten_formula_addends(expression)
         for index, term in enumerate(terms):
-            value = _known_numeric_formula_value(term, {})
+            value = _known_numeric_formula_value(term, environment or {})
             if value is None or Decimal(str(value)) != Decimal("0.5"):
                 continue
             remaining = terms[:index] + terms[index + 1 :]
