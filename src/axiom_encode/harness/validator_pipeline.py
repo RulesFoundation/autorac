@@ -82,6 +82,7 @@ from axiom_encode.engine_binding import (
     require_engine_ref_sha,
     resolve_pinned_engine_binary,
 )
+from axiom_encode.numeric_equality import rulespec_numeric_values_equal
 from axiom_encode.repo_routing import (
     _path_identity_fingerprint,
     _path_mutation_stamp,
@@ -28049,23 +28050,11 @@ class ValidatorPipeline:
         if actual_kind in numeric and expected_kind in numeric:
             actual_decimal = self._rulespec_decimal(actual.get("value"))
             expected_decimal = self._rulespec_decimal(expected.get("value"))
-            if abs(actual_decimal - expected_decimal) <= Decimal("1e-18"):
-                return True
-            if actual_kind == expected_kind == "integer":
-                return False
-            binary64_exact_integer_limit = Decimal(2**53)
-            if (
-                abs(actual_decimal) >= binary64_exact_integer_limit
-                or abs(expected_decimal) >= binary64_exact_integer_limit
-            ):
-                return False
-            actual_float = float(actual_decimal)
-            expected_float = float(expected_decimal)
-            if not (math.isfinite(actual_float) and math.isfinite(expected_float)):
-                return False
-            return (
-                actual_float == expected_float
-                or math.nextafter(actual_float, expected_float) == expected_float
+            return rulespec_numeric_values_equal(
+                actual_decimal,
+                expected_decimal,
+                actual_kind=str(actual_kind),
+                expected_kind=str(expected_kind),
             )
         if actual_kind == "bool" and expected_kind == "bool":
             return bool(actual.get("value")) == bool(expected.get("value"))

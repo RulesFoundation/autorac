@@ -26588,6 +26588,49 @@ def test_formula_runtime_numeric_equality_is_exact():
 
 
 @pytest.mark.parametrize(
+    ("runtime", "asserted"),
+    [
+        (Decimal("197.51000000000001"), 197.51),
+        (Decimal("100.48999999999999"), 100.49),
+        (Decimal("197.50000000000002"), 197.5),
+        (Decimal("100.49999999999998"), 100.5),
+    ],
+)
+def test_asserted_money_runtime_equality_tolerates_one_binary64_step(
+    runtime: Decimal,
+    asserted: float,
+):
+    assert completeness_module._asserted_formula_runtime_values_equal(
+        {"dtype": "Money"}, runtime, asserted
+    )
+
+
+@pytest.mark.parametrize(
+    ("rule", "runtime", "asserted"),
+    [
+        ({"dtype": "Decimal"}, Decimal("197.51000000000001"), 197.51),
+        (
+            {"dtype": "Money"},
+            Decimal("555.53333333333333333333333333"),
+            555.5333333333333,
+        ),
+        ({"dtype": "Money"}, Decimal(2**53 + 1), float(2**53 + 1)),
+        ({"dtype": "Money"}, Decimal("0.9999999999999998"), 1.0),
+    ],
+)
+def test_asserted_money_runtime_equality_rejects_non_cent_or_unsafe_collapses(
+    rule,
+    runtime,
+    asserted,
+):
+    assert not completeness_module._asserted_formula_runtime_values_equal(
+        rule,
+        runtime,
+        asserted,
+    )
+
+
+@pytest.mark.parametrize(
     "runtime_value",
     [
         10**100,
