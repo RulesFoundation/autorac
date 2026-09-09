@@ -21538,6 +21538,44 @@ def test_a_paying_verb_governs_across_its_recipient_and_a_fraction_of_an_amount_
         ), (text, issue)
 
 
+def test_one_vocabulary_of_paying_verbs_and_receipts_are_an_amount():
+    # Review round 169 on #1585: the fraction-context alternation is built
+    # from the set of paying verbs and the set of other context words, so
+    # the two cannot disagree; and receipts, redemptions, royalties,
+    # advances, deposits and refunds are amount nouns.
+    from axiom_encode.harness.validator_pipeline import (
+        _HEBREW_FRACTION_CONTEXT_IN_CLAUSE_PATTERN,
+        _HEBREW_PAYING_VERBS,
+    )
+
+    assert all(
+        _HEBREW_FRACTION_CONTEXT_IN_CLAUSE_PATTERN.fullmatch(verb)
+        for verb in _HEBREW_PAYING_VERBS
+    )
+    for text, expected, grounded, ungrounded in (
+        ("המעסיק נתן לעובדת חמישית השכר", {0.2}, "0.2", "5"),
+        ("המעסיק הקצה לעובדת חמישית השכר", {0.2}, "0.2", "5"),
+        ("המעסיק מנכה לעובדת חמישית השכר", {0.2}, "0.2", "5"),
+        ("המעסיק שילם לעובדת חמישית מן התקבולים", {0.2}, "0.2", "5"),
+        ("המעסיק שילם לעובד חמישית מן התקבולים", {0.2}, "0.2", "5"),
+        ("המעסיק שילם לעובדת חמישית מן העובדות הזכאיות", {5.0}, "5", "0.2"),
+        ("ניכוי חמישית מההחזר", {0.2}, "0.2", "5"),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
