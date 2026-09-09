@@ -4360,7 +4360,9 @@ def _without_stated_conversion_results(source_text: str) -> str:
 def _without_slash_conjunction_operators(source_text: str) -> str:
     """Keep prose and offsets intact while masking coordinating slashes."""
 
-    return _SLASH_CONJUNCTION.sub(lambda match: match.group().replace("/", " "), source_text)
+    return _SLASH_CONJUNCTION.sub(
+        lambda match: match.group().replace("/", " "), source_text
+    )
 
 
 def _has_substantive_arithmetic_expression(source_text: str) -> bool:

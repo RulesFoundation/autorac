@@ -9349,7 +9349,9 @@ def test_editorial_slash_date_does_not_create_computation_obligation():
     )
 
 
-@pytest.mark.parametrize("conjunction", ["und/oder", "und / oder", "UND/ODER", "and/or", "and / or"])
+@pytest.mark.parametrize(
+    "conjunction", ["und/oder", "und / oder", "UND/ODER", "and/or", "and / or"]
+)
 def test_slash_conjunction_does_not_create_arithmetic_obligation(conjunction: str):
     source = (
         "Artikel 59\nRegelungen für den Fall, in dem sich die anzuwendenden\n"
