@@ -4986,31 +4986,37 @@ def _hebrew_rate_word_before(text: str, start: int) -> bool:
 
     The rate word stands in the same clause, any modifiers between
     ("הריבית השנתית החלה על יתרת ההלוואה הכוללת תהיה 10 או 30%"). Its
-    reach ends where another expression takes the pair: a listed verb
-    with words after it opens a new predicate ("יוטל קנס של 50 או 2%",
-    "תהיה לפי הקנס של"), while the verb right before the pair is the rate's
-    own; and an amount noun right before the pair, or before its "של",
-    governs the pair itself ("קנס של 50 או 2%").
+    reach ends where another expression takes the pair: an amount noun
+    after the predicate's verb ("יוטל קנס של 50 או 2%", "תהיה לפי הקנס
+    של"), or an amount noun right before the pair or before its "של"
+    ("קנס של 50 או 2%"). The verb's own connectors ("תעמוד על", "תהיה
+    לפחות", "תהיה בשיעור של") are the rate's predicate, an amount noun in
+    the subject's own modifiers ("על יתרת ההלוואה") is the subject's, and
+    a number that is no member of the list -- a reference ("לפי סעיף 5"),
+    a member read earlier ("1 עד 2 או 3%") -- is passed over.
     """
     clause_start = _hebrew_clause_start_before(text, start)
     rate = _HEBREW_RATE_WORD_BEFORE_PATTERN.search(text, clause_start, start)
     if rate is None:
         return False
-    # The words between the rate word and the list: the list itself, from
-    # its first member or join on ("1 עד 2 או 3%"), is not among them.
     words: list[str] = []
     for token_match in _NON_SPACE_TOKEN_PATTERN.finditer(text, rate.end("rate"), start):
-        token = token_match.group(0)
+        token = token_match.group(0).strip(",;:")
         if (
-            any(character.isdigit() for character in token)
+            not token
+            or any(character.isdigit() for character in token)
             or "%" in token
             or token in _HEBREW_LIST_JOIN_WORDS
             or _strip_hebrew_number_prefix(token, _HEBREW_RUN_START_VOCABULARY)
             is not None
         ):
-            break
+            continue
         words.append(token)
-    if any(word in _HEBREW_CONSEQUENT_VERBS for word in words[:-1]):
+    last_verb = max(
+        (index for index, word in enumerate(words) if word in _HEBREW_CONSEQUENT_VERBS),
+        default=-1,
+    )
+    if any(_hebrew_word_governs_an_amount(word) for word in words[last_verb + 1 :]):
         return False
     if words and _hebrew_word_governs_an_amount(words[-1]):
         return False
