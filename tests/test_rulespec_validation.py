@@ -19895,6 +19895,51 @@ def test_inflection_moves_a_final_letter_and_the_traditional_units():
         assert extract_numbers_from_text(text) == expected, text
 
 
+def test_a_word_both_marker_and_noun_is_ambiguous_and_members_keep_their_form():
+    # Review round 127 on #1585: "שמו" is "his name" as much as "that from
+    # him", so the list is reported ambiguous; "שממנו" stays a marker; a
+    # signed number word and a printed fraction keep their grounded value
+    # in the report.
+    split = {500.0, 2_000_000.0, 3_000_000.0}
+    text = "אם התשלומים הם 500, 2 או 3 מיליון שקלים שמו יימסר לרשות, והיתרה תוחזר."
+    assert _hebrew_recall(text) == split
+    assert extract_numbers_from_text(text) == split
+    (group,) = hebrew_ambiguous_reading_groups(text)
+    assert [(m.unscaled, m.scaled) for m in group.members] == [(500.0, 500_000_000.0)]
+    rates = {0.1, 0.2, 0.3}
+    text = "אם השיעורים הם 10, 20 ו־30 אחוזים מההכנסה שממנו ינוכה המס, תחול ההוראה."
+    assert _hebrew_recall(text) == rates
+    assert extract_numbers_from_text(text) == rates
+    for text, unscaled, scaled in (
+        (
+            "אם השיעורים הם 10, -עשרים ו־30 אחוזים מהכנסה נמוכה, תחול ההוראה.",
+            [10.0, -20.0],
+            [0.1, -0.2],
+        ),
+        (
+            "אם השיעורים הם 10, −עשרים ו־30 אחוזים מהכנסה נמוכה, תחול ההוראה.",
+            [10.0, -20.0],
+            [0.1, -0.2],
+        ),
+        ("אם השיעורים הם 1⁄2 ו־30 אחוזים מהכנסה נמוכה, תחול ההוראה.", [0.5], [0.005]),
+        (
+            "אם השיעורים הם 2 1⁄2, 10 ו־30 אחוזים מהכנסה נמוכה, תחול ההוראה.",
+            [2.5, 10.0],
+            [0.025, 0.1],
+        ),
+    ):
+        assert set(unscaled) | {0.3} == _hebrew_recall(text), text
+        (group,) = hebrew_ambiguous_reading_groups(text)
+        assert [m.unscaled for m in group.members] == unscaled, text
+        assert [m.scaled for m in group.members] == scaled, text
+    source = "אם השיעורים הם 10, -עשרים ו־30 אחוזים מהכנסה נמוכה, תחול ההוראה."
+    content = _danish_numeric_rulespec("-0.2", citation_path="il/statute/example/1")
+    (issue,) = find_ungrounded_numeric_issues(content, source_text=source)
+    assert "ground as 10, -20 here and would read 0.1, -0.2 under the shared unit" in (
+        issue
+    )
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

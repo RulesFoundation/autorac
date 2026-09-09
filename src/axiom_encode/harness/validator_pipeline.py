@@ -5250,10 +5250,15 @@ _HEBREW_UNIT_MODIFIER_PATTERN = re.compile(
 # The inflections of a listed ש-noun ("שליחים", "שליחיו", "שליחי") are the
 # noun too; a suffix moves the stem's final letter to its medial form
 # ("שכן" becomes "שכנו", "שחקן" becomes "שחקניו").
+# A stem that is itself an inflection ("שמם", "שמות", "שליחי") inflects no
+# further, so "שממנו" stays the preposition it is.
+_HEBREW_INFLECTED_STEM_ENDINGS = ("ים", "ות", "\u05d5", "\u05d4", "\u05dd", "\u05d9")
 _HEBREW_LEXICAL_SHIN_WORD_PATTERN = re.compile(
     "(?:"
     + "|".join(
         stem
+        if stem.endswith(_HEBREW_INFLECTED_STEM_ENDINGS)
+        else stem
         + "|"
         + stem[:-1]
         + stem[-1].translate(_HEBREW_MEDIAL_FORMS)
@@ -5284,12 +5289,15 @@ def _hebrew_opens_relative_clause(text: str, position: int) -> bool:
     neither is a possessive on a ש-root ("שוכריו ישלמו"), ש before ו being a
     root letter; then a verb-shaped word or a past plural is one.
     """
-    if _HEBREW_SPECIFIC_RELATIVE_MARKER_PATTERN.match(text, position) is not None:
-        return True
     word = _HEBREW_WORD_AFTER_PATTERN.match(text, position)
-    if word is not None and _HEBREW_LEXICAL_SHIN_WORD_PATTERN.match(
-        word.group(0).strip()
-    ):
+    lexical = word is not None and (
+        _HEBREW_LEXICAL_SHIN_WORD_PATTERN.match(word.group(0).strip()) is not None
+    )
+    if _HEBREW_SPECIFIC_RELATIVE_MARKER_PATTERN.match(text, position) is not None:
+        # "שמו" is "his name" as much as "that from him": a word both marker
+        # and noun decides nothing, and the caller reports the ambiguity.
+        return not lexical
+    if lexical:
         return False
     return _HEBREW_RELATIVE_MARKER_PATTERN.match(text, position) is not None
 
@@ -5327,6 +5335,9 @@ def _hebrew_word_is_undecided(token: str) -> bool:
     if token in _HEBREW_DECIDED_MODIFIER_WORDS:
         return False
     if token[0] == "\u05e9":
+        if _HEBREW_SPECIFIC_RELATIVE_MARKER_PATTERN.match(token) is not None:
+            # Reached only when the word is a lexical noun too ("שמו").
+            return True
         if len(token) > 1 and token[1] == "\u05d5":
             return False
         return _HEBREW_LEXICAL_SHIN_WORD_PATTERN.match(token) is None
@@ -5521,7 +5532,27 @@ class AmbiguousReadingGroup:
 _HEBREW_PRINTED_MEMBER_PATTERN = re.compile("-?\\d[\\d,]*(?:\\.\\d+)?")
 
 
-def _hebrew_member_unscaled_value(cleaned: str, span: tuple[int, int]) -> float | None:
+def _hebrew_member_unscaled_value(
+    cleaned: str,
+    span: tuple[int, int],
+    grounded: "Sequence[NumericOccurrence]",
+) -> float | None:
+    """The value the member at ``span`` grounds as, read as the source reads it.
+
+    The normal extraction over the cleaned text already reads signs,
+    printed and mixed fractions and number words; the occurrence whose
+    span the member covers gives the value.
+    """
+    best: NumericOccurrence | None = None
+    for occurrence in grounded:
+        if occurrence.start < span[0] or occurrence.end > span[1]:
+            continue
+        if best is None or (occurrence.end - occurrence.start) > (
+            best.end - best.start
+        ):
+            best = occurrence
+    if best is not None:
+        return best.value
     piece = cleaned[span[0] : span[1]].strip()
     printed = _HEBREW_PRINTED_MEMBER_PATTERN.fullmatch(piece.replace("\u2212", "-"))
     if printed is not None:
@@ -5532,7 +5563,9 @@ def _hebrew_member_unscaled_value(cleaned: str, span: tuple[int, int]) -> float 
     spelled = _hebrew_number_run_ending_at(
         cleaned, span[1], _HebrewWordTokens(cleaned), True
     )
-    return None if spelled is None else spelled[1]
+    if spelled is None:
+        return None
+    return -spelled[1] if cleaned[span[0]] in "-\u2212" else spelled[1]
 
 
 def hebrew_ambiguous_reading_groups(text: str) -> list[AmbiguousReadingGroup]:
@@ -5570,6 +5603,7 @@ def hebrew_ambiguous_reading_groups(text: str) -> list[AmbiguousReadingGroup]:
     candidates = {span: value for span, value in widened.items() if span not in base}
     if not candidates:
         return []
+    grounded = _tokenize_numeric_occurrences_from_text(cleaned).grounding
     anchors = sorted({(hs, he) for hs, he, _start, _rate in headings})
     groups: list[AmbiguousReadingGroup] = []
     for index, (heading_start, heading_end) in enumerate(anchors):
@@ -5578,7 +5612,7 @@ def hebrew_ambiguous_reading_groups(text: str) -> list[AmbiguousReadingGroup]:
         for span in sorted(candidates):
             if span[0] < heading_end or span[0] >= limit:
                 continue
-            unscaled = _hebrew_member_unscaled_value(cleaned, span)
+            unscaled = _hebrew_member_unscaled_value(cleaned, span, grounded)
             if unscaled is None:
                 continue
             members.append(
