@@ -20022,6 +20022,40 @@ def test_feminine_possessives_glyphs_everywhere_and_honest_members():
         assert [m.scaled for m in group.members] == scaled, text
 
 
+def test_plural_possessives_signed_percent_glyphs_and_glyph_remainders():
+    # Review round 130 on #1585: a plural ש-noun takes possessives; a glyph
+    # is one number, signed or not, a rate before a percent marker, and a
+    # scaled amount's remainder.
+    split = {500.0, 2_000_000.0, 3_000_000.0}
+    for text in (
+        "אם התשלומים הם 500, 2 או 3 מיליון שקלים שאלותיו יועברו לוועדה, והיתרה תוחזר.",
+        "אם התשלומים הם 500, 2 או 3 מיליון שקלים שליחותיו יועברו לוועדה, והיתרה תוחזר.",
+        "אם התשלומים הם 500, 2 או 3 מיליון שקלים שכניו ישלמו, והיתרה תוחזר.",
+    ):
+        assert _hebrew_recall(text) == split, text
+        assert extract_numbers_from_text(text) == split, text
+        assert hebrew_ambiguous_reading_groups(text) == [], text
+    for text, expected in (
+        ("השיעורים הם 10, 20 ו־2½%.", {0.1, 0.2, 0.025}),
+        ("השיעורים הם 10, 20 ו־2½ אחוז.", {0.1, 0.2, 0.025}),
+        ("השיעורים הם 10, 20 ו־½%.", {0.1, 0.2, 0.005}),
+        ("הקצבה תהיה 3 אלפים ו־2½ שקלים.", {3_002.5}),
+        ("הקצבה תהיה 3 אלפים ו־2.5 שקלים.", {3_002.5}),
+        ("הקצבה תהיה 3 אלפים ו־2 1/2 שקלים.", {3_002.5}),
+    ):
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) >= expected, text
+    for text in (
+        "אם השיעורים הם -½, 10 ו־30 אחוזים מהכנסה נמוכה, תחול ההוראה.",
+        "אם השיעורים הם −½, 10 ו־30 אחוזים מהכנסה נמוכה, תחול ההוראה.",
+    ):
+        assert _hebrew_recall(text) == {-0.5, 10.0, 0.3}, text
+        assert extract_numbers_from_text(text) >= {-0.5, 10.0, 0.3}, text
+        (group,) = hebrew_ambiguous_reading_groups(text)
+        assert [m.unscaled for m in group.members] == [-0.5, 10.0], text
+        assert [m.scaled for m in group.members] == [-0.005, 0.1], text
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

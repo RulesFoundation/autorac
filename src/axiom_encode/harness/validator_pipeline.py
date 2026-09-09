@@ -3687,7 +3687,9 @@ _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN = re.compile(
     + "+\u05d5[\u05be-]?"
     + _WRAP_SPACE_FRAGMENT
     + "*(?>(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
-    "(?:\\s*[/\u2044]\\s*(?P<bare_denominator>\\d+))?)"
+    "(?:\\s*[/\u2044]\\s*(?P<bare_denominator>\\d+))?"
+    # A glyph after the number ("ו־2½ שקלים") is the remainder's fraction.
+    "(?:[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?P<remainder_glyph>[\u00bc-\u00be\u2150-\u215e]))?)"
     # The whole mixed number, read atomically so a tail once read is never
     # given back: a printed fraction ("3 1/2", "3 1⁄2", "3 1 / 2") or a
     # spelled tail ("3 וחצי", "3 ושלושה רבעים").
@@ -3739,6 +3741,8 @@ def _hebrew_printed_plain_remainder_value(match: "re.Match[str]") -> float | Non
         if denominator == 0:
             return None
         value /= denominator
+    if match.groupdict().get("remainder_glyph"):
+        value += unicodedata.numeric(match.group("remainder_glyph"))
     if match.group("numerator"):
         denominator = float(match.group("denominator"))
         if denominator == 0:
@@ -5301,14 +5305,32 @@ _HEBREW_LEXICAL_SHIN_FIXED_FORMS = frozenset(
     "שמי שמו שמה שמם שרה שרון שמעון שאול שלומית שולה".split()
 )
 _HEBREW_SHIN_SUFFIXES = "(?:ים|ות|יו|יה|יהם|יהן|נו|י|ו|ה|ם|ן|ת)"
+# The possessives a plural stem takes ("שאלותיו", "שכניו", "שליחותיהם").
+_HEBREW_SHIN_PLURAL_SUFFIXES = "(?:יו|יה|יהם|יהן|ינו|יך|יכם|יכן|י)"
 
 
 def _hebrew_lexical_shin_variants(stem: str) -> str:
-    """The stem and the inflections it takes: a feminine stem on its ת
-    construct stem ("שאלה" gives "שאלתו"), a fixed form none, any other on
-    its medial final letter ("שכן" gives "שכנו")."""
+    """The stem and the inflections it takes: a plural on its plural stem
+    ("שאלות" gives "שאלותיו", "שכנים" gives "שכניו"), a feminine on its ת
+    construct stem and its plural ("שאלה" gives "שאלתו" and "שאלותיו"), a
+    fixed form none, any other on its medial final letter ("שכן" gives
+    "שכנו")."""
+    if stem.endswith("ות"):
+        return stem + "|" + stem + _HEBREW_SHIN_PLURAL_SUFFIXES
+    if stem.endswith("ים"):
+        return stem + "|" + stem[:-2] + "\u05d9" + _HEBREW_SHIN_SUFFIXES
     if stem.endswith("\u05d4"):
-        return stem + "|" + stem[:-1] + "\u05ea" + _HEBREW_SHIN_SUFFIXES
+        return (
+            stem
+            + "|"
+            + stem[:-1]
+            + "\u05ea"
+            + _HEBREW_SHIN_SUFFIXES
+            + "|"
+            + stem[:-1]
+            + "ות"
+            + _HEBREW_SHIN_PLURAL_SUFFIXES
+        )
     if stem in _HEBREW_LEXICAL_SHIN_FIXED_FORMS:
         return stem
     return (
@@ -5605,11 +5627,12 @@ _HEBREW_ASCII_MIXED_FRACTION_PATTERN = re.compile(
     "(?:(?P<whole>\\d+)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]+)?(?P<numerator>\\d+)\\s*/\\s*(?P<denominator>\\d+)"
     "(?![\\d/])(?=\\s*(?:[\u0590-\u05ff,;.]|$))"
 )
-# A whole with a vulgar-fraction glyph in Hebrew text ("2½, 10 ו־30 אחוזים")
-# is one number; the bare glyph the general reader takes.
+# A vulgar-fraction glyph in Hebrew text, bare or after a whole, signed or
+# not ("½", "-½", "2½, 10 ו־30 אחוזים"), is one number, a rate when a
+# percent marker follows ("2½%"); read before the general glyph reader.
 _HEBREW_GLYPH_NUMBER_PATTERN = re.compile(
     "(?<![\\d.,/])(?:(?<![\u05d0-\u05ea])(?P<sign>[-\u2212]))?"
-    "(?P<whole>\\d+)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?P<glyph>[\u00bc-\u00be\u2150-\u215e])(?![\\d])"
+    "(?:(?P<whole>\\d+)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*)?(?P<glyph>[\u00bc-\u00be\u2150-\u215e])(?![\\d])"
 )
 
 
@@ -14385,11 +14408,26 @@ def _tokenize_numeric_occurrences_from_text(
             ):
                 continue
             value = unicodedata.numeric(match.group("glyph")) + float(
-                match.group("whole")
+                match.group("whole") or 0
             )
             if match.group("sign"):
                 value = -value
-            add_both(cleaned_view, match.span(), value)
+            if _PERCENT_MARKER_AFTER_NUMBER_PATTERN.match(
+                cleaned, match.end()
+            ) or _HEBREW_PERCENT_WORD_PATTERN.match(cleaned, match.end()):
+                # "2½%" is the rate 0.025, the way "2.5%" is; the printed
+                # figure grounds as well.
+                collector.add_grounding(cleaned_view, match.span(), value)
+                add_both(
+                    cleaned_view,
+                    match.span(),
+                    value / 100,
+                    source_value=value,
+                    force_rate_context=True,
+                    requires_rate_context=True,
+                )
+            else:
+                add_both(cleaned_view, match.span(), value)
             grounding_spans.append(match.span())
             inventory_spans.append(match.span())
     for match in (*hebrew_ascii_mixed, *_FRACTION_SLASH_PATTERN.finditer(cleaned)):
