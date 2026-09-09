@@ -20465,6 +20465,80 @@ def test_the_prefix_stack_is_the_grammars_own():
     assert view.text == " וכשהמתינה  כשהשיעורים של־מי כל־הסכומים שב־סכום ושל־כך"
 
 
+def test_a_condition_whose_shin_binds_the_heading_noun_opens_it():
+    # Review round 142 on #1585: "ככל ש" and "במקרה ש" end in the relative
+    # ש, a prefix on the heading noun, so the marker ends inside the
+    # heading's own stack and opens the condition as "כאשר" before the noun
+    # does: the list splits at a consequent verb and closes at a tail under
+    # every marker and every spelling of the prefix.
+    cases = (
+        (
+            "ככל שהתשלומים הם 500, 2 או 3 מיליון שקלים ישולמו כמענק",
+            {500.0, 2_000_000.0, 3_000_000.0},
+            "500",
+            "500000000",
+        ),
+        (
+            "ככל ש־התשלומים הם 500, 2 או 3 מיליון שקלים ישולמו כמענק",
+            {500.0, 2_000_000.0, 3_000_000.0},
+            "500",
+            "500000000",
+        ),
+        (
+            "ככל ש-התשלומים הם 500, 2 או 3 מיליון שקלים ישולמו כמענק",
+            {500.0, 2_000_000.0, 3_000_000.0},
+            "500",
+            "500000000",
+        ),
+        (
+            "וככל שהתשלומים הם 500, 2 או 3 מיליון שקלים ישולמו כמענק",
+            {500.0, 2_000_000.0, 3_000_000.0},
+            "500",
+            "500000000",
+        ),
+        (
+            "במקרה שהשיעורים הם 10, 20 ו־30 אחוזים בהתאמה, תחול ההוראה",
+            {0.1, 0.2, 0.3},
+            "0.1",
+            "10",
+        ),
+        (
+            "במקרה ש־השיעורים הם 10, 20 ו־30 אחוזים בהתאמה, תחול ההוראה",
+            {0.1, 0.2, 0.3},
+            "0.1",
+            "10",
+        ),
+        ("ששיעורי המס הם 2 ו־3 אחוזים", {0.02, 0.03}, "0.02", "5"),
+    )
+    for text, expected, grounded, ungrounded in cases:
+        assert _hebrew_recall(text) == expected, text
+        assert extract_numbers_from_text(text) == expected, text
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+    # The consequent verb splits the list under "ככל ש" as under "כאשר",
+    # with no ambiguity; a relative ש in the subject phrase is no marker.
+    for text in (
+        "ככל שהשיעורים הם 10, 20 ו־30 אחוזים יחיד ישלם",
+        "כאשר השיעורים הם 10, 20 ו־30 אחוזים יחיד ישלם",
+    ):
+        assert _hebrew_recall(text) == {10.0, 20.0, 0.3}, text
+        assert hebrew_ambiguous_reading_groups(text) == [], text
+    assert _hebrew_recall("השיעורים שנקבעו הם 10, 20 ו־30 אחוזים יחיד ישלם") == {
+        0.1,
+        0.2,
+        0.3,
+    }
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

@@ -4991,7 +4991,11 @@ _HEBREW_PLURAL_AMOUNT_HEADING_PATTERN = re.compile(
 # heads nothing when the clause runs on past the unit into the consequent
 # ("כאשר התשלומים הם 500, 2 או 3 מיליון שקלים ישולמו כמענק").
 _HEBREW_CONDITIONAL_CLAUSE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])(?:\u05d5[\u05be-]?)?(?:אם|כאשר|ככל\\s+ש|במקרה\\s+ש|אילו|לכשיהיה)(?![\u0590-\u05ff])"
+    "(?<![\u0590-\u05ff])(?:\u05d5[\u05be-]?)?(?:אם|כאשר|אילו|לכשיהיה)(?![\u0590-\u05ff])"
+    # "ככל ש", "במקרה ש" and "כש" end in the relative ש, a prefix on the
+    # word that follows ("ככל שהתשלומים הם"): the marker ends inside that
+    # word, which the caller allows when the word is the heading noun.
+    "|(?<![\u0590-\u05ff])(?:\u05d5[\u05be-]?)?(?:ככל|במקרה)\\s+ש(?=[\u0590-\u05ff])"
     "|(?<![\u0590-\u05ff])(?:\u05d5[\u05be-]?)?כש(?=[\u0590-\u05ff])"
 )
 _HEBREW_SENTENCE_STOP_CHARACTERS = frozenset(".;:\n")
@@ -5647,9 +5651,13 @@ def _hebrew_list_heading_end(text: str, start: int, rate: bool) -> int | None:
     if heading is None or not _hebrew_list_body_only(text, heading.end(), start):
         return None
     segment_start = text.rfind(",", clause_start, heading.start()) + 1
-    if _HEBREW_CONDITIONAL_CLAUSE_PATTERN.search(
-        text, max(clause_start, segment_start), heading.start()
-    ) is not None or heading.group("stack").endswith("\u05db\u05e9"):
+    # The marker may end inside the heading's own stack ("ככל שהתשלומים",
+    # "כשהתשלומים"); one further in, in the subject phrase, is no marker.
+    stack_end = heading.start() + len(heading.group("stack"))
+    marker = _HEBREW_CONDITIONAL_CLAUSE_PATTERN.search(
+        text, max(clause_start, segment_start), heading.end()
+    )
+    if marker is not None and marker.end() <= stack_end:
         state = _hebrew_list_end_state(text, _hebrew_list_body_end(text, start))
         if state == "consequent":
             return None
