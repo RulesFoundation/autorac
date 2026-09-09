@@ -3063,9 +3063,19 @@ def _search_before(
     The patterns this serves read one or two words before a position; a
     search over everything before each of thousands of positions is
     quadratic. A lookbehind at the window's start still sees the text
-    before it, and ``$`` matches at ``end``.
+    before it, and ``$`` matches at ``end``. The window is measured before
+    the whitespace that ends at ``end``, so a line wrap and the indentation
+    after it ("10,\n            20") cost it nothing; a paragraph gap in
+    that whitespace is a boundary the window does not cross.
     """
-    return pattern.search(text, max(0, end - window), end)
+    trimmed = end
+    while trimmed > 0 and text[trimmed - 1].isspace():
+        trimmed -= 1
+    if trimmed < end:
+        gap = _PARAGRAPH_GAP_PATTERN.search(text, trimmed, end)
+        if gap is not None:
+            return pattern.search(text, gap.end(), end)
+    return pattern.search(text, max(0, trimmed - window), end)
 
 
 _HEBREW_CLAUSE_BOUNDARY_CHARACTERS = frozenset(",;:.()[]\"'\u05f3\u05f4-\u2013\u2014\n")
@@ -5516,8 +5526,8 @@ def _hebrew_word_is_undecided(token: str) -> bool:
 def _hebrew_list_end_state(text: str, body_end: int) -> str:
     """How the list ends inside its condition: closed, consequent or ambiguous.
 
-    A comma, a clause separator or a list tail after the unit, at most
-    decided modifiers between, closes it ("אחוזים מההכנסה החייבת, תחול
+    A comma, a clause separator or a list tail after the unit, however
+    many decided modifiers between, closes it ("אחוזים מההכנסה החייבת, תחול
     ההוראה"); the consequent's verb, known by word ("שקלים ישולמו כמענק",
     "שקלים יקבל העובד"), or the sentence ending with words between and no
     comma ("שקלים משולמים כמענק.") is the clause running on; an undecided
@@ -5528,7 +5538,9 @@ def _hebrew_list_end_state(text: str, body_end: int) -> str:
     relative = False
     ambiguous = False
     shin_ambiguous = False
-    for _ in range(12):
+    # The walk runs to the boundary that decides the list; a word that no
+    # pattern reads ends it undecided.
+    while True:
         if _HEBREW_LIST_TAIL_WORD_PATTERN.match(text, position) is not None:
             return "ambiguous" if ambiguous else "closed"
         if _HEBREW_CLAUSE_SEPARATOR_PATTERN.match(text, position) is not None:
@@ -5551,10 +5563,9 @@ def _hebrew_list_end_state(text: str, body_end: int) -> str:
                     if token[0] == "\u05e9":
                         shin_ambiguous = True
         modifier = _HEBREW_UNIT_MODIFIER_PATTERN.match(text, position)
-        if modifier is None:
+        if modifier is None or modifier.end() <= position:
             return "ambiguous"
         position = modifier.end()
-    return "ambiguous"
 
 
 _HEBREW_LIST_COLON_WORDS = (

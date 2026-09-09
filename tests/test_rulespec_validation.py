@@ -20720,6 +20720,63 @@ def test_the_range_passes_scan_thousands_of_members_and_clauses_in_linear_time()
     assert elapsed < 1.0, elapsed
 
 
+def test_a_shared_unit_crosses_indentation_and_a_long_relative_clause():
+    # Review round 146 on #1585. The window of a bounded backward search is
+    # measured before the whitespace that ends at its position, so a list
+    # wrapped and indented keeps its shared unit; a blank line in that
+    # whitespace stays a boundary. And the walk past the unit runs to the
+    # boundary that decides the list, so a long relative clause closed by
+    # its comma closes the list, and one run into the consequent's verb
+    # splits it.
+    rates = {0.1, 0.2, 0.3}
+    amounts = {10_000_000.0, 20_000_000.0, 30_000_000.0}
+    long_clause = (
+        " מההכנסה החייבת אשר שולמה לעובד על ידי המעסיק בשנת המס שקדמה לשנה שבה"
+        " הוגשה הבקשה"
+    )
+    cases = [
+        (
+            "כאשר השיעורים הם 10, 20 ו־30 אחוזים" + long_clause + ", תחול ההוראה.",
+            rates,
+            "0.1",
+        ),
+        (
+            "כאשר הסכומים הם 10, 20 ו־30 מיליון שקלים" + long_clause + ", תחול ההוראה.",
+            amounts,
+            "10000000",
+        ),
+    ]
+    for indent in (" " * 12, " " * 40, "\t\t"):
+        cases.append(("השיעורים הם 10,\n" + indent + "20 ו־30 אחוזים", rates, "0.1"))
+        cases.append(
+            ("הסכומים הם 10,\n" + indent + "20 ו־30 מיליון שקלים", amounts, "10000000")
+        )
+    for text, expected, grounded in cases:
+        assert _hebrew_recall(text) == expected, text[:40]
+        assert extract_numbers_from_text(text) == expected, text[:40]
+        assert hebrew_ambiguous_reading_groups(text) == [], text[:40]
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text[
+            :40
+        ]
+        content = _danish_numeric_rulespec("10", citation_path="il/statute/example/1")
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith("Ungrounded generated numeric literal: 10 "), issue
+    # A blank line is a paragraph boundary: the pair after it is on its own.
+    assert _hebrew_recall("השיעורים הם 10,\n\n" + " " * 12 + "20 ו־30 אחוזים") == {
+        10.0,
+        20.0,
+        0.3,
+    }
+    # The consequent's verb after the long clause splits the list, as after
+    # a short one.
+    split = "כאשר התשלומים הם 500, 2 או 3 מיליון שקלים" + long_clause + " ישולמו כמענק"
+    assert _hebrew_recall(split) == {500.0, 2_000_000.0, 3_000_000.0}
+    assert hebrew_ambiguous_reading_groups(split) == []
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
