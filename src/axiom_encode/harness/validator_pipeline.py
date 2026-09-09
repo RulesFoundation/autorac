@@ -1829,6 +1829,7 @@ _HEBREW_NUMBER_WORD_VALUES = {
     "שניים": 2.0,
     "שניית": 2.0,
     "שתיים": 2.0,
+    "שתים": 2.0,
     "שתי": 2.0,
     "שלוש": 3.0,
     "שלושה": 3.0,
@@ -1995,7 +1996,7 @@ _HEBREW_UNIT_VALUES = {
     for word, value in _HEBREW_NUMBER_WORD_VALUES.items()
     if value <= 10.0 and word not in _HEBREW_ORDINAL_WORDS
 }
-_HEBREW_HUNDRED_WORDS = {"מאה": 100.0, "מאתיים": 200.0}
+_HEBREW_HUNDRED_WORDS = {"מאה": 100.0, "מאתיים": 200.0, "מאתים": 200.0}
 _HEBREW_THOUSAND_WORDS = {"אלף": 1000.0, "אלפיים": 2000.0}
 # Absolute, plural and construct forms ("שלושה מיליוני שקלים").
 _HEBREW_MILLION_WORDS = {
@@ -5030,6 +5031,7 @@ _HEBREW_RELATIVE_MARKER_PATTERN = re.compile(
     + _HEBREW_LEXICAL_SHIN_WORDS
     + "(?![\u0590-\u05ff]))"
     "\u05e9(?:\u05d4[\u0590-\u05ff]+"
+    "|\u05d5?\u05d5(?:עדה|עדת|עד|תק|תיק|תיקה)"
     "|(?:על|ב|בגינ|ממנ|מ|ממ|לגבי|בשל|בעד|כנגד|כלפי|אל|אצל|תחת|לפי|בתוכ|מתוכ)"
     "(?:ו|ה|הם|הן|ם|ן|נו|יו|יה|יהם|יהן)"
     "|[\u05d9\u05ea\u05e0\u05d0][\u0590-\u05ff]{2,}"
@@ -5103,48 +5105,42 @@ _HEBREW_UNIT_MODIFIER_PATTERN = re.compile(
 )
 
 
-_HEBREW_RELATIVE_SUBJECT_PATTERN = re.compile(
-    "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*(?!"
-    + _HEBREW_LEXICAL_SHIN_WORDS
-    + "(?![\u0590-\u05ff]))"
-    "\u05e9(?!\u05d5(?!\u05d5?(?:עדה|עדת|עד|תק|תיק|תיקה)(?![\u0590-\u05ff])))"
-    "[\u0590-\u05ff]{2,}(?![\u0590-\u05ff])"
+# The inflections of a listed ש-noun ("שליחים", "שליחיו", "שליחי") are the
+# noun too.
+_HEBREW_LEXICAL_SHIN_WORD_PATTERN = re.compile(
+    _HEBREW_LEXICAL_SHIN_WORDS + "(?:ים|ות|יו|יה|יהם|יהן|נו|י|ו|ה|ם|ן|ת)?$"
 )
 
 
 def _hebrew_opens_relative_clause(text: str, position: int) -> bool:
-    """Whether a relative clause opens at ``position``.
+    """Whether a relative marker opens a clause at ``position``.
 
-    A relative marker, or the relative ש on a subject whose clause shows
-    its own verb within the next six words ("ששופט יקבע", "שבית דין אזורי
-    לעבודה יקבע"); ש before ו is a root letter ("שותפה תשלם", "שוכרת הדירה
-    תשלם"), the ועדה family excepted.
+    "אשר", or ש before the article, a suffixed preposition, the ועדה family,
+    a verb-shaped word or a past plural; a listed ש-noun in any inflection
+    ("שליחים ישלמו") is no marker.
     """
-    if _HEBREW_RELATIVE_MARKER_PATTERN.match(text, position) is not None:
-        return True
-    subject = _HEBREW_RELATIVE_SUBJECT_PATTERN.match(text, position)
-    if subject is None:
+    word = _HEBREW_WORD_AFTER_PATTERN.match(text, position)
+    if word is not None and _HEBREW_LEXICAL_SHIN_WORD_PATTERN.match(
+        word.group(0).strip()
+    ):
         return False
-    cursor = subject.end()
-    for _ in range(6):
-        word = _HEBREW_WORD_AFTER_PATTERN.match(text, cursor)
-        if word is None:
-            return False
-        if word.group("word") in _HEBREW_CONSEQUENT_VERBS:
-            return True
-        cursor = word.end()
-    return False
+    return _HEBREW_RELATIVE_MARKER_PATTERN.match(text, position) is not None
 
 
 # Ambiguity is explicit. A bare word after the unit that no class of
 # evidence decides -- no preposition, article or vav prefix, no plural
 # ending, outside the lexicons and the closed sets -- may be the consequent's
 # verb or a modifier of the unit ("מהכנסה נמוכה", "מהכנסת יחיד", "ממס ישיר").
-# Unless a lexicon verb or the sentence end decides later, the list is
+# So may a bare ש-word that is neither a relative marker nor a listed
+# ש-noun ("ששופט יקבע", "שבית דין יקבע"): the relative prefix on a subject
+# with its own verb, or a noun before the consequent's verb. Unless a lexicon
+# verb or the sentence end decides later -- and after such a ש-word the verb
+# decides nothing, since it may be the relative clause's own -- the list is
 # AMBIGUOUS: it grounds as today, unscaled, and the source reports the
 # shared-unit reading as a candidate a reviewed assertion may select.
 # Exhausted input and a token that is no word are ambiguous, never a
-# consequent.
+# consequent. ש before ו is a root letter ("שותפה", "שוכרת", "שווי"), never
+# the prefix, the ועדה family excepted.
 HEBREW_HEADED_LIST_IN_CONDITION = "hebrew-headed-list-in-condition"
 _HEBREW_AMBIGUOUS_AS_HEADED: "ContextVar[bool]" = ContextVar(
     "_HEBREW_AMBIGUOUS_AS_HEADED", default=False
@@ -5157,18 +5153,19 @@ _HEBREW_DECIDED_MODIFIER_WORDS = frozenset(
     "ישראל ירושלים יהודה יחד יחדיו יותר נוסף נוספת אחר אחרת אחד אחת או את אם אף "
     "אך אל אפילו אילו איפוא אולי תוך תחת נגד".split()
 )
-_HEBREW_LEXICAL_SHIN_WORD_PATTERN = re.compile(_HEBREW_LEXICAL_SHIN_WORDS + "$")
 
 
 def _hebrew_word_is_undecided(token: str) -> bool:
     """Whether no class of evidence tells ``token`` for a modifier or a verb."""
     if token in _HEBREW_DECIDED_MODIFIER_WORDS:
         return False
+    if token[0] == "\u05e9":
+        if len(token) > 1 and token[1] == "\u05d5":
+            return False
+        return _HEBREW_LEXICAL_SHIN_WORD_PATTERN.match(token) is None
     if token[0] in "בלמכהו" and len(token) >= 3:
         return False
     if token.endswith(("ים", "ות")):
-        return False
-    if token[0] == "\u05e9" and _HEBREW_LEXICAL_SHIN_WORD_PATTERN.match(token):
         return False
     return True
 
@@ -5181,11 +5178,13 @@ def _hebrew_list_end_state(text: str, body_end: int) -> str:
     ההוראה"); the consequent's verb, known by word ("שקלים ישולמו כמענק",
     "שקלים יקבל העובד"), or the sentence ending with words between and no
     comma ("שקלים משולמים כמענק.") is the clause running on; an undecided
-    word before the comma ("מהכנסה נמוכה,") leaves the list ambiguous.
+    word before the comma ("מהכנסה נמוכה,") leaves the list ambiguous, and
+    after an undecided ש-word ("ששופט יקבע,") so does the verb.
     """
     position = body_end
     relative = False
     ambiguous = False
+    shin_ambiguous = False
     for _ in range(12):
         if _HEBREW_LIST_TAIL_WORD_PATTERN.match(text, position) is not None:
             return "ambiguous" if ambiguous else "closed"
@@ -5200,10 +5199,14 @@ def _hebrew_list_end_state(text: str, body_end: int) -> str:
         elif not relative:
             word = _HEBREW_WORD_AFTER_PATTERN.match(text, position)
             if word is not None:
+                token = word.group(0).strip()
                 if word.group("word") in _HEBREW_CONSEQUENT_VERBS:
-                    return "consequent"
-                if _hebrew_word_is_undecided(word.group(0).strip()):
+                    if not shin_ambiguous:
+                        return "consequent"
+                elif _hebrew_word_is_undecided(token):
                     ambiguous = True
+                    if token[0] == "\u05e9":
+                        shin_ambiguous = True
         modifier = _HEBREW_UNIT_MODIFIER_PATTERN.match(text, position)
         if modifier is None:
             return "ambiguous"
