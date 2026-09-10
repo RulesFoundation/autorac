@@ -26661,6 +26661,54 @@ def _emit_final_rejected_candidate(
     return resolved_destination
 
 
+def _retained_rejected_candidate_outcome(
+    failure: _FailedEncodeAttempt,
+    *,
+    output_root: Path,
+    attempt_number: int,
+) -> dict[str, Any]:
+    """Keep a rejected pair separate from a later artifact-free model failure.
+
+    Retry cleanup may already have removed or replaced the original files and
+    trace. Persist the captured bytes and validation evidence, never reread those
+    paths or make the old result the terminal attempt's result.
+    """
+
+    candidate = failure.candidate
+    assert candidate is not None
+    result = failure.result
+    _generated_root, _output_file, relative_output = (
+        _validation_retry_candidate_location(result, output_root=output_root)
+    )
+    return {
+        "schema": "axiom-encode/retained-rejected-candidate/v1",
+        "accepted": False,
+        "attempt": attempt_number,
+        "citation": str(result.citation),
+        "runner": str(result.runner),
+        "backend": str(result.backend),
+        "model": str(result.model),
+        "path": relative_output.as_posix(),
+        "rulespec_content": candidate.rulespec,
+        "tests_content": candidate.tests,
+        "rulespec_sha256": candidate.rulespec_sha256,
+        "tests_sha256": candidate.tests_sha256,
+        "metrics": asdict(result.metrics) if result.metrics is not None else None,
+        "validation_issues": list(
+            failure.full_validation_issues
+            or failure.validation_issues
+            or (failure.error,)
+        ),
+        "error": failure.error,
+        "standalone_validation_success": bool(result.success),
+        "generation_prompt_sha256": getattr(result, "generation_prompt_sha256", None),
+        "context_manifest_sha256": getattr(result, "context_manifest_sha256", None),
+        "source_attestation": copy.deepcopy(
+            getattr(result, "source_attestation", None)
+        ),
+    }
+
+
 def _load_initial_validation_retry_candidate(
     args: Any,
 ) -> ValidationRetryCandidate | None:
@@ -29591,6 +29639,7 @@ def _run_encode_attempts_with_retries(
             execution.result,
             outcome,
         )
+        selected_failure = None
         if emit_destination is not None and final_validator_rejected:
             final_issues = execution.validation_issues or (
                 _encode_outcome_issue(execution.result, outcome),
@@ -29611,13 +29660,36 @@ def _run_encode_attempts_with_retries(
                 (*failed_attempts, terminal_failure)
             )
             assert selected_failure is not None
+        elif (
+            failed_attempts
+            and not execution.result.success
+            and not execution.result.output_file
+            and execution.result.metrics is None
+        ):
+            # An auth/transport/empty-response failure did not produce a new
+            # candidate. Keep the best previously captured rejection as repair
+            # evidence; its metrics must not describe this terminal model call.
+            selected_failure = _best_validation_retry_attempt(failed_attempts)
+            assert selected_failure is not None
+            outcome["retained_rejected_candidate"] = (
+                _retained_rejected_candidate_outcome(
+                    selected_failure,
+                    output_root=args.output,
+                    attempt_number=next(
+                        index
+                        for index, failure in enumerate(failed_attempts, 1)
+                        if failure is selected_failure
+                    ),
+                )
+            )
+        if emit_destination is not None and selected_failure is not None:
             selected_issues = (
                 selected_failure.full_validation_issues
                 or selected_failure.validation_issues
                 or (selected_failure.error,)
             )
             emitted_candidate = _emit_final_rejected_candidate(
-                execution.result,
+                selected_failure.result,
                 output_root=args.output,
                 destination=emit_destination,
                 citation=str(args.citation),
