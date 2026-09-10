@@ -53,6 +53,22 @@ rule, not an encoded legal provision. The other lifetime builtins are
 are functions, never input slots. Facts must use the compiled program's public
 input references; supplying a computed result as a fact fails.
 
+Engines exposing `calendar_years_to_months(year_count)` can convert a grounded
+count of whole Gregorian calendar years into an Integer month count. The
+operation accepts integers and exactly integral Decimals; fractions, Float
+columns, booleans and checked-integer overflow fail. Use Decimal arithmetic for
+derived counts. It supplies calendar-unit semantics only: the source must still
+establish the selected years and any exclusions. A partial year or an excluded
+month cannot be represented by converting a whole-year count.
+
+For a top-N sum over complete annual observations, convert the same grounded N
+used by the reduction. Selected-year ties, leap days and gaps between selected
+years do not change the month count per complete year. This does not fill missing
+observations or justify eligibility, and an unknown or computed value must not
+be supplied as a fabricated input. The builtin also accepts a computed lifetime
+argument; the engine evaluates that argument through its normal reduction path.
+Older engine builds without the primitive fail compilation explicitly.
+
 The adapter requires 1–512 explicit periods and 1–100,000 rows per batch, with
 the same unique entity IDs in the same order in every batch. It asserts every
 row, using a scalar expectation for one row or a list for multiple rows. Decimal
@@ -85,3 +101,9 @@ These tests compile fresh synthetic modules and execute all four reductions,
 verify a decimal discrepancy below floating-point resolution, and reject a
 computed output supplied as a historical fact. They skip if the binary is not
 explicitly configured; default Python CI alone does not prove engine integration.
+
+With a build exposing the calendar primitive, also run
+`tests/test_calendar_unit_engine_integration.py` under the same environment.
+Those synthetic fixtures exercise an arithmetic-derived year count, conversion
+of a lifetime count, exact typed output, zero earnings, tied values and separated
+complete years. A fractional derived count must fail rather than truncate.

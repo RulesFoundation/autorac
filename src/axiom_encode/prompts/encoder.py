@@ -930,6 +930,15 @@ LIFETIME_FIXTURE_PROTOCOL = """Lifetime formula and companion-test protocol:
   `count_over_periods(value)`, and `sum_top_n_over_periods(value, count)`
   are engine builtins over one entity's supplied period history. Never invent
   `#input.<builtin_name>` facts or feed a computed reduction back as an input.
+- `calendar_years_to_months(year_count)` is an engine calendar-unit conversion,
+  not an input or policy parameter. It accepts an integer or exactly integral
+  Decimal count of whole Gregorian calendar years and returns an Integer month
+  count; fractional values, Float columns, booleans and overflow fail. Use
+  Decimal arithmetic for computed counts. For complete annual observations,
+  convert the same source-grounded year count used by a top-N reduction. This
+  operation does not select eligible years, count months in partial years, or
+  apply month-specific exclusions. Those rules still require source-grounded
+  execution. Do not replace them with a calendar conversion.
 - A companion case that asserts a lifetime reduction uses top-level `name`,
   optional `description`, `period`, `output`, and `lifetime`. The `lifetime`
   mapping contains `entity`, optional `arithmetic: decimal`, `periods`, and
@@ -1699,6 +1708,10 @@ Complete-source-unit mode is enabled for this request:
   mandate deriving one parameter from the other.
 - Never introduce calendar constants `12`, `52`, `365`, `4`, or `24` as module
   literals unless that literal appears in the authoritative source text.
+  When the source requires months in a count of whole Gregorian calendar years,
+  use the engine's `calendar_years_to_months` operation on the grounded count.
+  Never turn that operation into a fabricated fact or assume that it establishes
+  statutory year selection, partial-year coverage, or month-specific exclusions.
   Express a stated conversion through companion-test assertions on both
   parameter outputs; literals used only in companion tests do not require
   source grounding.

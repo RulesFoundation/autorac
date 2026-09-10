@@ -9004,7 +9004,9 @@ rules: []
             )
 
         mock_reviewer.assert_not_called()
-        assert metrics.generalist_review_pass
+        assert metrics.generalist_review_pass is None
+        assert metrics.generalist_review_status == "skipped"
+        assert metrics.generalist_review_skip_reason == "user_requested"
         assert metrics.generalist_review_score is None
         assert metrics.generalist_review_issues == []
 
@@ -11804,7 +11806,17 @@ rules:
         assert metrics.ungrounded_numeric_count == 0
         assert metrics.missing_source_numeric_occurrence_count == 0
 
-    def test_runs_generalist_reviewer_and_records_result(self, tmp_path):
+    @pytest.mark.parametrize(
+        "source_text",
+        [
+            "Provision text with £10.",
+            "Provision text with £10.\n"
+            + "The ordinary rule applies subject to the following exception.\n" * 100
+            + "Final exception: the amount does not apply to the excluded class.\n",
+        ],
+        ids=["short-source", "exception-beyond-former-source-limit"],
+    )
+    def test_runs_generalist_reviewer_and_records_result(self, tmp_path, source_text):
         rulespec_file = _generated_rulespec_file_path(tmp_path, "statutes/example.yaml")
         rulespec_file.write_text(
             """format: rulespec/v1
@@ -11847,7 +11859,7 @@ rules:
                 rulespec_file=rulespec_file,
                 policy_repo_root=_canonical_rulespec_content_root(tmp_path, "uk"),
                 axiom_rules_path=Path("/tmp/axiom-rules-engine"),
-                source_text="Provision text with £10.",
+                source_text=source_text,
             )
 
         assert metrics.compile_pass is True
@@ -11864,6 +11876,7 @@ rules:
             "stale, generic, or misleading"
             in mock_reviewer.call_args.kwargs["review_context"]
         )
+        assert source_text in mock_reviewer.call_args.kwargs["review_context"]
 
     def test_timing_clause_review_context_mentions_boolean_day_predicate(
         self, tmp_path

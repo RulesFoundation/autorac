@@ -34156,6 +34156,7 @@ _RULESPEC_FORMULA_BUILTINS = {
     "all",
     "and",
     "any",
+    "calendar_years_to_months",
     "ceil",
     "count",
     "count_over_periods",

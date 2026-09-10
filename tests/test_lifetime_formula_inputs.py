@@ -14,6 +14,7 @@ from axiom_encode.harness import evals, validator_pipeline
         "max_over_periods(net_value)",
         "count_over_periods(net_value > 0)",
         "sum_top_n_over_periods(net_value, count)",
+        "calendar_years_to_months(count)",
     ]
 )
 def lifetime_rules(tmp_path: Path, request):
@@ -79,6 +80,10 @@ def test_companion_fixture_cannot_bind_a_lifetime_function_as_input(lifetime_rul
 
 
 def test_formula_analysis_preserves_lifetime_arguments_and_unknown_functions():
+    assert validator_pipeline._formula_local_identifiers(
+        "sum_top_n_over_periods(adjusted_value, selected_count) / "
+        "calendar_years_to_months(selected_count)"
+    ) == {"adjusted_value", "selected_count"}
     assert validator_pipeline._formula_local_identifiers(
         "sum_top_n_over_periods(adjusted_value, selected_count) + sum_over_periods(other_value)"
     ) == {"adjusted_value", "selected_count", "other_value"}

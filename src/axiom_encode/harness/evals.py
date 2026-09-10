@@ -821,6 +821,46 @@ class EvalArtifactMetrics:
     policyengine_issues: list[str] = field(default_factory=list)
     policyengine_runtime_identity: dict[str, object] | None = None
     policyengine_runtime_identity_sha256: str | None = None
+    generalist_review_status: str | None = None
+    generalist_review_skip_reason: str | None = None
+
+
+def generalist_review_snapshot(metrics) -> dict[str, object] | None:
+    """Report reviewer evidence without interpreting absence as approval."""
+    if metrics is None:
+        return None
+    score = getattr(metrics, "generalist_review_score", None)
+    recorded_pass = getattr(metrics, "generalist_review_pass", None)
+    issues = list(getattr(metrics, "generalist_review_issues", None) or [])
+    prompt_hash = getattr(metrics, "generalist_review_prompt_sha256", None)
+    explicit_status = getattr(metrics, "generalist_review_status", None)
+    if score is not None:
+        status = "passed" if recorded_pass is True else "failed"
+        passed = recorded_pass is True
+    elif explicit_status == "skipped":
+        status, passed = "skipped", None
+    elif (
+        recorded_pass is False
+        or issues
+        or prompt_hash
+        or explicit_status == "unavailable"
+    ):
+        status = "unavailable"
+        passed = False if recorded_pass is False else None
+    else:
+        # Old pass=True/no-score rows include synthetic skips. Their actual
+        # review execution status cannot be reconstructed from that boolean.
+        status, passed = "not_recorded", None
+    return {
+        "status": status,
+        "passed": passed,
+        "score": score,
+        "issues": issues,
+        "prompt_sha256": prompt_hash,
+        "skip_reason": getattr(metrics, "generalist_review_skip_reason", None)
+        if status == "skipped"
+        else None,
+    }
 
 
 _VALIDATION_ISSUE_CLASSIFIERS: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -1202,6 +1242,14 @@ class EvalResult:
             data.pop("require_complete_source_unit", None)
         if self.metrics is not None:
             data["metrics"] = asdict(self.metrics)
+            if (
+                self.metrics.generalist_review_status is None
+                and self.metrics.generalist_review_skip_reason is None
+            ):
+                # Rehydrated historical v6 verdicts must retain their exact
+                # authenticated metric shape, without newly injected nulls.
+                data["metrics"].pop("generalist_review_status")
+                data["metrics"].pop("generalist_review_skip_reason")
         return _bind_eval_result_payload(data)
 
 
@@ -4635,6 +4683,8 @@ _REVIEWER_DEPENDENT_METRIC_FIELDS = (
     "generalist_review_score",
     "generalist_review_issues",
     "generalist_review_prompt_sha256",
+    "generalist_review_status",
+    "generalist_review_skip_reason",
 )
 
 
@@ -4693,6 +4743,7 @@ def _revalidate_persisted_eval_suite_case_results(
                 policyengine_runtime=policyengine_runtime,
                 policyengine_rule_hint=case.policyengine_rule_hint,
                 skip_reviewers=True,
+                reviewer_skip_reason="persisted_revalidation",
                 source_metadata=source_metadata,
                 source_citation_path=source_citation_path,
                 rulespec_dependency_roots=rulespec_dependency_roots,
@@ -5486,6 +5537,10 @@ def _eval_result_from_payload(
             ),
             generalist_review_prompt_sha256=metrics_payload.get(
                 "generalist_review_prompt_sha256"
+            ),
+            generalist_review_status=metrics_payload.get("generalist_review_status"),
+            generalist_review_skip_reason=metrics_payload.get(
+                "generalist_review_skip_reason"
             ),
             policyengine_pass=metrics_payload.get("policyengine_pass"),
             policyengine_score=metrics_payload.get("policyengine_score"),
@@ -7299,6 +7354,7 @@ def evaluate_artifact(
     legacy_replacement: LegacyReplacementContract | None = None,
     replacement_overlay_scope: bool = False,
     axiom_rules_engine_ref: str | None = None,
+    reviewer_skip_reason: str | None = None,
 ) -> EvalArtifactMetrics:
     """Evaluate an artifact inside one exact named corpus release."""
 
@@ -7324,6 +7380,7 @@ def evaluate_artifact(
             policyengine_runtime=policyengine_runtime,
             policyengine_rule_hint=policyengine_rule_hint,
             skip_reviewers=skip_reviewers,
+            reviewer_skip_reason=reviewer_skip_reason,
             reviewers_require_deterministic_pass=reviewers_require_deterministic_pass,
             source_metadata=source_metadata,
             local_corpus_release=local_corpus_release,
@@ -7479,6 +7536,7 @@ def _evaluate_artifact_in_scope(
     legacy_replacement: LegacyReplacementContract | None = None,
     replacement_overlay_scope: bool = False,
     axiom_rules_engine_ref: str | None = None,
+    reviewer_skip_reason: str | None = None,
 ) -> EvalArtifactMetrics:
     """Evaluate one RuleSpec artifact with deterministic checks plus optional oracles."""
     existing_target_oracle_contract: ExistingTargetOracleContract | None = None
@@ -7567,8 +7625,8 @@ def _evaluate_artifact_in_scope(
             "The artifact file path is generic benchmark output and is not itself the legal citation. "
             "Benchmark directory labels may be stale, generic, or misleading and must be ignored as legal cues. "
             "The benchmark target is an atomic source slice/unit, so judge fidelity to exactly this source text rather than demanding omitted sibling limbs or parent consequences unless the RuleSpec claims to encode them. "
-            "Judge citation fidelity against the embedded source-text docstring and this authoritative source excerpt:\n\n"
-            f"{source_text.strip()[:4000]}"
+            "Judge citation fidelity against the embedded source-text docstring and this complete authoritative source text:\n\n"
+            f"{source_text}"
         )
         if re.search(
             r"\bon the first day\b|\bnext benefit week\b|\bon or after the day\b",
@@ -7584,9 +7642,15 @@ def _evaluate_artifact_in_scope(
         # model and never gates apply on the reviewer, so in that lane a
         # reviewer call on an already-rejected candidate is pure latency.
         deterministic_rejected = not compile_result.passed or not ci_result.passed
+        review_skip_reason = None
         if skip_reviewers or (
             reviewers_require_deterministic_pass and deterministic_rejected
         ):
+            review_skip_reason = (
+                reviewer_skip_reason or "user_requested"
+                if skip_reviewers
+                else "deterministic_rejection"
+            )
             generalist_review_result = ValidationResult(
                 validator_name="generalist-reviewer",
                 passed=True,
@@ -7838,7 +7902,25 @@ def _evaluate_artifact_in_scope(
         covered_source_numeric_occurrence_count=covered_source_numeric_occurrence_count,
         missing_source_numeric_occurrence_count=missing_source_numeric_occurrence_count,
         numeric_occurrence_issues=numeric_occurrence_issues,
-        generalist_review_pass=generalist_review_result.passed,
+        generalist_review_pass=(
+            None
+            if review_skip_reason
+            or (
+                generalist_review_result.score is None
+                and generalist_review_result.passed
+            )
+            else generalist_review_result.passed
+        ),
+        generalist_review_status=(
+            "skipped"
+            if review_skip_reason
+            else "unavailable"
+            if generalist_review_result.score is None
+            else "passed"
+            if generalist_review_result.passed
+            else "failed"
+        ),
+        generalist_review_skip_reason=review_skip_reason,
         generalist_review_score=generalist_review_result.score,
         generalist_review_issues=generalist_review_result.issues,
         generalist_review_prompt_sha256=generalist_review_result.prompt_sha256,
@@ -7888,6 +7970,7 @@ def _evaluate_generated_artifact_with_repairs(
     replacement_overlay_scope: bool = False,
     allow_artifact_repairs: bool = True,
     axiom_rules_engine_ref: str | None = None,
+    reviewer_skip_reason: str | None = None,
 ) -> EvalArtifactMetrics | None:
     evaluated_states: set[tuple[bytes | None, bytes | None]] = set()
     for _repair_round in range(_GENERATED_EVAL_REPAIR_LIMIT + 1):
@@ -7905,6 +7988,7 @@ def _evaluate_generated_artifact_with_repairs(
             policyengine_runtime=policyengine_runtime,
             policyengine_rule_hint=policyengine_rule_hint,
             skip_reviewers=skip_reviewers,
+            reviewer_skip_reason=reviewer_skip_reason,
             reviewers_require_deterministic_pass=reviewers_require_deterministic_pass,
             source_metadata=source_metadata,
             local_corpus_release=local_corpus_release,
@@ -9059,6 +9143,7 @@ def _run_single_eval(
             policyengine_runtime=policyengine_runtime,
             policyengine_rule_hint=policyengine_rule_hint,
             skip_reviewers=True,
+            reviewer_skip_reason="retained_candidate_preflight",
             reviewers_require_deterministic_pass=reviewers_require_deterministic_pass,
             source_metadata=source_metadata_payload,
             local_corpus_release=corpus_release,
@@ -9096,6 +9181,7 @@ def _run_single_eval(
                 policyengine_runtime=policyengine_runtime,
                 policyengine_rule_hint=policyengine_rule_hint,
                 skip_reviewers=True,
+                reviewer_skip_reason="retained_candidate_preflight",
                 reviewers_require_deterministic_pass=reviewers_require_deterministic_pass,
                 source_metadata=source_metadata_payload,
                 local_corpus_release=corpus_release,
@@ -14037,6 +14123,7 @@ _CONTEXT_FORMULA_IDENTIFIER = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 _CONTEXT_TEMPORAL_VALUE_FACT_YEAR_PATTERN = re.compile(r"(?:^|_)(?:19|20)\d{2}(?:_|$)")
 _CONTEXT_FORMULA_BUILTINS = {
     "and",
+    "calendar_years_to_months",
     "ceil",
     "count_over_periods",
     "else",

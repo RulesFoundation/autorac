@@ -212,6 +212,7 @@ from .harness.evals import (
     _validate_eval_suite_run_identity,
     _validate_signed_eval_result_verdict_evidence,
     evaluate_artifact,
+    generalist_review_snapshot,
     load_eval_suite_manifest,
     parse_runner_spec,
     resolve_corpus_source_unit,
@@ -59848,6 +59849,8 @@ def _initial_encode_outcome(result, *, apply_requested: bool) -> dict:
         "applied_files": [],
     }
     metrics = getattr(result, "metrics", None)
+    if metrics is not None:
+        outcome["generalist_review"] = generalist_review_snapshot(metrics)
     if metrics is not None and not standalone_success:
         try:
             labeled_issues = [
@@ -60131,6 +60134,7 @@ def _review_results_from_eval_metrics(metrics) -> ReviewResults | None:
     return ReviewResults(
         reviews=reviews,
         policyengine_match=metrics.policyengine_score,
+        oracle_context={"generalist_review": generalist_review_snapshot(metrics)},
     )
 
 
@@ -60151,10 +60155,19 @@ def _print_eval_metrics(result) -> None:
     print(
         f"  grounded={result.metrics.grounded_numeric_count} ungrounded={result.metrics.ungrounded_numeric_count} embedded_source={'yes' if result.metrics.embedded_source_present else 'no'}"
     )
+    review = generalist_review_snapshot(result.metrics)
     if result.metrics.generalist_review_score is not None:
         print(
             f"  generalist_review={'yes' if result.metrics.generalist_review_pass else 'no'} score={result.metrics.generalist_review_score:.1f}/10"
         )
+    else:
+        print(f"  generalist_review={review['status']} score=unavailable")
+        if review["skip_reason"]:
+            print(f"  generalist_review_skip_reason={review['skip_reason']}")
+    if review["prompt_sha256"]:
+        print(f"  generalist_review_prompt_sha256={review['prompt_sha256']}")
+    for issue in review["issues"]:
+        print(f"  generalist_review_issue={issue}")
     if result.metrics.policyengine_score is not None:
         print(
             f"  policyengine={'yes' if result.metrics.policyengine_pass else 'no'} score={result.metrics.policyengine_score:.1%}"
