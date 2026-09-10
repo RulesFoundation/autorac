@@ -1,4 +1,5 @@
 import copy
+import gc
 import hashlib
 import json
 import math
@@ -692,6 +693,71 @@ def test_rulespec_numeric_output_comparison_tolerates_decimal_residue(tmp_path):
     assert not pipeline._rulespec_scalar_values_equal(
         {"kind": "decimal", "value": Decimal("19.99")},
         {"kind": "integer", "value": 20},
+    )
+
+
+@pytest.mark.parametrize(
+    ("actual", "expected"),
+    [
+        ("197.51000000000001", "197.51"),
+        ("100.48999999999999", "100.49"),
+        ("197.50000000000002", "197.5"),
+        ("100.49999999999998", "100.5"),
+    ],
+)
+def test_rulespec_numeric_output_comparison_tolerates_one_binary64_ulp(
+    tmp_path, actual, expected
+):
+    pipeline = ValidatorPipeline(
+        policy_repo_path=tmp_path / "rulespec-us",
+        axiom_rules_path=tmp_path / "axiom-rules-engine",
+        enable_oracles=False,
+    )
+
+    assert pipeline._rulespec_scalar_values_equal(
+        {"kind": "decimal", "value": Decimal(actual)},
+        {"kind": "decimal", "value": Decimal(expected)},
+    )
+
+
+def test_rulespec_numeric_output_comparison_rejects_more_than_one_binary64_ulp(
+    tmp_path,
+):
+    pipeline = ValidatorPipeline(
+        policy_repo_path=tmp_path / "rulespec-us",
+        axiom_rules_path=tmp_path / "axiom-rules-engine",
+        enable_oracles=False,
+    )
+
+    expected = 100.5
+    more_than_one_ulp = math.nextafter(math.nextafter(expected, math.inf), math.inf)
+    assert not pipeline._rulespec_scalar_values_equal(
+        {"kind": "decimal", "value": more_than_one_ulp},
+        {"kind": "decimal", "value": expected},
+    )
+
+
+@pytest.mark.parametrize(
+    ("actual", "actual_kind", "expected", "expected_kind"),
+    [
+        (2**53, "integer", 2**53 + 1, "integer"),
+        (Decimal(2**53), "decimal", 2**53 + 1, "integer"),
+        (Decimal("0.9999999999999998"), "decimal", 1, "integer"),
+        (Decimal("-1"), "decimal", Decimal("-0.9999999999999998"), "decimal"),
+    ],
+)
+def test_rulespec_numeric_output_comparison_rejects_unsafe_float_collapses(
+    tmp_path, actual, actual_kind, expected, expected_kind
+):
+    pipeline = ValidatorPipeline(
+        policy_repo_path=tmp_path / "rulespec-us",
+        axiom_rules_path=tmp_path / "axiom-rules-engine",
+        enable_oracles=False,
+    )
+
+    assert not pipeline._rulespec_scalar_values_equal(
+        {"kind": actual_kind, "value": actual},
+        {"kind": expected_kind, "value": expected},
     )
 
 
@@ -25102,6 +25168,8 @@ def test_rulespec_proof_reference_chain_resolution_is_bounded():
             f"({index})" for index in range(1, count + 1)
         )
         numeric_start = source_text.rfind(f"({count})")
+        # Exclude heap debt left by preceding tests from the resolver measurement.
+        gc.collect()
         started = monotonic()
         result = _source_top_level_marker_for_numeric_parent(source_text, numeric_start)
         elapsed = monotonic() - started

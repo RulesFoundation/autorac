@@ -83,6 +83,7 @@ from axiom_encode.engine_binding import (
     require_engine_ref_sha,
     resolve_pinned_engine_binary,
 )
+from axiom_encode.numeric_equality import rulespec_numeric_values_equal
 from axiom_encode.repo_routing import (
     _path_identity_fingerprint,
     _path_mutation_stamp,
@@ -33913,6 +33914,8 @@ _RULESPEC_FORMULA_BUILTINS = {
     "count",
     "count_where",
     "date_add_days",
+    "date_add_months",
+    "date_add_years",
     "days_between",
     "elif",
     "else",
@@ -34688,6 +34691,7 @@ class ValidatorPipeline:
             numeric_value_is_grounded=numeric_value_is_grounded,
             artifact_numeric_values=artifact_numeric_values,
             artifact_numeric_bindings=artifact_numeric_bindings,
+            imported_symbol_contents=imported_symbol_contents,
             authenticated_same_act_aliases=(
                 _authenticated_same_act_aliases_from_metadata(self.source_metadata)
             ),
@@ -35655,7 +35659,12 @@ class ValidatorPipeline:
         if actual_kind in numeric and expected_kind in numeric:
             actual_decimal = self._rulespec_decimal(actual.get("value"))
             expected_decimal = self._rulespec_decimal(expected.get("value"))
-            return abs(actual_decimal - expected_decimal) <= Decimal("1e-18")
+            return rulespec_numeric_values_equal(
+                actual_decimal,
+                expected_decimal,
+                actual_kind=str(actual_kind),
+                expected_kind=str(expected_kind),
+            )
         if actual_kind == "bool" and expected_kind == "bool":
             return bool(actual.get("value")) == bool(expected.get("value"))
         if actual_kind != expected_kind:

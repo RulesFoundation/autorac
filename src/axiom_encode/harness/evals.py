@@ -16301,6 +16301,10 @@ def _normalize_test_case_value(value: object) -> object:
         return [_normalize_test_case_value(item) for item in value]
     if isinstance(value, str):
         expression = value.strip()
+        # ISO date facts can also parse as subtraction (2024-12-31 -> 1981).
+        # Preserve date-shaped strings, including invalid dates, for typed validation.
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", expression):
+            return value
         if _PURE_NUMERIC_EXPRESSION_PATTERN.fullmatch(expression):
             if _PLAIN_SIGNED_NUMERIC_LITERAL_PATTERN.fullmatch(expression):
                 if "." in expression:
