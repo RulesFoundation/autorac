@@ -197,8 +197,7 @@ def test_validator_allows_external_legacy_input_for_current_candidate(
     )
 
     assert not any(
-        violation.name == "snap_monthly_household_income"
-        for violation in violations
+        violation.name == "snap_monthly_household_income" for violation in violations
     )
 
 

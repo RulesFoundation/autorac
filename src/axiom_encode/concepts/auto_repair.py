@@ -90,11 +90,7 @@ def _rewrite_anchored_refs(
             # value. The overlay validator proves that preserved external refs
             # resolve; canonical naming remains mandatory for the candidate's
             # own input slots.
-            if (
-                is_input_ref
-                and apply_anchor is not None
-                and anchor != apply_anchor
-            ):
+            if is_input_ref and apply_anchor is not None and anchor != apply_anchor:
                 return match.group(0)
             if is_input_ref and blocked.producer_anchor == anchor:
                 return match.group(0)
