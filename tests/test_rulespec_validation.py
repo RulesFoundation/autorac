@@ -22779,7 +22779,7 @@ def test_a_space_after_a_prefix_maqaf_is_not_a_boundary_to_numeric_extraction():
                       proof:
                         atoms:
                           - path: versions[0].formula
-                            kind: rate
+                            kind: parameter
                             source:
                               corpus_citation_path: il/statute/example/rate
                               excerpt: {excerpt}
@@ -22794,6 +22794,69 @@ def test_a_space_after_a_prefix_maqaf_is_not_a_boundary_to_numeric_extraction():
                 proof_source_texts={"il/statute/example/rate": source},
             )
             assert len(found) == issues, (source, excerpt, formula, found)
+
+
+def test_a_maqaf_binds_across_a_line_wrap_but_not_a_paragraph_gap_and_a_spaced_tail():
+    # Gate round 3 on #1615: the binding across a maqaf takes wrap space --
+    # spaces or one line wrap -- in proof matching and in numeric extraction
+    # alike, and never a blank line; and the raw-text direct percentage
+    # reader takes the fractional tail after "ו־ " as after "ו־".
+    import json
+    import math
+
+    def scoped(source, excerpt, formula):
+        # A double-quoted YAML scalar keeps the excerpt's line wrap as "\\n".
+        quoted = json.dumps(excerpt, ensure_ascii=False)
+        content = textwrap.dedent(
+            f"""
+            format: rulespec/v1
+            rules:
+              - name: rate
+                kind: parameter
+                dtype: Decimal
+                metadata:
+                  proof:
+                    atoms:
+                      - path: versions[0].formula
+                        kind: parameter
+                        source:
+                          corpus_citation_path: il/statute/example/rate
+                          excerpt: {quoted}
+                versions:
+                  - effective_from: '2026-01-01'
+                    formula: {formula}
+            """
+        ).strip()
+        return find_ungrounded_numeric_issues_scoped(
+            content,
+            module_source_text="",
+            proof_source_texts={"il/statute/example/rate": source},
+        ), validate_rulespec_proofs(
+            content, source_texts={"il/statute/example/rate": source}
+        ).passed
+
+    bound = "השיעור הוא עשרים ו־שלושה אחוזים."
+    wrapped = "השיעור הוא עשרים ו־\nשלושה אחוזים."
+    for text in (bound, wrapped):
+        (value,) = _hebrew_recall(text)
+        assert math.isclose(value, 0.23, rel_tol=1e-9), text
+    for source, excerpt in ((bound, wrapped), (wrapped, bound)):
+        assert scoped(source, excerpt, "0.23") == ([], True), (source, excerpt)
+        issues, passed = scoped(source, excerpt, "0.03")
+        assert passed and len(issues) == 1, (source, excerpt, issues)
+    gap = "השיעור הוא עשרים ו־\n\nשלושה אחוזים."
+    assert sorted(_hebrew_recall(gap)) == [0.03, 20.0]
+    _issues, passed = scoped(gap, bound, "0.23")
+    assert passed is False
+    tail_bound = "השיעור הוא 2.5% ו־חצי."
+    tail_spaced = "השיעור הוא 2.5% ו־ חצי."
+    for text in (tail_bound, tail_spaced):
+        (value,) = extract_numbers_from_text(text)
+        assert math.isclose(value, 0.03, rel_tol=1e-9), text
+    for source, excerpt in ((tail_bound, tail_spaced), (tail_spaced, tail_bound)):
+        assert scoped(source, excerpt, "0.03") == ([], True), (source, excerpt)
+        issues, passed = scoped(source, excerpt, "0.025")
+        assert passed and len(issues) == 1, (source, excerpt, issues)
 
 
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():

@@ -1,1 +1,2 @@
-A space a source sets after a prefix's maqaf ("ל־ 1⁄2", "עשרים ו־ שלושה") is no boundary: the cleaner moves it ahead of the prefix so the spaced and the bound spellings read the same ("עשרים ו־ שלושה אחוזים" is twenty-three percent), and a proof excerpt is found in its source across that space, for proof validation and numeric grounding alike.
+A maqaf binds its prefix to the word or number after it across wrap space -- spaces or one line wrap, never a blank line -- in proof matching and in numeric extraction alike ("ל־ 1⁄2", "עשרים ו־ שלושה", "עשרים ו־
+שלושה"), and the fractional tail after a rate follows "ו־ " as it follows "ו־".

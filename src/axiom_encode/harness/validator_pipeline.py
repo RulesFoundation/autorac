@@ -4750,7 +4750,9 @@ def _hebrew_spelled_remainder_after(
 _HEBREW_PERCENT_TAIL_AFTER_PATTERN = re.compile(
     ""
     + _WRAP_SPACE_FRAGMENT
-    + "+\u05d5[\u05be-]?(?:(?P<tail>"
+    + "+\u05d5(?:[\u05be-]"
+    + _WRAP_SPACE_FRAGMENT
+    + "*)?(?:(?P<tail>"
     + "|".join(
         re.escape(w)
         for w in sorted(_HEBREW_MIXED_FRACTION_VALUES, key=len, reverse=True)
@@ -9868,9 +9870,10 @@ def _source_evidence_fragment_is_body_bound(
     if _bounded_source_evidence_match(normalized_evidence, normalized_source):
         return True
     # The proof check reads "ל־ 1⁄2" and "ל־1⁄2" as one text; numeric evidence
-    # is bound the same way.
-    return "\u05be" in normalized_source and _bounded_source_evidence_match(
-        bind_maqaf_space(normalized_evidence), bind_maqaf_space(normalized_source)
+    # is bound the same way, across wrap space and never a paragraph gap.
+    return "\u05be" in source_text and _bounded_source_evidence_match(
+        _collapse_source_sentence_text(bind_maqaf_space(evidence_text)).casefold(),
+        _collapse_source_sentence_text(bind_maqaf_space(source_text)).casefold(),
     )
 
 
@@ -9905,7 +9908,9 @@ def _rule_verified_source_excerpt_pairs_by_path(
         if not resolved_text:
             continue
         normalized_source = _collapse_source_sentence_text(resolved_text).lower()
-        maqaf_source = bind_maqaf_space(normalized_source)
+        maqaf_source = _collapse_source_sentence_text(
+            bind_maqaf_space(resolved_text)
+        ).lower()
         selected_excerpts = [excerpt for excerpt in excerpts if excerpt]
         if not selected_excerpts:
             table = source.get("table")
@@ -9920,7 +9925,8 @@ def _rule_verified_source_excerpt_pairs_by_path(
             normalized_excerpt = _collapse_source_sentence_text(excerpt).lower()
             if normalized_excerpt and (
                 normalized_excerpt in normalized_source
-                or bind_maqaf_space(normalized_excerpt) in maqaf_source
+                or _collapse_source_sentence_text(bind_maqaf_space(excerpt)).lower()
+                in maqaf_source
             ):
                 by_path.setdefault(path, []).append((excerpt, resolved_text))
     return {path: tuple(pairs) for path, pairs in by_path.items()}
@@ -12549,15 +12555,17 @@ _HEBREW_PREFIX_HYPHEN_PATTERN = re.compile(
     + _HEBREW_PREFIX_STACK_FRAGMENT
     + "-(?=[\u0590-\u05ff\\d\u00bc-\u00be\u2150-\u215e])"
 )
-# A prefix stack, its maqaf, then horizontal space before the word or the
-# number it binds ("ו־ שלושה", "ל־ 1⁄2", "מ־ 301,201"): a typesetting artifact
-# the readers must not see as a boundary, since "עשרים ו־ שלושה" is
-# twenty-three, not twenty and three.
+# A prefix stack, its maqaf, then wrap space -- spaces or one line wrap,
+# never a blank line -- before the word or the number it binds ("ו־ שלושה",
+# "ו־\nשלושה", "ל־ 1⁄2", "מ־ 301,201"): a typesetting artifact the readers
+# must not see as a boundary, since "עשרים ו־ שלושה" is twenty-three, not
+# twenty and three. A paragraph gap after the maqaf stays a boundary.
 _HEBREW_PREFIX_MAQAF_SPACE_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])"
     + _HEBREW_PREFIX_STACK_FRAGMENT
-    + "(\u05be)([ \\t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+)"
-    "(?=[\u0590-\u05ff\\d.\u00bc-\u00be\u2150-\u215e])"
+    + "(\u05be)("
+    + _WRAP_SPACE_FRAGMENT
+    + "+)(?=[\u0590-\u05ff\\d.\u00bc-\u00be\u2150-\u215e])"
 )
 
 

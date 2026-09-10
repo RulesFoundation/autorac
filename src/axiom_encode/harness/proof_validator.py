@@ -548,14 +548,19 @@ def _validate_source_proof_atom(
 
 
 # A maqaf (U+05BE) binds a prefix to the token after it; a source that sets a
-# space after the maqaf ("ל־ 1⁄2") and an excerpt that does not ("ל־1⁄2")
-# quote the same text.
-_MAQAF_SPACE_PATTERN = re.compile("\u05be\\s+")
+# space or a line wrap after the maqaf ("ל־ 1⁄2", "ו־\nשלושה") and an excerpt
+# that does not ("ל־1⁄2", "ו־שלושה") quote the same text. A blank line or a
+# paragraph separator after the maqaf is a boundary the binding does not
+# cross, so the two are bound before any run of whitespace is collapsed.
+_MAQAF_WRAP_SPACE_PATTERN = re.compile(
+    "\u05be(?:[ \\t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]|\\r?\\n(?![ \\t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]*\\r?\\n))+"
+    "(?=[\u0590-\u05ff\\d.\u00bc-\u00be\u2150-\u215e])"
+)
 
 
 def bind_maqaf_space(text: str) -> str:
-    """Drop the whitespace a source sets after a maqaf, so "ל־ 1⁄2" reads "ל־1⁄2"."""
-    return _MAQAF_SPACE_PATTERN.sub("\u05be", text)
+    """Drop the wrap space a source sets after a maqaf, so "ל־ 1⁄2" reads "ל־1⁄2"."""
+    return _MAQAF_WRAP_SPACE_PATTERN.sub("\u05be", text)
 
 
 def _source_contains_proof_evidence(
@@ -566,15 +571,15 @@ def _source_contains_proof_evidence(
     normalized_evidence = re.sub(r"\s+", " ", evidence_text).strip()
     if not normalized_evidence:
         return False
-    maqaf_evidence = bind_maqaf_space(normalized_evidence)
+    maqaf_evidence = re.sub(r"\s+", " ", bind_maqaf_space(evidence_text)).strip()
     for segment in split_proof_evidence_text(source_text):
         if _bounded_source_evidence_match(evidence_text, segment):
             return True
         normalized_segment = re.sub(r"\s+", " ", segment).strip()
         if _bounded_source_evidence_match(normalized_evidence, normalized_segment):
             return True
-        if "\u05be" in normalized_segment and _bounded_source_evidence_match(
-            maqaf_evidence, bind_maqaf_space(normalized_segment)
+        if "\u05be" in segment and _bounded_source_evidence_match(
+            maqaf_evidence, re.sub(r"\s+", " ", bind_maqaf_space(segment)).strip()
         ):
             return True
     return False
