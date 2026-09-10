@@ -7182,16 +7182,16 @@ def _iter_hebrew_percent_range_lower_matches(
             # order: "בין ½ ל־3 עשיריות האחוז" and "בין חצי לבין שלוש
             # עשיריות האחוז" run from half a percent.
             and not _hebrew_endpoint_is_a_fraction(text, lower_span[0], lower_span[1])
-            # So is a number a rate could be, where a rate word governs the
-            # clause: "שיעור המס יהיה בין 5 ל־3 אחוזים" runs from five
-            # percent, and "בין 3½ ל־2½ אחוזים" from three and a half.
-            and not (
-                lower_value < 100 and _hebrew_rate_word_before(text, lower_span[0])
-            )
+            # So is any number where a rate word governs the clause, whatever
+            # its size: "שיעור המס יהיה בין 5 ל־3 אחוזים" runs from five
+            # percent, "בין 3½ ל־2½ אחוזים" from three and a half, and
+            # "שיעור הזיכוי יהיה בין 150 ל־125 אחוזים" from a hundred and
+            # fifty.
+            and not _hebrew_rate_word_before(text, lower_span[0])
         ):
-            # A "בין" range of bare numbers ascends: "בין 500 ל־3 אחוזים"
-            # and "בין 500 לשלושה אחוזים" are no range of rates, under a
-            # rate word or not; "יופחת מ־5 ל־3 אחוזים" decreases and is one.
+            # With no rate word, a "בין" range of bare numbers ascends: "הקנס
+            # יהיה בין 500 ל־3 אחוזים" is no range of rates; "יופחת מ־5 ל־3
+            # אחוזים" decreases and is one.
             continue
         if (
             needs_bound
