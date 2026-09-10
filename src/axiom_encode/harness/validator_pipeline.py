@@ -12570,8 +12570,10 @@ _HEBREW_PREFIX_STACK_FRAGMENT = (
 _HEBREW_PREFIX_MAQAF_BEFORE_WORD_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])" + _HEBREW_PREFIX_STACK_FRAGMENT + "\u05be(?=[\u0590-\u05ff])"
 )
+# A maqaf before the stack ("ו־כ-שלושה") is no letter: a chained prefix's
+# hyphen is a maqaf as a first prefix's is.
 _HEBREW_PREFIX_HYPHEN_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])"
+    "(?<![\u0590-\u05bd\u05bf-\u05ff])"
     + _HEBREW_PREFIX_STACK_FRAGMENT
     + "-(?=[\u0590-\u05ff\\d\u00bc-\u00be\u2150-\u215e])"
 )
@@ -12588,16 +12590,15 @@ _HEBREW_MAQAF_WRAP_SPACE_PATTERN = HEBREW_MAQAF_WRAP_SPACE_PATTERN
 def _hebrew_close_maqaf_wrap_space(
     match: "re.Match[str]",
 ) -> list[tuple[str, int | None]]:
-    """Move the wrap space after a maqaf ahead of the word: "ו־ שלושה" becomes " ו־שלושה", "שלושה־ רבעים" " שלושה־רבעים"."""
-    stack_start, maqaf_start = match.start(1), match.start(2)
-    return (
-        [(" ", None)] * len(match.group(3))
-        + [
-            (character, stack_start + index)
-            for index, character in enumerate(match.group(1))
-        ]
-        + [(match.group(2), maqaf_start)]
-    )
+    """Move the wrap space after a maqaf ahead of the word, or the chain: "ו־ שלושה" becomes " ו־שלושה", "מאה־ ו־ כ־ שלושה" "   מאה־ו־כ־שלושה"."""
+    cluster_start, maqaf_start = match.start(1), match.start(2)
+    cluster = [
+        (character, cluster_start + index)
+        for index, character in enumerate(match.group(1))
+        if not character.isspace()
+    ]
+    spaces = len(match.group(3)) + len(match.group(1)) - len(cluster)
+    return [(" ", None)] * spaces + cluster + [(match.group(2), maqaf_start)]
 
 
 _CARRIAGE_RETURN_PATTERN = re.compile("\r\n?")
@@ -12615,10 +12616,14 @@ def _bind_hebrew_source_text_tracked(tracked: _TrackedText) -> _TrackedText:
     matchers, the structural reference passes -- see a bare carriage return
     as the line end it is and a prefix's maqaf bound to the token after it
     across wrap space, as every reader of the cleaned text does, so no
-    spelling of the space after a maqaf changes what a text states. Each
-    character keeps its offset.
+    spelling of the space after a maqaf changes what a text states, and a
+    hyphen typed for that maqaf is the maqaf first. Each character keeps
+    its offset.
     """
     tracked = tracked.sub(_CARRIAGE_RETURN_PATTERN, _normalize_line_end)
+    # A hyphen typed for a prefix's maqaf becomes the maqaf before the close,
+    # in the cleaner's order, so a chain closes the same under either.
+    tracked = tracked.rewrite(_HEBREW_PREFIX_HYPHEN_PATTERN, "\\1\u05be")
     return tracked.rewrite_mapped(
         _HEBREW_MAQAF_WRAP_SPACE_PATTERN, _hebrew_close_maqaf_wrap_space
     )

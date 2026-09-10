@@ -589,19 +589,31 @@ WRAP_SPACE_FRAGMENT = (
 # hyphen a letter precedes ("מאה-שלושה") is no boundary the word begins at.
 # This one pattern is the binding evidence matching applies and the
 # binding the numeric cleaner applies, so the two never accept different
-# texts: group 1 is the word, 2 the maqaf, 3 the wrap space.
+# texts: group 1 is the word -- or the chain of maqaf-joined words, with wrap
+# space after any inner maqaf ("מאה־ ו־ כ־ שלושה"), bound as one, since a
+# space moved ahead of one word would land after the maqaf before it -- 2
+# the last maqaf, 3 the wrap space after it.
 HEBREW_MAQAF_WRAP_SPACE_PATTERN = re.compile(
     "(?<![\u0590-\u05ff\\w\\-\u2212])((?:[\\-\u2212]"
     + BIDI_MARKS_FRAGMENT
-    + "*)?[\u05d0-\u05ea]+(?:\u05be[\u05d0-\u05ea]+)*)(\u05be)("
+    + "*)?[\u05d0-\u05ea]+(?:\u05be"
+    + WRAP_SPACE_FRAGMENT
+    + "*[\u05d0-\u05ea]+)*)(\u05be)("
     + WRAP_SPACE_FRAGMENT
     + "+)(?=[\u0590-\u05ff\\d.\u00bc-\u00be\u2150-\u215e])"
 )
 
 
+def _bind_maqaf_chain(match: "re.Match[str]") -> str:
+    """The chain with the wrap space after each of its maqafs dropped, and its last maqaf."""
+    return "".join(
+        character for character in match.group(1) if not character.isspace()
+    ) + match.group(2)
+
+
 def bind_maqaf_space(text: str) -> str:
-    """Drop the wrap space a source sets after a maqaf, so "ל־ 1⁄2" reads "ל־1⁄2"."""
-    return HEBREW_MAQAF_WRAP_SPACE_PATTERN.sub("\\1\\2", text)
+    """Drop the wrap space a source sets after a maqaf: "ל־ 1⁄2" reads "ל־1⁄2", "מאה־ ו־ כ־ שלושה" "מאה־ו־כ־שלושה"."""
+    return HEBREW_MAQAF_WRAP_SPACE_PATTERN.sub(_bind_maqaf_chain, text)
 
 
 # A paragraph gap -- a blank line or a paragraph separator -- is a boundary

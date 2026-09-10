@@ -23380,6 +23380,125 @@ def test_a_sign_before_a_compound_moves_with_its_word():
             assert passed and len(issues) == 1, (*label, issues)
 
 
+def test_a_chain_of_spaced_maqafs_binds_as_one():
+    # Gate round 10 on #1615: the binding moved the wrap space after each
+    # maqaf ahead of its own word, one match at a time, so in a chain the
+    # space moved ahead of one word landed after the maqaf before it:
+    # "מאה־ ו־ כ־ שלושה" closed to "מאה־ ו־ כ־שלושה" and read three percent
+    # where the bound text reads none, and "ה־ שלוש־ עשרה" left the
+    # schedule number in the recall inventory. A chain of maqaf-joined
+    # words with wrap space after any of its maqafs is one cluster to the
+    # matcher and the cleaner alike, moved as one; a paragraph gap inside
+    # it ends it.
+    import json
+    import textwrap as tw
+
+    from axiom_encode.harness.proof_validator import (
+        _source_contains_proof_evidence,
+        bind_maqaf_space,
+    )
+    from axiom_encode.harness.validator_pipeline import (
+        _bind_hebrew_source_text,
+        _source_evidence_fragment_is_body_bound,
+    )
+
+    for spelled, bound, closed in (
+        ("מאה־ ו־ כ־ שלושה", "מאה־ו־כ־שלושה", "   מאה־ו־כ־שלושה"),
+        ("מאה־ ו־כ־ שלושה", "מאה־ו־כ־שלושה", "  מאה־ו־כ־שלושה"),
+        ("מאה־ו־ כ־שלושה", "מאה־ו־כ־שלושה", " מאה־ו־כ־שלושה"),
+        ("מאה־ ו־כ־שלושה", "מאה־ו־כ־שלושה", " מאה־ו־כ־שלושה"),
+        ("−מאה־ ו־ שלושה", "−מאה־ו־שלושה", "  −מאה־ו־שלושה"),
+        ("ה־\nשלוש־ עשרה", "ה־שלוש־עשרה", "  ה־שלוש־עשרה"),
+        ("ה־\n\nשלוש־ עשרה", "ה־\n\nשלוש־עשרה", "ה־\n\n שלוש־עשרה"),
+    ):
+        assert bind_maqaf_space(spelled) == bound, spelled
+        assert _bind_hebrew_source_text(spelled) == closed, spelled
+    # A chained prefix's hyphen is a maqaf too, rewritten before the close as
+    # in the cleaner, so the hyphen twin of a spaced chain closes to the same
+    # text and the twins read alike.
+    assert _bind_hebrew_source_text("מאה־ ו־ כ-שלושה") == "  מאה־ו־כ־שלושה"
+    assert sorted(extract_numbers_from_text("מאה־ו־כ-שלושה")) == sorted(
+        extract_numbers_from_text("מאה־ו־כ־שלושה")
+    )
+    assert sorted(_hebrew_recall("מאה־ו־כ-שלושה")) == sorted(
+        _hebrew_recall("מאה־ו־כ־שלושה")
+    )
+
+    def scoped(source, excerpt, formula):
+        content = tw.dedent(
+            f"""
+            format: rulespec/v1
+            rules:
+              - name: rate
+                kind: parameter
+                dtype: Decimal
+                metadata:
+                  proof:
+                    atoms:
+                      - path: versions[0].formula
+                        kind: parameter
+                        source:
+                          corpus_citation_path: il/statute/example/rate
+                          excerpt: {json.dumps(excerpt, ensure_ascii=False)}
+                versions:
+                  - effective_from: '2026-01-01'
+                    formula: {formula}
+            """
+        ).strip()
+        return find_ungrounded_numeric_issues_scoped(
+            content,
+            module_source_text="",
+            proof_source_texts={"il/statute/example/rate": source},
+        ), validate_rulespec_proofs(
+            content, source_texts={"il/statute/example/rate": source}
+        ).passed
+
+    def spaced(source, spacing, which):
+        positions = [index for index, char in enumerate(source) if char == "\u05be"]
+        chosen = {
+            "all": positions,
+            "first": positions[:1],
+            "last": positions[-1:],
+            "inner": positions[1:-1],
+        }[which]
+        out = source
+        for index in reversed(chosen):
+            out = out[: index + 1] + spacing + out[index + 1 :]
+        return out
+
+    spacings = (" ", " " * 8, "\t", "\u00a0", "\r", "\r\n", "\n", " \n ")
+    for source, unstated in (
+        ("השיעור הוא מאה־ו־כ־שלושה%.", "0.03"),
+        ("לפי התוספת ה־שלוש־עשרה ישולם סכום של 100 שקלים.", "30"),
+        ("השיעור הוא עשרים ו־שלושה־ו־חצי אחוזים.", "0.03"),
+    ):
+        grounding = sorted(round(v, 9) for v in extract_numbers_from_text(source))
+        recall = sorted(round(v, 9) for v in _hebrew_recall(source))
+        for spacing in spacings:
+            for which in ("all", "first", "last", "inner"):
+                excerpt = spaced(source, spacing, which)
+                if excerpt == source:
+                    continue
+                label = (source, repr(spacing), which)
+                assert _source_contains_proof_evidence(
+                    source_text=source, evidence_text=excerpt
+                ), label
+                assert _source_evidence_fragment_is_body_bound(excerpt, source), label
+                assert (
+                    sorted(round(v, 9) for v in extract_numbers_from_text(excerpt))
+                    == grounding
+                ), (*label, sorted(extract_numbers_from_text(excerpt)))
+                assert sorted(round(v, 9) for v in _hebrew_recall(excerpt)) == recall, (
+                    *label,
+                    sorted(_hebrew_recall(excerpt)),
+                )
+                issues, passed = scoped(source, excerpt, unstated)
+                assert passed and len(issues) == 1, (*label, issues)
+    assert sorted(
+        _hebrew_recall("לפי התוספת ה־שלוש־עשרה ישולם סכום של 100 שקלים.")
+    ) == [100.0]
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
