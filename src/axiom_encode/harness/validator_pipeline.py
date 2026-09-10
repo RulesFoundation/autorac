@@ -2755,8 +2755,10 @@ _HEBREW_FRACTION_BASE_AMOUNT_PATTERN = re.compile(
     # A partitive the pattern names ("מהשכר", "משכרו", "מן השכר", "של השכר"),
     # an article ("השכר"), or nothing ("שכרו", "שכר המינימום"): the amount
     # noun the fraction is taken of, in any of its inflections.
-    "\\s+(?:(?P<partitive>\u05de[\u05be-]?(?:\u05d4[\u05be-]?)?|(?:מן|מתוך|של)\\s+"
-    "(?:\u05d4[\u05be-]?)?)|\u05d4[\u05be-]?|)"
+    _WRAP_SPACE_FRAGMENT
+    + "+(?:(?P<partitive>\u05de[\u05be-]?(?:\u05d4[\u05be-]?)?|(?:מן|מתוך|של)"
+    + _WRAP_SPACE_FRAGMENT
+    + "+(?:\u05d4[\u05be-]?)?)|\u05d4[\u05be-]?|)"
     + _HEBREW_MONEY_NOUN
     + "(?![\u0590-\u05ff])"
 )
@@ -3128,7 +3130,9 @@ _HEBREW_DIGIT_PERCENT_PATTERN = re.compile(
     + _WRAP_SPACE_FRAGMENT
     + "*%|"
     + _WRAP_SPACE_FRAGMENT
-    + "*%(?=\\s+\u05d5[\u05be-]?(?:"
+    + "*%(?="
+    + _WRAP_SPACE_FRAGMENT
+    + "+\u05d5[\u05be-]?(?:"
     + "|".join(
         re.escape(w)
         for w in sorted(_HEBREW_MIXED_FRACTION_VALUES, key=len, reverse=True)
@@ -3138,7 +3142,9 @@ _HEBREW_DIGIT_PERCENT_PATTERN = re.compile(
         re.escape(w)
         for w in sorted(_HEBREW_FRACTION_COUNT_VALUES, key=len, reverse=True)
     )
-    + ")\\s+(?:"
+    + ")"
+    + _WRAP_SPACE_FRAGMENT
+    + "+(?:"
     + "|".join(
         re.escape(w)
         for w in sorted(_HEBREW_COUNTED_FRACTION_VALUES, key=len, reverse=True)
@@ -3182,20 +3188,32 @@ _HEBREW_FRACTION_WORD_PATTERN = re.compile(
     )
     + ")"
     "(?![֐-׿])"
-    "(?P<partitive>\\s+(?:" + _HEBREW_NOT_A_PARTITIVE_LOOKAHEAD + "מה[֐-׿]|מן(?![֐-׿])"
+    "(?P<partitive>"
+    + _WRAP_SPACE_FRAGMENT
+    + "+(?:"
+    + _HEBREW_NOT_A_PARTITIVE_LOOKAHEAD
+    + "מה[֐-׿]|מן(?![֐-׿])"
     "|ה?אחוז(?:ים|י)?(?![֐-׿]))"
     # The percent marker serves the fraction as the percent word does:
     # "חמישית%" is a fifth of a percent.
     "|" + _WRAP_SPACE_FRAGMENT + "*%)?"
-    "(?P<loose_partitive>\\s+(?:של(?![֐-׿])|"
+    "(?P<loose_partitive>"
+    + _WRAP_SPACE_FRAGMENT
+    + "+(?:של(?![֐-׿])|"
     + _HEBREW_NOT_A_PARTITIVE_LOOKAHEAD
     + "(?:מ|ה)[֐-׿]{2,}))?"
 )
 # The partitive that follows a bare percent noun said to be one percent:
 # "תוספת של אחוז מההכנסה" is a supplement of one percent of the income.
 _HEBREW_PARTITIVE_AFTER_PATTERN = re.compile(
-    "\\s+(?:" + _HEBREW_NOT_A_PARTITIVE_LOOKAHEAD + "מה[֐-׿]|מן(?![֐-׿])|של(?![֐-׿]))"
+    _WRAP_SPACE_FRAGMENT
+    + "+(?:"
+    + _HEBREW_NOT_A_PARTITIVE_LOOKAHEAD
+    + "מה[֐-׿]|מן(?![֐-׿])|של(?![֐-׿]))"
 )
+# The partitive words that may stand between a fraction and its whole:
+# "שלוש עשיריות של האחוז", "חצי מן האחוז", "רבע מתוך השכר".
+_HEBREW_FRACTION_PARTITIVE_WORDS = frozenset({"של", "מן", "מתוך"})
 
 
 def _search_before(
@@ -3320,10 +3338,10 @@ def _hebrew_fraction_count_before(
     """The count before a fraction word, as the numeral grammar reads it.
 
     "שלוש עשיריות" is three tenths, "אחת עשרה עשיריות" eleven tenths and
-    "מאה עשיריות" a hundred: the longest run of words flush before the
-    fraction word that the grammar reads whole, short of a scale word, is
-    the count. A count word the grammar does not read on its own ("שני",
-    "שתי") stays the pattern's. Returns (count, start of the count) or None.
+    "אלף עשיריות" a hundred: the longest run of words flush before the
+    fraction word that the grammar reads whole is the count. A count word
+    the grammar does not read on its own ("שני", "שתי") stays the
+    pattern's. Returns (count, start of the count) or None.
     """
     run = _hebrew_word_run_before(text, match.start("article"), tokens=tokens)
     for width in range(len(run), 0, -1):
@@ -3334,11 +3352,7 @@ def _hebrew_fraction_count_before(
         if words[-1].startswith("\u05d5"):
             continue
         parsed = _parse_hebrew_number_run(words)
-        if (
-            parsed is not None
-            and parsed[0] == width
-            and not parsed[2] & _HEBREW_SCALE_KINDS
-        ):
+        if parsed is not None and parsed[0] == width:
             return parsed[1], run[-width].start()
     return None
 
@@ -3352,11 +3366,16 @@ def _iter_hebrew_fraction_word_readings(
     for match in _HEBREW_FRACTION_WORD_PATTERN.finditer(text):
         word = match.group("fraction")
         count = match.group("count")
+        if tokens is None:
+            tokens = _HebrewWordTokens(text)
+        # The count the grammar reads before the word ("עשרים רבעי השכר")
+        # counts a construct form as a listed count word does.
+        counted = _hebrew_fraction_count_before(text, match, tokens)
         if (
             word in _HEBREW_FRACTION_CONSTRUCT_VALUES
             and word not in _HEBREW_FRACTION_VALUES
         ):
-            if not count:
+            if not count and counted is None:
                 continue
             value = _HEBREW_FRACTION_CONSTRUCT_VALUES[word]
         else:
@@ -3443,16 +3462,11 @@ def _iter_hebrew_fraction_word_readings(
                     continue
             value = _HEBREW_FRACTION_VALUES[word]
         start = match.start()
-        if count:
-            value *= _HEBREW_FRACTION_COUNT_VALUES[count]
-        if tokens is None:
-            tokens = _HebrewWordTokens(text)
-        counted = _hebrew_fraction_count_before(text, match, tokens)
         if counted is not None and (not count or counted[1] < start):
-            if count:
-                value /= _HEBREW_FRACTION_COUNT_VALUES[count]
             value *= counted[0]
             start = counted[1]
+        elif count:
+            value *= _HEBREW_FRACTION_COUNT_VALUES[count]
         matches.append(
             ((start, match.end("fraction")), value, bool(count) or counted is not None)
         )
@@ -3629,8 +3643,11 @@ def _hebrew_fractional_count(words: "Sequence[str]") -> float | None:
 
     "חצי אחוז" is half a percent, "שלושה רבעים אחוז" three quarters of a
     percent; the numeral grammar reads neither, because a fraction word is
-    not a number on its own there.
+    not a number on its own there. A partitive between the fraction and
+    the noun binds them the same: "שלוש עשיריות של האחוז", "חצי מן האחוז".
     """
+    if len(words) >= 2 and words[-1] in _HEBREW_FRACTION_PARTITIVE_WORDS:
+        return _hebrew_fractional_count(words[:-1])
     if len(words) == 1:
         bare = _strip_hebrew_number_prefix(
             words[0],
@@ -3660,14 +3677,10 @@ def _hebrew_fractional_count(words: "Sequence[str]") -> float | None:
         and not words[-2].startswith("\u05d5")
     ):
         # The count is whatever number the grammar reads whole: "אחת עשרה
-        # עשיריות האחוז" is eleven tenths of a percent, "מאה עשיריות
-        # האחוז" a hundred.
+        # עשיריות האחוז" is eleven tenths of a percent, "אלף שמיניות
+        # האחוז" a hundred and twenty-five.
         parsed = _parse_hebrew_number_run(words[:-1])
-        if (
-            parsed is not None
-            and parsed[0] == len(words) - 1
-            and not parsed[2] & _HEBREW_SCALE_KINDS
-        ):
+        if parsed is not None and parsed[0] == len(words) - 1:
             return parsed[1] * _HEBREW_COUNTED_FRACTION_VALUES[words[-1]]
     return None
 
@@ -7674,7 +7687,10 @@ _HEBREW_STRUCTURAL_UNIT_NOUNS = _hebrew_unit_alternation(
 # A unit right after a position: the fractional tail before it belongs to
 # the unit's quantity, not to a rate before the tail.
 _HEBREW_UNIT_AFTER_PATTERN = re.compile(
-    "\\s+(?:" + _HEBREW_STRUCTURAL_UNIT_NOUNS + ")(?![\u0590-\u05ff])"
+    _WRAP_SPACE_FRAGMENT
+    + "+(?:"
+    + _HEBREW_STRUCTURAL_UNIT_NOUNS
+    + ")(?![\u0590-\u05ff])"
 )
 # The unit that says fraction after an ordinal-shaped word: a unit of
 # measure only. A count noun there may be a predicate ("דרגה חמישית זכאית",
@@ -7684,7 +7700,8 @@ _HEBREW_UNIT_AFTER_PATTERN = re.compile(
 # of a year.
 # A bound after the unit ("עשירית שקל לפחות") is no such phrase.
 _HEBREW_FRACTION_UNIT_AFTER_PATTERN = re.compile(
-    "\\s+(?:"
+    _WRAP_SPACE_FRAGMENT
+    + "+(?:"
     + _hebrew_unit_alternation(_HEBREW_MEASURE_UNIT_WORDS)
     + ")(?![\u0590-\u05ff])"
 )

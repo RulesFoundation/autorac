@@ -21684,6 +21684,61 @@ def test_a_partitive_is_what_the_pattern_consumed_and_a_count_is_what_the_gramma
         ), (text, issue)
 
 
+def test_a_construct_fraction_takes_the_grammar_count_and_a_paragraph_gap_ends_an_operand():
+    # Review round 172 on #1585: the count the numeral grammar reads counts
+    # a construct-form fraction too, and may carry a scale word; a
+    # partitive between a fractional count and the percent noun binds
+    # them; and a fraction word's operand, partitive and unit follow it
+    # across wrap space only, never a blank line or a paragraph separator.
+    import math
+
+    for text, expected in (
+        ("העובד זכאי לעשרים רבעי השכר", 5.0),
+        ("העובד זכאי לעשרים רבעים מהשכר", 5.0),
+        ("העובד זכאי לאחת עשרה רבעי השכר", 2.75),
+        ("השיעור הוא אלף שמיניות האחוז", 1.25),
+        ("השיעור הוא אלף עשיריות האחוז", 1.0),
+        ("השיעור הוא שלוש עשיריות של האחוז", 0.003),
+        ("השיעור הוא שלוש עשיריות מן האחוז", 0.003),
+        ("השיעור הוא שלוש עשיריות מתוך האחוז", 0.003),
+        ("השיעור הוא שלוש עשיריות מהאחוז", 0.003),
+        ("השיעור הוא חצי של האחוז", 0.005),
+        ("השיעור הוא חצי מן האחוז", 0.005),
+        ("דרגה חמישית\nמהשכר ינוכה מס", 0.2),
+        ("עשירית\nשקל", 0.1),
+    ):
+        (value,) = _hebrew_recall(text)
+        assert math.isclose(value, expected, rel_tol=1e-9), text
+        (value,) = extract_numbers_from_text(text)
+        assert math.isclose(value, expected, rel_tol=1e-9), text
+    assert extract_numbers_from_text("העובד זכאי לרבעי השכר") == set()
+    assert extract_numbers_from_text("דרגה חמישית\n\nשקל אחד") == {5.0, 1.0}
+    assert extract_numbers_from_text("דרגה חמישית\n\nשל השכר ינוכה מס") == {5.0}
+    for text, expected, grounded, ungrounded in (
+        ("העובד זכאי לעשרים רבעי השכר", 5.0, "5", "20"),
+        ("השיעור הוא אלף שמיניות האחוז", 1.25, "1.25", "1000"),
+        ("השיעור הוא שלוש עשיריות של האחוז", 0.003, "0.003", "0.3"),
+        ("השיעור הוא שלוש עשיריות מן האחוז", 0.003, "0.003", "0.3"),
+        ("דרגה חמישית\n\nמהשכר ינוכה מס", 5.0, "5", "0.2"),
+        ("דרגה חמישית\u2029מהשכר ינוכה מס", 5.0, "5", "0.2"),
+    ):
+        (value,) = _hebrew_recall(text)
+        assert math.isclose(value, expected, rel_tol=1e-9), text
+        (value,) = extract_numbers_from_text(text)
+        assert math.isclose(value, expected, rel_tol=1e-9), text
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
