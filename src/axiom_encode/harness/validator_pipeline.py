@@ -6906,13 +6906,22 @@ _HEBREW_ENDPOINT_FRACTION_WORDS = frozenset(
 def _hebrew_endpoint_is_a_fraction(text: str, start: int, end: int) -> bool:
     """Whether the endpoint is a fraction of its own, which shares no fraction word.
 
-    "חצי", "מחצי", "רבע", "שלושה רבעים" and "3 עשיריות" are complete;
-    "2", "שתיים" and the mixed "2 וחצי" take the fraction word of the
-    counted fraction after them ("בין 2 וחצי ל־3 עשיריות האחוז").
+    "חצי", "מחצי", "−חצי", "רבע", "שלושה רבעים", "3 עשיריות" and the
+    printed "½", "1/2" and "1⁄2" are complete; "2", "שתיים", "−2" and the
+    mixed "2 וחצי" and "2½" take the fraction word of the counted fraction
+    after them ("בין 2 וחצי ל־3 עשיריות האחוז").
     """
     words = _hebrew_endpoint_words(text, start, end)
     if not words or _hebrew_endpoint_is_a_mixed_number(words):
         return False
+    # A unary sign is the endpoint's, not its first word's.
+    words[0] = words[0].lstrip("-\u2212")
+    printed = _HEBREW_DIGITS_BEFORE_PATTERN.fullmatch(" ".join(words))
+    if printed is not None:
+        return bool(
+            (printed.group("glyph") and not printed.group("glyph_whole"))
+            or (printed.group("numerator") and not printed.group("whole"))
+        )
     return (
         _strip_hebrew_number_prefix(words[-1], _HEBREW_ENDPOINT_FRACTION_WORDS)
         is not None
