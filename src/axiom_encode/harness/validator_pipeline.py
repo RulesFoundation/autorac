@@ -3339,22 +3339,52 @@ def _hebrew_fraction_count_before(
 
     "שלוש עשיריות" is three tenths, "אחת עשרה עשיריות" eleven tenths and
     "אלף עשיריות" a hundred: the longest run of words flush before the
-    fraction word that the grammar reads whole is the count. A count word
-    the grammar does not read on its own ("שני", "שתי") stays the
-    pattern's. Returns (count, start of the count) or None.
+    fraction word that the grammar reads whole is the count, and so is a
+    printed number there ("3 עשיריות"). A count word the grammar does not
+    read on its own ("שני", "שתי") stays the pattern's. Returns (count,
+    start of the count) or None.
     """
-    run = _hebrew_word_run_before(text, match.start("article"), tokens=tokens)
+    fraction = match.group("fraction")
+    # A counted fraction is plural or construct ("שלוש עשיריות", "שלושת
+    # רבעי"); a number before a singular fraction word is not its count
+    # ("בסעיף 3 חמישית ההכנסה").
+    if fraction not in _HEBREW_COUNTED_FRACTION_VALUES:
+        return None
+    position = match.start("article")
+    run = _hebrew_word_run_before(text, position, tokens=tokens)
     for width in range(len(run), 0, -1):
         words = [token.group(0) for token in run[-width:]]
-        # A vav-bound last word makes the fraction word the tail of a mixed
-        # number ("עשרים ושלוש עשיריות" is twenty and three tenths), which
-        # the compound pass reads whole.
-        if words[-1].startswith("\u05d5"):
+        # Words the grammar reads with the fraction word as one number are
+        # a mixed number ("עשרים ושלוש עשיריות" is twenty and three
+        # tenths), which the compound pass reads whole; "מאה ועשרים
+        # עשיריות" it does not, and the hundred and twenty is the count.
+        mixed = _parse_hebrew_number_run([*words, fraction])
+        if mixed is not None and mixed[0] == width + 1:
             continue
         parsed = _parse_hebrew_number_run(words)
         if parsed is not None and parsed[0] == width:
             return parsed[1], run[-width].start()
+    if not run:
+        # A printed count flush before the word: "3 עשיריות" is three
+        # tenths, "ל־3 רבעי השכר" three quarters of the wage.
+        printed = _hebrew_printed_count_before(text, position)
+        if printed is not None:
+            return printed
     return None
+
+
+def _hebrew_printed_count_before(text: str, position: int) -> tuple[float, int] | None:
+    """A printed number flush before ``position``, across wrap space only.
+
+    Returns (value, start of the number) or None.
+    """
+    printed = _search_before(_HEBREW_DIGITS_BEFORE_PATTERN, text, position, 32)
+    if printed is None or _PARAGRAPH_GAP_PATTERN.search(text[printed.end() : position]):
+        return None
+    value = _hebrew_printed_endpoint_value(printed)
+    if value is None:
+        return None
+    return value, printed.start()
 
 
 def _iter_hebrew_fraction_word_readings(
@@ -3366,6 +3396,15 @@ def _iter_hebrew_fraction_word_readings(
     for match in _HEBREW_FRACTION_WORD_PATTERN.finditer(text):
         word = match.group("fraction")
         count = match.group("count")
+        # The match begins at the fraction word's own prefix ("וחצי"), or
+        # at its count's ("ושלוש עשיריות").
+        start = match.start()
+        if count and word not in _HEBREW_COUNTED_FRACTION_VALUES:
+            # "שלוש חמישית": a counted fraction is plural or construct, so
+            # the number before a singular fraction word is not its count,
+            # and the prefix before that number is the number's.
+            count = None
+            start = match.start("article")
         if tokens is None:
             tokens = _HebrewWordTokens(text)
         # The count the grammar reads before the word ("עשרים רבעי השכר")
@@ -3461,7 +3500,6 @@ def _iter_hebrew_fraction_word_readings(
                 if not count and not strict and not loose and not names_an_amount:
                     continue
             value = _HEBREW_FRACTION_VALUES[word]
-        start = match.start()
         if counted is not None and (not count or counted[1] < start):
             value *= counted[0]
             start = counted[1]
@@ -3669,20 +3707,40 @@ def _hebrew_fractional_count(words: "Sequence[str]") -> float | None:
                 _HEBREW_FRACTION_COUNT_VALUES[bare]
                 * _HEBREW_COUNTED_FRACTION_VALUES[words[1]]
             )
-    if (
-        len(words) >= 2
-        and words[-1] in _HEBREW_COUNTED_FRACTION_VALUES
-        # A vav-bound word before the fraction word makes it a mixed
-        # number's tail ("מיליון ושלושה רבעים"), which the grammar reads.
-        and not words[-2].startswith("\u05d5")
-    ):
+    if len(words) >= 2 and words[-1] in _HEBREW_COUNTED_FRACTION_VALUES:
+        # Words the grammar reads with the fraction word as one number are
+        # a mixed number ("מיליון ושלושה רבעים"), the grammar's to read.
+        mixed = _parse_hebrew_number_run(words)
+        if mixed is not None and mixed[0] == len(words):
+            return None
         # The count is whatever number the grammar reads whole: "אחת עשרה
-        # עשיריות האחוז" is eleven tenths of a percent, "אלף שמיניות
-        # האחוז" a hundred and twenty-five.
+        # עשיריות האחוז" is eleven tenths of a percent, "מאה ועשרים
+        # עשיריות האחוז" a hundred and twenty.
         parsed = _parse_hebrew_number_run(words[:-1])
         if parsed is not None and parsed[0] == len(words) - 1:
             return parsed[1] * _HEBREW_COUNTED_FRACTION_VALUES[words[-1]]
     return None
+
+
+def _hebrew_printed_fraction_count(
+    text: str, run: "Sequence[re.Match[str]]"
+) -> tuple[float, int] | None:
+    """A printed count and a fraction word before the percent noun.
+
+    "3 עשיריות האחוז" is three tenths of a percent, "3 עשיריות של האחוז"
+    too: the run before the noun is the fraction word, then any partitive,
+    and the printed count sits flush before it. Returns (count, start of
+    the count) or None.
+    """
+    end = len(run)
+    while end > 1 and run[end - 1].group(0) in _HEBREW_FRACTION_PARTITIVE_WORDS:
+        end -= 1
+    if end != 1 or run[0].group(0) not in _HEBREW_COUNTED_FRACTION_VALUES:
+        return None
+    printed = _hebrew_printed_count_before(text, run[0].start())
+    if printed is None:
+        return None
+    return printed[0] * _HEBREW_COUNTED_FRACTION_VALUES[run[0].group(0)], printed[1]
 
 
 def _iter_hebrew_percent_phrase_matches(
@@ -3783,6 +3841,8 @@ def _iter_hebrew_percent_phrase_matches(
                 # a printed multiplier; the printed pass reads the whole rate.
                 continue
             mixed = _hebrew_printed_mixed_count(text, run)
+            if mixed is None:
+                mixed = _hebrew_printed_fraction_count(text, run)
             if mixed is not None:
                 count_value, count_start = mixed
                 if count_value < 0:
@@ -15945,8 +16005,10 @@ def _tokenize_numeric_occurrences_from_text(
             else (
                 _HEBREW_PERCENT_WORD_PATTERN.match(cleaned, span[1])
                 # The marker serves a spelled number as it serves a printed
-                # one: "שלושה וחצי%" is 0.035.
-                or _PERCENT_MARKER_AFTER_NUMBER_PATTERN.match(cleaned, span[1])
+                # one: "שלושה וחצי%" is 0.035. Across wrap space only: a
+                # blank line or a paragraph separator before the sign leaves
+                # "דרגה חמישית" a fifth grade.
+                or _HEBREW_PERCENT_SIGN_AFTER_PATTERN.match(cleaned, span[1])
             )
         )
         # "−שלושה%", "−חצי%", "−שלושה מיליון שקלים": the sign before a
