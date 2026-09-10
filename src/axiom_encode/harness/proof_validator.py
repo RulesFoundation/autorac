@@ -563,23 +563,43 @@ def bind_maqaf_space(text: str) -> str:
     return _MAQAF_WRAP_SPACE_PATTERN.sub("\u05be", text)
 
 
+# A paragraph gap -- a blank line or a paragraph separator -- is a boundary
+# an excerpt must quote as one: "ו־ שלושה" does not quote "ו־\n\nשלושה", whose
+# twenty and three are two numbers, and no run of spaces or a single line
+# wrap stands in for it.
+_EVIDENCE_PARAGRAPH_GAP_PATTERN = re.compile(
+    "[^\\S\\r\\n]*(?:[\u2028\u2029\x0b\x0c\x85]|\\r?\\n[^\\S\\r\\n]*\\r?\\n)\\s*"
+)
+
+
+def collapse_evidence_whitespace(text: str) -> str:
+    """Collapse whitespace for evidence matching, keeping every paragraph gap.
+
+    A paragraph gap becomes one blank line and any other run of whitespace
+    one space, so "A B" matches "A\nB" and never "A\n\nB".
+    """
+    marked = _EVIDENCE_PARAGRAPH_GAP_PATTERN.sub("\x00", text)
+    collapsed = re.sub(r"\s+", " ", marked)
+    return re.sub(r" ?\x00 ?", "\n\n", collapsed).strip()
+
+
 def _source_contains_proof_evidence(
     *,
     source_text: str,
     evidence_text: str,
 ) -> bool:
-    normalized_evidence = re.sub(r"\s+", " ", evidence_text).strip()
+    normalized_evidence = collapse_evidence_whitespace(evidence_text)
     if not normalized_evidence:
         return False
-    maqaf_evidence = re.sub(r"\s+", " ", bind_maqaf_space(evidence_text)).strip()
+    maqaf_evidence = collapse_evidence_whitespace(bind_maqaf_space(evidence_text))
     for segment in split_proof_evidence_text(source_text):
         if _bounded_source_evidence_match(evidence_text, segment):
             return True
-        normalized_segment = re.sub(r"\s+", " ", segment).strip()
+        normalized_segment = collapse_evidence_whitespace(segment)
         if _bounded_source_evidence_match(normalized_evidence, normalized_segment):
             return True
         if "\u05be" in segment and _bounded_source_evidence_match(
-            maqaf_evidence, re.sub(r"\s+", " ", bind_maqaf_space(segment)).strip()
+            maqaf_evidence, collapse_evidence_whitespace(bind_maqaf_space(segment))
         ):
             return True
     return False

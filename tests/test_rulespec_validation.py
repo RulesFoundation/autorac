@@ -22859,6 +22859,67 @@ def test_a_maqaf_binds_across_a_line_wrap_but_not_a_paragraph_gap_and_a_spaced_t
         assert passed and len(issues) == 1, (source, excerpt, issues)
 
 
+def test_an_excerpt_quotes_a_paragraph_gap_as_a_paragraph_gap():
+    # Gate round 4 on #1615: whitespace collapses for evidence matching with
+    # every paragraph gap kept, in proof matching and numeric evidence
+    # alike, so a spaced, a bound or a single-wrapped excerpt never quotes
+    # a source that sets a blank line or a paragraph separator after the
+    # maqaf (whose twenty and three are two numbers), while an excerpt that
+    # keeps the gap does, and grounds what the source states.
+    import json
+    import textwrap as tw
+
+    from axiom_encode.harness.proof_validator import collapse_evidence_whitespace
+
+    assert collapse_evidence_whitespace("A  B\nC") == "A B C"
+    assert collapse_evidence_whitespace("A \n\n C") == "A\n\nC"
+    assert collapse_evidence_whitespace("A\u2029C") == "A\n\nC"
+
+    def scoped(source, excerpt, formula):
+        content = tw.dedent(
+            f"""
+            format: rulespec/v1
+            rules:
+              - name: rate
+                kind: parameter
+                dtype: Decimal
+                metadata:
+                  proof:
+                    atoms:
+                      - path: versions[0].formula
+                        kind: parameter
+                        source:
+                          corpus_citation_path: il/statute/example/rate
+                          excerpt: {json.dumps(excerpt, ensure_ascii=False)}
+                versions:
+                  - effective_from: '2026-01-01'
+                    formula: {formula}
+            """
+        ).strip()
+        return find_ungrounded_numeric_issues_scoped(
+            content,
+            module_source_text="",
+            proof_source_texts={"il/statute/example/rate": source},
+        ), validate_rulespec_proofs(
+            content, source_texts={"il/statute/example/rate": source}
+        ).passed
+
+    for gap in ("\n\n", "\n \n", "\u2029"):
+        source = f"השיעור הוא עשרים ו־{gap}שלושה אחוזים."
+        assert sorted(_hebrew_recall(source)) == [0.03, 20.0], repr(gap)
+        for excerpt in (
+            "השיעור הוא עשרים ו־ שלושה אחוזים.",
+            "השיעור הוא עשרים ו־שלושה אחוזים.",
+            "השיעור הוא עשרים ו־\nשלושה אחוזים.",
+        ):
+            issues, passed = scoped(source, excerpt, "0.23")
+            assert passed is False and issues, (repr(gap), excerpt, issues)
+        issues, passed = scoped(source, source, "0.03")
+        assert (issues, passed) == ([], True), (repr(gap), issues)
+        issues, passed = scoped(source, source, "0.23")
+        assert passed and len(issues) == 1, (repr(gap), issues)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
