@@ -76,6 +76,7 @@ from axiom_encode.retry_feedback import (
     VALIDATION_RETRY_FEEDBACK_MAX_TOTAL_CHARS,
     bounded_validation_retry_feedback_item,
 )
+from axiom_encode.rulespec_formula_identifiers import formula_reference_identifiers
 from axiom_encode.signing_broker import SigningBroker
 from axiom_encode.statute import (
     CitationParts,
@@ -14119,27 +14120,7 @@ def _context_surface_sequence(value: object) -> tuple[str, ...]:
     return (text,) if text else ()
 
 
-_CONTEXT_FORMULA_IDENTIFIER = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 _CONTEXT_TEMPORAL_VALUE_FACT_YEAR_PATTERN = re.compile(r"(?:^|_)(?:19|20)\d{2}(?:_|$)")
-_CONTEXT_FORMULA_BUILTINS = {
-    "and",
-    "calendar_years_to_months",
-    "ceil",
-    "count_over_periods",
-    "else",
-    "false",
-    "floor",
-    "if",
-    "match",
-    "max",
-    "max_over_periods",
-    "min",
-    "not",
-    "or",
-    "sum_over_periods",
-    "sum_top_n_over_periods",
-    "true",
-}
 
 
 def _context_file_invalid_local_inputs(
@@ -14276,12 +14257,11 @@ def _context_file_local_inputs(source_path: str) -> set[str]:
                 formula_text = formula
             else:
                 continue
-            for identifier in _CONTEXT_FORMULA_IDENTIFIER.findall(formula_text):
-                if (
-                    identifier in defined
-                    or identifier in imported
-                    or identifier in _CONTEXT_FORMULA_BUILTINS
-                ):
+            for identifier in formula_reference_identifiers(
+                formula_text,
+                judgment=str(rule.get("dtype") or "").lower() == "judgment",
+            ):
+                if identifier in defined or identifier in imported:
                     continue
                 inputs.add(identifier)
     return inputs
@@ -14352,7 +14332,7 @@ def _context_file_terminal_exports(source_path: str) -> list[str]:
         return []
 
     exports: list[str] = []
-    formulas: list[tuple[str, str]] = []
+    formulas: list[tuple[str, str, bool]] = []
     for rule in rules:
         if not isinstance(rule, dict):
             continue
@@ -14373,21 +14353,21 @@ def _context_file_terminal_exports(source_path: str) -> list[str]:
                 continue
             formula = version.get("formula")
             if isinstance(formula, (int, float)) and not isinstance(formula, bool):
-                formulas.append((name, str(formula)))
+                formulas.append((name, str(formula), False))
             elif isinstance(formula, str) and formula.strip():
-                formulas.append((name, formula))
+                formulas.append(
+                    (name, formula, str(rule.get("dtype") or "").lower() == "judgment")
+                )
     if not exports:
         return []
 
     export_names = set(exports)
     referenced: set[str] = set()
-    for owner, formula in formulas:
+    for owner, formula, judgment in formulas:
         referenced.update(
             identifier
-            for identifier in _CONTEXT_FORMULA_IDENTIFIER.findall(formula)
-            if identifier in export_names
-            and identifier != owner
-            and identifier not in _CONTEXT_FORMULA_BUILTINS
+            for identifier in formula_reference_identifiers(formula, judgment=judgment)
+            if identifier in export_names and identifier != owner
         )
     terminal = [name for name in exports if name not in referenced]
     return terminal or exports

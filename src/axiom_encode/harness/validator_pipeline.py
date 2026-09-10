@@ -98,6 +98,7 @@ from axiom_encode.repo_routing import (
     monorepo_checkout_name,
 )
 from axiom_encode.rules_engine_compat import run_rulespec_compile
+from axiom_encode.rulespec_formula_identifiers import formula_reference_identifiers
 from axiom_encode.statute import (
     citation_to_citation_path,
     normalize_rulespec_path_segment,
@@ -30989,8 +30990,7 @@ def _rulespec_import_prefix_static(import_path: str) -> str | None:
 
 def _formula_local_identifiers(formula: str) -> set[str]:
     """Return non-builtin identifiers referenced by a RuleSpec formula."""
-    scrubbed = _QUOTED_STRING_PATTERN.sub(" ", formula)
-    return set(_RULESPEC_IDENTIFIER.findall(scrubbed)) - _RULESPEC_FORMULA_BUILTINS
+    return formula_reference_identifiers(formula)
 
 
 def _normalize_identifier(value: str) -> str:
@@ -34286,8 +34286,13 @@ def _rulespec_formula_identifiers(payload: Any) -> set[str]:
                 continue
             formula = version.get("formula")
             if isinstance(formula, str):
-                identifiers.update(_RULESPEC_IDENTIFIER.findall(formula))
-    return identifiers - _RULESPEC_FORMULA_BUILTINS
+                identifiers.update(
+                    formula_reference_identifiers(
+                        formula,
+                        judgment=str(rule.get("dtype") or "").lower() == "judgment",
+                    )
+                )
+    return identifiers
 
 
 def _rulespec_reference_summary(target_file: Path) -> _RuleSpecReferenceSummary:

@@ -98,6 +98,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from yaml.nodes import MappingNode, ScalarNode, SequenceNode
 
 from axiom_encode import __version__
+from axiom_encode.rulespec_formula_identifiers import formula_reference_identifiers
 
 from . import validation_waivers as _validation_waivers
 from .codex_cli import codex_auth_error
@@ -17491,7 +17492,11 @@ def _reachable_local_formulas_for_rule(
         if not formula:
             return
         formulas.append(formula)
-        for identifier in sorted(_formula_identifiers(formula)):
+        for identifier in sorted(
+            _formula_identifiers(
+                formula, judgment=str(rule.get("dtype") or "").lower() == "judgment"
+            )
+        ):
             if identifier in rules_by_name:
                 visit(identifier)
 
@@ -17981,7 +17986,7 @@ def _positive_imported_judgment_inputs_for_formula(
         formula,
         [(start, end) for start, end, _expression in negated_group_spans],
     )
-    identifiers = _formula_identifiers(positive_context_formula)
+    identifiers = _formula_identifiers(positive_context_formula, judgment=True)
     negated_identifiers = set(
         re.findall(r"\bnot\s+([A-Za-z_][A-Za-z0-9_]*)\b", positive_context_formula)
     )
@@ -18176,7 +18181,7 @@ def _positive_judgment_formula_input_assignments_for_formula(
         formula,
         [(start, end) for start, end, _expression in negated_group_spans],
     )
-    identifiers = _formula_identifiers(positive_context_formula)
+    identifiers = _formula_identifiers(positive_context_formula, judgment=True)
     negated_identifiers = set(
         re.findall(r"\bnot\s+([A-Za-z_][A-Za-z0-9_]*)\b", positive_context_formula)
     )
@@ -18241,7 +18246,12 @@ def _positive_judgment_formula_input_assignments_for_formula(
             continue
         dependency_inputs = [
             name
-            for name in sorted(_formula_identifiers(dependency_formula))
+            for name in sorted(
+                _formula_identifiers(
+                    dependency_formula,
+                    judgment=str(dependency.get("dtype") or "").lower() == "judgment",
+                )
+            )
             if name not in defined_symbols and name not in protected_positive_inputs
         ]
         if not dependency_inputs:
@@ -18276,7 +18286,7 @@ def _neutral_unassigned_formula_input_assignments(
 ) -> dict[str, object]:
     defined_symbols = set(rules_by_name) | imported_outputs
     assignments: dict[str, object] = {}
-    for identifier in sorted(_formula_identifiers(formula)):
+    for identifier in sorted(_formula_identifiers(formula, judgment=True)):
         if identifier in defined_symbols or identifier in assigned_inputs:
             continue
         assignments[identifier] = _default_generated_test_input_value(
@@ -18421,7 +18431,7 @@ def _negated_expression_false_assignments(
     imported_outputs: set[str],
     protected_positive_inputs: set[str],
 ) -> dict[str, object]:
-    identifiers = _formula_identifiers(expression)
+    identifiers = _formula_identifiers(expression, judgment=True)
     defined_symbols = set(rules_by_name) | imported_outputs
     assignments: dict[str, object] = {}
 
@@ -18433,7 +18443,12 @@ def _negated_expression_false_assignments(
             dependency_formula = _first_rule_formula(dependency)
             if not dependency_formula:
                 continue
-            for dependency_input in sorted(_formula_identifiers(dependency_formula)):
+            for dependency_input in sorted(
+                _formula_identifiers(
+                    dependency_formula,
+                    judgment=str(dependency.get("dtype") or "").lower() == "judgment",
+                )
+            ):
                 if (
                     dependency_input in defined_symbols
                     or dependency_input in protected_positive_inputs
@@ -19809,27 +19824,6 @@ def _local_factual_input_names_from_rules_content(rules_content: str) -> set[str
         if isinstance(rule, dict) and str(rule.get("name") or "").strip()
     }
     defined_symbols.update(_imported_output_names_from_payload(payload))
-    dsl_symbols = {
-        "abs",
-        "and",
-        "ceil",
-        "count_where",
-        "else",
-        "elif",
-        "false",
-        "floor",
-        "if",
-        "len",
-        "match",
-        "max",
-        "min",
-        "not",
-        "or",
-        "round",
-        "sum",
-        "sum_where",
-        "true",
-    }
     for rule in rules:
         if not isinstance(rule, dict):
             continue
@@ -19844,11 +19838,12 @@ def _local_factual_input_names_from_rules_content(rules_content: str) -> set[str
             formula = version.get("formula")
             if not isinstance(formula, str):
                 continue
-            scrubbed_formula = re.sub(r"'[^']*'|\"[^\"]*\"", " ", formula)
-            identifiers = set(
-                re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", scrubbed_formula)
+            factual_inputs.update(
+                formula_reference_identifiers(
+                    formula, judgment=str(rule.get("dtype") or "").lower() == "judgment"
+                )
+                - defined_symbols
             )
-            factual_inputs.update(identifiers - defined_symbols - dsl_symbols)
     return factual_inputs
 
 
@@ -42907,8 +42902,12 @@ def _generated_rule_formula_identifiers(rule: dict[str, Any]) -> set[str]:
             continue
         formula = version.get("formula")
         if isinstance(formula, str):
-            identifiers.update(_formula_identifiers(formula))
-    return identifiers - _RULESPEC_FORMULA_BUILTINS
+            identifiers.update(
+                formula_reference_identifiers(
+                    formula, judgment=str(rule.get("dtype") or "").lower() == "judgment"
+                )
+            )
+    return identifiers
 
 
 def _generated_rule_is_imported_judgment_composition(
@@ -43462,31 +43461,8 @@ _ANAPHORIC_SCOPE_OMISSION_ISSUE_PATTERN = re.compile(
 _INPUT_FIELD_ACCESS_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_])input\.([A-Za-z_][A-Za-z0-9_]*)"
 )
-_RULESPEC_IDENTIFIER_PATTERN = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 _RULESPEC_STRING_LITERAL_RE = r'"(?:\\.|[^"\\])*"|\'(?:\'\'|\\.|[^\'\\])*\''
 _RULESPEC_STRING_LITERAL_PATTERN = re.compile(_RULESPEC_STRING_LITERAL_RE)
-_RULESPEC_FORMULA_BUILTINS = {
-    "abs",
-    "all",
-    "and",
-    "any",
-    "ceil",
-    "count",
-    "count_where",
-    "else",
-    "false",
-    "floor",
-    "if",
-    "in",
-    "max",
-    "min",
-    "not",
-    "or",
-    "round",
-    "sum",
-    "sum_where",
-    "true",
-}
 _UNIT_ENTITY_NAMES = {
     "benefitunit",
     "business",
@@ -46345,15 +46321,8 @@ def _formula_without_string_literals(formula: str) -> str:
     )
 
 
-def _formula_identifiers(formula: str) -> set[str]:
-    return (
-        set(
-            _RULESPEC_IDENTIFIER_PATTERN.findall(
-                _formula_without_string_literals(formula)
-            )
-        )
-        - _RULESPEC_FORMULA_BUILTINS
-    )
+def _formula_identifiers(formula: str, *, judgment: bool | None = None) -> set[str]:
+    return formula_reference_identifiers(formula, judgment=judgment)
 
 
 def _try_repair_generated_nonnegative_floors_for_apply(
