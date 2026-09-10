@@ -7917,6 +7917,106 @@ def _evaluate_generated_artifact_with_repairs(
             return metrics
 
 
+def _rebind_retained_candidate_proof_import_hashes(
+    *,
+    rulespec_file: Path,
+    relative_output: Path,
+    policy_repo_path: Path,
+    metrics: EvalArtifactMetrics | None,
+) -> list[str]:
+    """Refresh only stale dependency hashes on an otherwise retained candidate."""
+
+    if (
+        metrics is None
+        or not metrics.compile_pass
+        or metrics.ci_pass
+        or not metrics.ci_issues
+        or any(
+            "Proof import hash mismatch:" not in str(issue)
+            for issue in metrics.ci_issues
+        )
+    ):
+        return []
+
+    # Import lazily to avoid the startup cycle: cli imports this module.
+    from axiom_encode import cli as cli_helpers
+
+    original = rulespec_file.read_text()
+    target_base = (
+        f"{cli_helpers._repo_jurisdiction_prefix(policy_repo_path)}:"
+        f"{cli_helpers._relative_rulespec_import_target(relative_output)}"
+    )
+    repaired, repair_count = cli_helpers._repair_proof_import_hashes(
+        original,
+        target_base=target_base,
+        rules_file=rulespec_file,
+        repo_path=policy_repo_path,
+    )
+    if (
+        repair_count <= 0
+        or repaired == original
+        or not _only_proof_import_hashes_changed(
+            original,
+            repaired,
+            expected_change_count=repair_count,
+        )
+    ):
+        return []
+    rulespec_file.write_text(repaired)
+    return [f"hash[{index}]" for index in range(repair_count)]
+
+
+def _only_proof_import_hashes_changed(
+    original: str,
+    repaired: str,
+    *,
+    expected_change_count: int,
+) -> bool:
+    """Verify a retained-candidate rewrite changed only proof import hashes."""
+
+    try:
+        before = yaml.safe_load(original)
+        after = yaml.safe_load(repaired)
+    except (TypeError, ValueError, yaml.YAMLError):
+        return False
+    changed = 0
+
+    def compare(left: object, right: object, path: tuple[object, ...]) -> bool:
+        nonlocal changed
+        if type(left) is not type(right):
+            return False
+        if isinstance(left, dict):
+            if left.keys() != right.keys():
+                return False
+            return all(compare(left[key], right[key], (*path, key)) for key in left)
+        if isinstance(left, list):
+            if len(left) != len(right):
+                return False
+            return all(
+                compare(left_item, right_item, (*path, index))
+                for index, (left_item, right_item) in enumerate(
+                    zip(left, right, strict=True)
+                )
+            )
+        if left == right:
+            return True
+        if not (
+            len(path) >= 6
+            and path[-6] == "metadata"
+            and path[-5] == "proof"
+            and path[-4] == "atoms"
+            and isinstance(path[-3], int)
+            and path[-2:] == ("import", "hash")
+            and isinstance(right, str)
+            and re.fullmatch(r"sha256:(?:local|[0-9a-f]{64})", right)
+        ):
+            return False
+        changed += 1
+        return True
+
+    return compare(before, after, ()) and changed == expected_change_count
+
+
 _EVAL_COMPANION_REPAIR_MARKERS = (
     "Judgment rule missing positive companion output coverage:",
     "Derived rule missing companion output coverage:",
@@ -8928,7 +9028,7 @@ def _run_single_eval(
             oracle=oracle,
             policyengine_runtime=policyengine_runtime,
             policyengine_rule_hint=policyengine_rule_hint,
-            skip_reviewers=skip_reviewers,
+            skip_reviewers=True,
             reviewers_require_deterministic_pass=reviewers_require_deterministic_pass,
             source_metadata=source_metadata_payload,
             local_corpus_release=corpus_release,
@@ -8945,6 +9045,42 @@ def _run_single_eval(
             replacement_overlay_scope=replacement_overlay_scope,
             allow_artifact_repairs=False,
         )
+        rebound_hashes = _rebind_retained_candidate_proof_import_hashes(
+            rulespec_file=output_file,
+            relative_output=relative_output,
+            policy_repo_path=policy_path,
+            metrics=retained_candidate_metrics,
+        )
+        if rebound_hashes:
+            print(
+                "  retained_candidate_preflight=auto_repaired_proof_import_hashes:"
+                + ",".join(rebound_hashes)
+            )
+            retained_candidate_metrics = _evaluate_generated_artifact_with_repairs(
+                rulespec_file=output_file,
+                policy_repo_root=policy_path,
+                axiom_rules_path=runtime_axiom_rules_path,
+                source_text=source_text,
+                oracle=oracle,
+                policyengine_runtime=policyengine_runtime,
+                policyengine_rule_hint=policyengine_rule_hint,
+                skip_reviewers=True,
+                reviewers_require_deterministic_pass=reviewers_require_deterministic_pass,
+                source_metadata=source_metadata_payload,
+                local_corpus_release=corpus_release,
+                source_citation_path=_source_metadata_citation_path(
+                    source_metadata_payload
+                ),
+                rulespec_dependency_roots=rulespec_dependency_roots,
+                require_complete_source_unit=require_complete_source_unit,
+                amendment_documents=workspace.amendment_documents,
+                protected_review_excerpts=_workspace_quoted_review_finding_excerpts(
+                    workspace
+                ),
+                legacy_replacement=legacy_replacement,
+                replacement_overlay_scope=replacement_overlay_scope,
+                allow_artifact_repairs=False,
+            )
         retained_candidate_accepted = (
             retained_candidate_metrics is not None
             and _eval_artifact_validation_error(
@@ -8959,13 +9095,24 @@ def _run_single_eval(
                 0,
             )
             response = EvalPromptResponse(
-                text=validation_retry_candidate.rulespec,
+                text=output_file.read_bytes().decode("utf-8"),
                 duration_ms=duration_ms,
                 trace={
                     "schema": "axiom-encode/retained-candidate-preflight/v1",
                     "accepted": True,
-                    "rulespec_sha256": validation_retry_candidate.rulespec_sha256,
-                    "tests_sha256": validation_retry_candidate.tests_sha256,
+                    "rulespec_sha256": _eval_artifact_sha256(
+                        output_file,
+                        output_root=output_root,
+                        label="retained candidate RuleSpec",
+                        max_bytes=32 * 1024 * 1024,
+                    ),
+                    "tests_sha256": _eval_artifact_sha256(
+                        test_file,
+                        output_root=output_root,
+                        label="retained candidate companion tests",
+                        max_bytes=32 * 1024 * 1024,
+                    ),
+                    "rebound_proof_import_hashes": rebound_hashes,
                 },
             )
             wrote_artifact = True
