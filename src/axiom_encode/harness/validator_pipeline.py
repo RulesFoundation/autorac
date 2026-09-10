@@ -4562,9 +4562,13 @@ def _iter_hebrew_shared_scale_range_matches(
             and lower_value >= upper_value
             and _search_before(_HEBREW_BETWEEN_BEFORE_PATTERN, text, lower_span[0], 16)
             is not None
+            # A range of rates under a rate word shares whatever its order:
+            # "שיעור המס יהיה בין 7 ובין 5 אלפים אחוזים" runs from seven
+            # thousand percent.
+            and not (is_rate and _hebrew_rate_word_before(text, lower_span[0]))
         ):
-            # A "בין" range ascends: "בין 500 ל־3 מיליון" runs from 500
-            # shekels; "יופחת מ־5 ל־3 מיליון" decreases and shares.
+            # A "בין" range of amounts ascends: "בין 500 ל־3 מיליון" runs from
+            # 500 shekels; "יופחת מ־5 ל־3 מיליון" decreases and shares.
             continue
         matches.append(
             (
@@ -7356,7 +7360,7 @@ _EUROPEAN_MONEY_AMOUNT_PATTERN = re.compile(
 # is no sign; a sign no letter precedes still negates ("-3%").
 _PERCENTAGE_RAW_NUMBER_UNSIGNED = r"(?:\d{1,3}(?:[.\u00a0\u202f ]\d{3})+|\d+)(?:\s*[,.]\d{1,4})?|\d+\.\d+|(?<!\d)\.\d+"
 _DIRECT_PERCENTAGE_PATTERN = re.compile(
-    rf"(?P<number>(?:(?<![\u05d0-\u05ea])-)?(?:{_PERCENTAGE_RAW_NUMBER_UNSIGNED}))"
+    rf"(?P<number>(?:(?<![\u05d0-\u05ea])[-\u2212])?(?:{_PERCENTAGE_RAW_NUMBER_UNSIGNED}))"
     r"\s*(?:%|\bp\.?\s*c\.?\b)",
     re.IGNORECASE,
 )
@@ -11474,7 +11478,10 @@ def _iter_direct_percentage_rate_matches(
                 text, match.start("number"), tokens
             ):
                 continue
-        for value in _iter_percentage_numeric_phrase_values(match.group("number")):
+        # A Unicode minus signs the rate as the ASCII hyphen does ("−.5%",
+        # "−3.5%"); the span keeps the sign.
+        raw = match.group("number").replace("\u2212", "-")
+        for value in _iter_percentage_numeric_phrase_values(raw):
             values.append((match.span("number"), value / 100))
     return values
 
@@ -12564,11 +12571,13 @@ def _clean_source_text_for_numeric_extraction_tracked(
     # right-to-left mark a Hebrew source sets before a number) carries no
     # content and hides the digit run from the boundary the matchers need:
     # it becomes the space it stands for, one character for one.
+    # A leading decimal ("\u200f.5", "₪.5") is a number as a digit run is.
     tracked = tracked.sub(
-        re.compile("[\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c](?=\\d)"), " "
+        re.compile("[\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c](?=\\d|\\.\\d)"),
+        " ",
     )
     # The shekel sign glued to its amount ("₪500") is detached the same way.
-    tracked = tracked.sub(re.compile(r"([¢₵￠₦₪])(?=\d)"), r"\1 ")
+    tracked = tracked.sub(re.compile(r"([¢₵￠₦₪])(?=\d|\.\d)"), r"\1 ")
     # Nigerian gazette prints denominate naira with an ASCII "N" glued to the
     # amount ("N800,000" in the Nigeria Tax Act 2025 Fourth Schedule). Detach
     # it the same way, but only when the N is a standalone prefix (not part

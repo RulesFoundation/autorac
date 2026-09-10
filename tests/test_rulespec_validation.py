@@ -22386,6 +22386,63 @@ def test_ubein_joins_a_shared_scale_range_and_a_maqaf_detaches_before_a_decimal(
         assert text[occurrence.start : occurrence.end] in (".5", ".25"), occurrence
 
 
+def test_a_shared_scale_rate_range_descends_and_a_unicode_minus_and_a_mark_lead_a_decimal():
+    # Review round 185 on #1585: a shared-scale range of rates under a rate
+    # word shares its scale whatever its order (a range of amounts still
+    # ascends); the direct percentage reader takes the Unicode minus, the
+    # span keeping the sign; and a bidirectional mark or a currency sign
+    # detaches before a leading decimal as before a digit.
+    import math
+
+    for text, expected in (
+        ("שיעור המס יהיה בין 7 ובין 5 אלפים אחוזים", [50.0, 70.0]),
+        ("שיעור המס יהיה בין שבעה לבין חמישה אלפים אחוזים", [50.0, 70.0]),
+        ("שיעור המס יהיה בין 7 ל־5 אלפים אחוזים", [50.0, 70.0]),
+        ("הסכום יהיה בין 7 ובין 5 מיליון שקלים", [7.0, 5_000_000.0]),
+        ("הסכום יופחת מ־7 ל־5 מיליון שקלים", [5_000_000.0, 7_000_000.0]),
+        ("השיעור הוא −.5%", [-0.005]),
+        ("השיעור הוא −3.5%", [-0.035]),
+        ("The rate is −2.5%", [-0.025]),
+        ("הסכום הוא ₪.5", [0.5]),
+        ("הסכום הוא ₪500", [500.0]),
+        ("הקצבה תוכפל ב־\u200f.5", [0.5]),
+        ("הסכום הוא \u200f.5 שקלים", [0.5]),
+        ("הסכום הוא ₪\u200f.5", [0.5]),
+    ):
+        values = sorted(_hebrew_recall(text))
+        assert len(values) == len(expected) and all(
+            math.isclose(value, want, rel_tol=1e-9)
+            for value, want in zip(values, expected, strict=True)
+        ), (text, values)
+        found = extract_numbers_from_text(text)
+        assert all(
+            any(math.isclose(value, want, rel_tol=1e-9) for value in found)
+            for want in expected
+        ), (text, found)
+    for text, grounded, ungrounded in (
+        ("שיעור המס יהיה בין 7 ובין 5 אלפים אחוזים", "70", "7"),
+        ("שיעור המס יהיה בין שבעה לבין חמישה אלפים אחוזים", "70", "7"),
+        ("השיעור הוא −.5%", "-0.005", "0.005"),
+        ("הסכום הוא ₪.5", "0.5", "5"),
+        ("הקצבה תוכפל ב־\u200f.5", "0.5", "0.05"),
+    ):
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+    text = "השיעור הוא −.5% והסכום הוא ₪.5 ואחר כך \u200f.25 שקלים"
+    occurrences = extract_typed_numeric_inventory_occurrences_from_text(text)
+    assert [occurrence.value for occurrence in occurrences] == [-0.005, 0.5, 0.25]
+    assert [text[o.start : o.end] for o in occurrences] == ["−.5", ".5", ".25"]
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
