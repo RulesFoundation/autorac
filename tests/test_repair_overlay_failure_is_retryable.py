@@ -302,6 +302,22 @@ rules:
     assert f"hash: sha256:{expected_hash}" in repaired
     assert repaired.replace(f"sha256:{expected_hash}", "sha256:stale") == original
 
+    rulespec_file.write_text(original)
+    with patch(
+        "axiom_encode.cli._repair_proof_import_hashes",
+        return_value=(original.replace("fact * 2", "fact * 3"), 1),
+    ):
+        assert (
+            _rebind_retained_candidate_proof_import_hashes(
+                rulespec_file=rulespec_file,
+                relative_output=Path("regulations/target.yaml"),
+                policy_repo_path=policy_path,
+                metrics=mismatch,
+            )
+            == []
+        )
+    assert rulespec_file.read_text() == original
+
     mixed_failure = EvalArtifactMetrics(
         compile_pass=True,
         compile_issues=[],

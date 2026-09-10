@@ -7952,10 +7952,69 @@ def _rebind_retained_candidate_proof_import_hashes(
         rules_file=rulespec_file,
         repo_path=policy_repo_path,
     )
-    if repair_count <= 0 or repaired == original:
+    if (
+        repair_count <= 0
+        or repaired == original
+        or not _only_proof_import_hashes_changed(
+            original,
+            repaired,
+            expected_change_count=repair_count,
+        )
+    ):
         return []
     rulespec_file.write_text(repaired)
     return [f"hash[{index}]" for index in range(repair_count)]
+
+
+def _only_proof_import_hashes_changed(
+    original: str,
+    repaired: str,
+    *,
+    expected_change_count: int,
+) -> bool:
+    """Verify a retained-candidate rewrite changed only proof import hashes."""
+
+    try:
+        before = yaml.safe_load(original)
+        after = yaml.safe_load(repaired)
+    except (TypeError, ValueError, yaml.YAMLError):
+        return False
+    changed = 0
+
+    def compare(left: object, right: object, path: tuple[object, ...]) -> bool:
+        nonlocal changed
+        if type(left) is not type(right):
+            return False
+        if isinstance(left, dict):
+            if left.keys() != right.keys():
+                return False
+            return all(compare(left[key], right[key], (*path, key)) for key in left)
+        if isinstance(left, list):
+            if len(left) != len(right):
+                return False
+            return all(
+                compare(left_item, right_item, (*path, index))
+                for index, (left_item, right_item) in enumerate(
+                    zip(left, right, strict=True)
+                )
+            )
+        if left == right:
+            return True
+        if not (
+            len(path) >= 6
+            and path[-6] == "metadata"
+            and path[-5] == "proof"
+            and path[-4] == "atoms"
+            and isinstance(path[-3], int)
+            and path[-2:] == ("import", "hash")
+            and isinstance(right, str)
+            and re.fullmatch(r"sha256:(?:local|[0-9a-f]{64})", right)
+        ):
+            return False
+        changed += 1
+        return True
+
+    return compare(before, after, ()) and changed == expected_change_count
 
 
 _EVAL_COMPANION_REPAIR_MARKERS = (
