@@ -21913,6 +21913,54 @@ def test_a_glyph_or_slash_count_yields_to_the_fraction_word_it_counts():
         ), (text, issue)
 
 
+def test_a_printed_count_with_a_fraction_word_is_a_range_endpoint():
+    # Review round 176 on #1585: the endpoint reader the percent-range pass
+    # shares reads a printed count with a fraction word ("2 עשיריות", "2
+    # וחצי עשיריות", "2½ עשיריות") as one endpoint, at either end, as it
+    # reads a spelled count or a printed mixed number.
+    import math
+
+    for text, expected in (
+        ("שיעור המס יהיה בין 2 עשיריות ל־3 עשיריות האחוז", [0.002, 0.003]),
+        ("שיעור המס יהיה בין שתי עשיריות לשלוש עשיריות האחוז", [0.002, 0.003]),
+        ("שיעור המס יהיה בין 2 עשיריות לשלוש עשיריות האחוז", [0.002, 0.003]),
+        ("שיעור המס יהיה בין שתי עשיריות ל־3 עשיריות האחוז", [0.002, 0.003]),
+        ("שיעור המס יהיה בין 2½ עשיריות ל־3 עשיריות האחוז", [0.0025, 0.003]),
+        ("שיעור המס יהיה בין 2 וחצי עשיריות ל־3 עשיריות האחוז", [0.0025, 0.003]),
+        ("שיעור המס יהיה בין 2 עשיריות ל־3 וחצי עשיריות האחוז", [0.002, 0.0035]),
+        ("שיעור המס יהיה מ־2 עשיריות עד 3 עשיריות האחוז", [0.002, 0.003]),
+        ("שיעור המס יהיה 2 עשיריות או 3 עשיריות האחוז", [0.002, 0.003]),
+        ("שיעור המס יהיה בין 2 וחצי ל־3 אחוזים", [0.025, 0.03]),
+        ("בין 2 עשיריות ל־3 עשיריות מהשכר", [0.2, 0.3]),
+    ):
+        values = sorted(_hebrew_recall(text))
+        assert len(values) == len(expected) and all(
+            math.isclose(value, want, rel_tol=1e-9)
+            for value, want in zip(values, expected, strict=True)
+        ), (text, values)
+        found = extract_numbers_from_text(text)
+        assert all(
+            any(math.isclose(value, want, rel_tol=1e-9) for value in found)
+            for want in expected
+        ), (text, found)
+    for text, grounded, ungrounded in (
+        ("שיעור המס יהיה בין 2 עשיריות ל־3 עשיריות האחוז", "0.002", "0.2"),
+        ("שיעור המס יהיה בין 2 עשיריות לשלוש עשיריות האחוז", "0.002", "0.2"),
+        ("שיעור המס יהיה בין 2 וחצי עשיריות ל־3 עשיריות האחוז", "0.0025", "0.25"),
+    ):
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

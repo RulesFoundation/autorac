@@ -6873,6 +6873,11 @@ def _hebrew_number_run_ending_at(
     mixed = _hebrew_printed_mixed_count(text, run)
     if mixed is not None:
         return mixed[1], mixed[0], ""
+    # A printed count with a fraction word ("3 עשיריות", "3 וחצי עשיריות")
+    # is one endpoint the same way: "בין 2 עשיריות ל־3 עשיריות האחוז".
+    counted = _hebrew_printed_fraction_count(text, run)
+    if counted is not None:
+        return counted[1], counted[0], ""
     for width in range(len(run), 0, -1):
         words = [token.group(0) for token in run[-width:]]
         parsed = _parse_hebrew_number_run(words)
