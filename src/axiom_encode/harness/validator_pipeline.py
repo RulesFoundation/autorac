@@ -7172,16 +7172,20 @@ def _iter_hebrew_percent_range_lower_matches(
             # 3%"). The noun distributes: "תשלום של 125 או 150 אחוזים".
             continue
         if (
-            join is not None
-            and join.group("free") != "או"
+            (join is None or join.group("free") != "או")
             and not list_coordinated
             and upper_percent is not None
             and lower_value >= upper_percent
             and _search_before(_HEBREW_BETWEEN_BEFORE_PATTERN, text, lower_span[0], 16)
             is not None
+            # A fraction of its own before the noun is a rate whatever the
+            # order: "בין ½ ל־3 עשיריות האחוז" and "בין חצי לבין שלוש
+            # עשיריות האחוז" run from half a percent.
+            and not _hebrew_endpoint_is_a_fraction(text, lower_span[0], lower_span[1])
         ):
-            # A "בין" range ascends: "בין 500 ל־3 אחוזים" is no range of
-            # rates; "יופחת מ־5 ל־3 אחוזים" decreases and is one.
+            # A "בין" range of bare numbers ascends: "בין 500 ל־3 אחוזים"
+            # and "בין 500 לשלושה אחוזים" are no range of rates; "יופחת
+            # מ־5 ל־3 אחוזים" decreases and is one.
             continue
         if (
             needs_bound
