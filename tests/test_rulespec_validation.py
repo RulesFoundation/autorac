@@ -22652,6 +22652,35 @@ def test_a_mark_is_dropped_before_it_is_spaced_and_a_grouped_whole_is_read_whole
     ]
 
 
+def test_a_proof_excerpt_matches_across_a_space_after_a_maqaf():
+    # Income Tax Ordinance §66(ג)(4) as the corpus prints it sets a space
+    # after the maqaf ("ל־ 1⁄2 נקודת זיכוי"); the encoder's excerpt binds the
+    # fraction to the prefix ("ל־1⁄2"). Both quote the same text, so the
+    # excerpt is found. A dropped letter is still not.
+    source = (
+        "(4) האשה תהא זכאית ל־ 1⁄2 נקודת זיכוי לפי סעיף 36א, ובנוסף וכנגד המס "
+        "החל על הכנסתה מיגיעה אישית – לנקודות זיכוי בעד ילדיה כלהלן:"
+    )
+    for evidence, found in (
+        ("האשה תהא זכאית ל־1⁄2 נקודת זיכוי לפי סעיף 36א", True),
+        ("האשה תהא זכאית ל־ 1⁄2 נקודת זיכוי לפי סעיף 36א", True),
+        ("האשה תהא זכאית ל־1⁄2 נקודת זיכו לפי סעיף 36א", False),
+    ):
+        content = (
+            _corpus_checked_proof_content()
+            .replace("The official amount is $298.", repr(evidence))
+            .replace("$298", repr(evidence))
+            .replace("formula: '298'", "formula: '0.5'")
+        )
+        result = validate_rulespec_proofs(
+            content, source_texts={"us/guidance/example/page-1": source}
+        )
+        assert (
+            any("Proof source evidence not found" in issue for issue in result.issues)
+            is not found
+        ), (evidence, result.issues)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

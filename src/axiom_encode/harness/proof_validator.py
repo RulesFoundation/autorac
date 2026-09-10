@@ -547,6 +547,12 @@ def _validate_source_proof_atom(
     return issues
 
 
+# A maqaf (U+05BE) binds a prefix to the token after it; a source that sets a
+# space after the maqaf ("ל־ 1⁄2") and an excerpt that does not ("ל־1⁄2")
+# quote the same text.
+_MAQAF_SPACE_PATTERN = re.compile("\u05be\\s+")
+
+
 def _source_contains_proof_evidence(
     *,
     source_text: str,
@@ -555,11 +561,16 @@ def _source_contains_proof_evidence(
     normalized_evidence = re.sub(r"\s+", " ", evidence_text).strip()
     if not normalized_evidence:
         return False
+    maqaf_evidence = _MAQAF_SPACE_PATTERN.sub("\u05be", normalized_evidence)
     for segment in split_proof_evidence_text(source_text):
         if _bounded_source_evidence_match(evidence_text, segment):
             return True
         normalized_segment = re.sub(r"\s+", " ", segment).strip()
         if _bounded_source_evidence_match(normalized_evidence, normalized_segment):
+            return True
+        if "\u05be" in normalized_segment and _bounded_source_evidence_match(
+            maqaf_evidence, _MAQAF_SPACE_PATTERN.sub("\u05be", normalized_segment)
+        ):
             return True
     return False
 
