@@ -4300,6 +4300,11 @@ def _hebrew_spelled_endpoint_before(
     mixed = _hebrew_printed_mixed_count(text, run)
     if mixed is not None:
         return mixed[1], mixed[0]
+    # A printed count with a fraction word ("2 עשיריות") is one endpoint
+    # too: "בין 2 עשיריות לבין 3 אלפים אחוזים" runs from two tenths of it.
+    counted = _hebrew_printed_fraction_count(text, run)
+    if counted is not None:
+        return counted[1], counted[0]
     for width in range(len(run), 0, -1):
         words = [token.group(0) for token in run[-width:]]
         parsed = _parse_hebrew_number_run(words)
@@ -7091,19 +7096,17 @@ def _iter_hebrew_percent_range_lower_matches(
         # a small bare number omits the upper endpoint's scale. Under a
         # heading every printed member shares the scale ("השיעורים הם 900,
         # 1000 ו־1100 אלפים אחוזים"), and the shared-scale pass reads it.
+        # A fraction before a scaled upper endpoint, counted or not ("בין
+        # חצי לבין 3 אלפים אחוזים", "בין שלושה רבעים לבין 3 אלפים אחוזים"),
+        # takes the scale, which the shared-scale pass reads; a counted
+        # fraction's own scale word ("אלף עשיריות") is no shared scale, so
+        # a counted upper endpoint is never scaled here.
         lower_scaled = (
             lower_amount is not None
             or (
                 spelled_lower is not None
-                and (
-                    _hebrew_spelled_span_carries_a_scale(
-                        text, spelled_lower[0], lower_flush
-                    )
-                    # "500 עשיריות", "שתי עשיריות": a counted fraction is
-                    # complete on its own.
-                    or _hebrew_endpoint_is_a_fraction(
-                        text, spelled_lower[0], lower_flush
-                    )
+                and _hebrew_spelled_span_carries_a_scale(
+                    text, spelled_lower[0], lower_flush
                 )
             )
             or (
@@ -7358,9 +7361,22 @@ _EUROPEAN_MONEY_AMOUNT_PATTERN = re.compile(
 )
 # A hyphen after a Hebrew letter joins a prefix to the number ("ל-3%") and
 # is no sign; a sign no letter precedes still negates ("-3%").
-_PERCENTAGE_RAW_NUMBER_UNSIGNED = r"(?:\d{1,3}(?:[.\u00a0\u202f ]\d{3})+|\d+)(?:\s*[,.]\d{1,4})?|\d+\.\d+|(?<!\d)\.\d+"
+# A bidirectional formatting mark inside a numeric token ("−\u200f.5%",
+# "3\u200f%") is nothing to the reader.
+_BIDI_MARKS_FRAGMENT = r"[\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c]"
+# A comma-grouped number keeps its decimal part ("1,234.5"), read whole
+# before the plainer shapes, so no suffix of it is a number of its own.
+_PERCENTAGE_RAW_NUMBER_UNSIGNED = (
+    r"\d{1,3}(?:,\d{3})+\.\d+"
+    r"|(?:\d{1,3}(?:[.\u00a0\u202f ]\d{3})+|\d+)(?:\s*[,.]\d{1,4})?|\d+\.\d+|(?<!\d)\.\d+"
+)
+_BIDI_MARKS_PATTERN = re.compile(_BIDI_MARKS_FRAGMENT)
+_GROUPED_THOUSANDS_DECIMAL_PATTERN = re.compile(
+    r"-?\d{1,3}(?:,\d{3})+(?P<decimal>\.\d+)?"
+)
+_HEBREW_LETTER_PATTERN = re.compile("[\u0590-\u05ff]")
 _DIRECT_PERCENTAGE_PATTERN = re.compile(
-    rf"(?P<number>(?:(?<![\u05d0-\u05ea])[-\u2212])?(?:{_PERCENTAGE_RAW_NUMBER_UNSIGNED}))"
+    rf"(?P<number>(?:(?<![\u05d0-\u05ea\d.,])[-\u2212]{_BIDI_MARKS_FRAGMENT}*)?(?<![\d.,])(?:{_PERCENTAGE_RAW_NUMBER_UNSIGNED}){_BIDI_MARKS_FRAGMENT}*)"
     r"\s*(?:%|\bp\.?\s*c\.?\b)",
     re.IGNORECASE,
 )
@@ -11457,6 +11473,7 @@ def _iter_direct_percentage_rate_matches(
 ) -> list[tuple[tuple[int, int], float]]:
     values: list[tuple[tuple[int, int], float]] = []
     tokens: _HebrewWordTokens | None = None
+    hebrew_text = _HEBREW_LETTER_PATTERN.search(text) is not None
     for match in _DIRECT_PERCENTAGE_PATTERN.finditer(text):
         # The denominator of a fraction before the sign ("1/2%", "1 ⁄ 2%")
         # is no rate of its own; the fraction is read whole elsewhere. Nor
@@ -11479,8 +11496,17 @@ def _iter_direct_percentage_rate_matches(
             ):
                 continue
         # A Unicode minus signs the rate as the ASCII hyphen does ("−.5%",
-        # "−3.5%"); the span keeps the sign.
-        raw = match.group("number").replace("\u2212", "-")
+        # "−3.5%"), and a formatting mark inside the token is nothing; the
+        # span keeps them both.
+        raw = _BIDI_MARKS_PATTERN.sub("", match.group("number")).replace("\u2212", "-")
+        # A comma-grouped number with a decimal part ("1,234.5") is grouped
+        # thousands and a decimal, in any script; a comma-grouped number
+        # without one is so in Hebrew text ("1,234%" is 1,234 percent),
+        # where the comma never marks a decimal.
+        grouped = _GROUPED_THOUSANDS_DECIMAL_PATTERN.fullmatch(raw)
+        if grouped is not None and (grouped.group("decimal") or hebrew_text):
+            values.append((match.span("number"), float(raw.replace(",", "")) / 100))
+            continue
         for value in _iter_percentage_numeric_phrase_values(raw):
             values.append((match.span("number"), value / 100))
     return values
@@ -12575,6 +12601,18 @@ def _clean_source_text_for_numeric_extraction_tracked(
     tracked = tracked.sub(
         re.compile("[\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c](?=\\d|\\.\\d)"),
         " ",
+    )
+    # A mark inside a numeric token -- between a sign and its number
+    # ("−\u200f.5%") or after the number's last digit ("−.5\u200f%",
+    # "3\u200f אחוזים") -- carries no content and no boundary: it is
+    # dropped, so the sign and the unit stay the number's. A mark before a
+    # digit became a space above, so two digit runs never merge.
+    tracked = tracked.sub(
+        re.compile(
+            "(?<=[-\u2212])[\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c]+(?=\\d|\\.\\d)"
+            "|(?<=\\d)[\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c]+(?!\\d)"
+        ),
+        _blank_match,
     )
     # The shekel sign glued to its amount ("₪500") is detached the same way.
     tracked = tracked.sub(re.compile(r"([¢₵￠₦₪])(?=\d|\.\d)"), r"\1 ")

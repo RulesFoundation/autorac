@@ -22443,6 +22443,84 @@ def test_a_shared_scale_rate_range_descends_and_a_unicode_minus_and_a_mark_lead_
     assert [text[o.start : o.end] for o in occurrences] == ["−.5", ".5", ".25"]
 
 
+def test_marks_inside_a_number_a_fraction_before_a_scaled_endpoint_and_a_grouped_decimal():
+    # Review round 186 on #1585: a bidirectional mark inside a numeric token
+    # (between a sign and its number, or after its last digit) is nothing,
+    # in the cleaned text and in the direct percentage reader alike; a
+    # fraction before a scaled upper endpoint, counted or not, takes the
+    # scale through the shared-scale pass; and a comma-grouped number with
+    # a decimal part is read whole by the direct reader, no suffix of it a
+    # number of its own, a comma-grouped whole in Hebrew text being grouped
+    # thousands.
+    import math
+
+    for text, expected in (
+        ("השיעור הוא −\u200f.5%", [-0.005]),
+        ("השיעור הוא −.5\u200f%", [-0.005]),
+        ("השיעור הוא 3\u200f%", [0.03]),
+        ("השיעור הוא −\u200f3.5%", [-0.035]),
+        ("השיעור הוא 3\u200f אחוזים", [0.03]),
+        ("הסכום הוא 500\u200f600 שקלים", [500.0, 600.0]),
+        ("הסכום הוא ₪\u200f500", [500.0]),
+        ("שיעור המס יהיה בין חצי לבין 3 אלפים אחוזים", [5.0, 30.0]),
+        ("שיעור המס יהיה בין רבע לבין 3 אלפים אחוזים", [2.5, 30.0]),
+        ("שיעור המס יהיה בין שלושה רבעים לבין 3 אלפים אחוזים", [7.5, 30.0]),
+        ("שיעור המס יהיה בין 2 עשיריות לבין 3 אלפים אחוזים", [2.0, 30.0]),
+        ("שיעור המס יהיה בין .5 לבין 3 אלפים אחוזים", [5.0, 30.0]),
+        ("שיעור המס יהיה בין ½ לבין 3 אלפים אחוזים", [5.0, 30.0]),
+        ("הסכום יהיה בין חצי לבין 3 מיליון שקלים", [500_000.0, 3_000_000.0]),
+        ("שיעור המס יהיה בין חצי לשלושה רבעים האחוז", [0.005, 0.0075]),
+        ("שיעור המס יהיה בין 500 עשיריות לאלף עשיריות האחוז", [0.5, 1.0]),
+        ("השיעור הוא 1,234.5%", [12.345]),
+        ("השיעור הוא −1,234.5%", [-12.345]),
+        ("The rate is 1,234.5%", [12.345]),
+        ("השיעור הוא 1,234%", [12.34]),
+        ("השיעור הוא 12.5%", [0.125]),
+        ("השיעור הוא 1,234.5 אחוזים", [12.345]),
+    ):
+        values = sorted(_hebrew_recall(text))
+        assert len(values) == len(expected) and all(
+            math.isclose(value, want, rel_tol=1e-9)
+            for value, want in zip(values, expected, strict=True)
+        ), (text, values)
+        found = extract_numbers_from_text(text)
+        assert all(
+            any(math.isclose(value, want, rel_tol=1e-9) for value in found)
+            for want in expected
+        ), (text, found)
+    for text, grounded, ungrounded in (
+        ("השיעור הוא −\u200f.5%", "-0.005", "0.005"),
+        ("השיעור הוא −.5\u200f%", "-0.005", "0.5"),
+        ("שיעור המס יהיה בין חצי לבין 3 אלפים אחוזים", "5", "0.005"),
+        ("שיעור המס יהיה בין שלושה רבעים לבין 3 אלפים אחוזים", "7.5", "0.0075"),
+        ("השיעור הוא 1,234.5%", "12.345", "2.345"),
+        ("השיעור הוא −1,234.5%", "-12.345", "2.345"),
+    ):
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+    text = "השיעור הוא −\u200f.5% ואחר כך 1,234.5% ואז 3\u200f%"
+    occurrences = sorted(
+        extract_typed_numeric_inventory_occurrences_from_text(text),
+        key=lambda occurrence: occurrence.start,
+    )
+    assert [occurrence.value for occurrence in occurrences] == [-0.005, 12.345, 0.03]
+    # A dropped mark stays inside the source span it was dropped from.
+    assert [text[o.start : o.end] for o in occurrences] == [
+        "−\u200f.5",
+        "1,234.5",
+        "3\u200f",
+    ]
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
