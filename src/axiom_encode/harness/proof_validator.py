@@ -555,7 +555,9 @@ def _validate_source_proof_atom(
 # A line ends in "\r\n", "\r" or "\n" (a Windows, a classic Mac or a Unix
 # source, or one that mixes them), as the numeric cleaner reads it, so a bare
 # carriage return is a line wrap and two line ends in a row are a blank line.
-_LINE_BREAK_FRAGMENT = "(?:\\r\\n|\\r|\\n)"
+# A bare carriage return is one only when no newline follows, so a CRLF is one
+# line end to a pattern that backtracks, never a CR and an LF that make a gap.
+_LINE_BREAK_FRAGMENT = "(?:\\r\\n|\\r(?!\\n)|\\n)"
 _HORIZONTAL_EVIDENCE_SPACE_FRAGMENT = (
     "[ \\t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]"
 )

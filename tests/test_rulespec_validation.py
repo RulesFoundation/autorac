@@ -22982,6 +22982,126 @@ def test_evidence_whitespace_collapses_in_linear_time():
         assert time.perf_counter() - started < 0.5, width
 
 
+def test_raw_percent_readers_read_wrap_space_after_a_maqaf_as_the_bound_readers_do():
+    # Gate round 6 on #1615: the direct-percentage reader runs on the raw
+    # text, where a bare carriage return was no wrap space to the fractional
+    # tail after a rate ("2.5% ו־\rחצי" read 2.5 and 3 percent) and a fixed
+    # six-character look-back missed the conjunction before a printed
+    # remainder set eight spaces after its maqaf ("3 אלפים ו־        250%"
+    # read 2.5 percent as a rate of its own). Every wrap-space spelling the
+    # evidence binding accepts after a maqaf reads as the bound text does,
+    # in grounding and inventory alike, so an accepted excerpt states no
+    # number its source does not.
+    import json
+    import textwrap as tw
+
+    from axiom_encode.harness.proof_validator import _source_contains_proof_evidence
+    from axiom_encode.harness.validator_pipeline import (
+        _source_evidence_fragment_is_body_bound,
+    )
+
+    def scoped(source, excerpt, formula):
+        content = tw.dedent(
+            f"""
+            format: rulespec/v1
+            rules:
+              - name: rate
+                kind: parameter
+                dtype: Decimal
+                metadata:
+                  proof:
+                    atoms:
+                      - path: versions[0].formula
+                        kind: parameter
+                        source:
+                          corpus_citation_path: il/statute/example/rate
+                          excerpt: {json.dumps(excerpt, ensure_ascii=False)}
+                versions:
+                  - effective_from: '2026-01-01'
+                    formula: {formula}
+            """
+        ).strip()
+        return find_ungrounded_numeric_issues_scoped(
+            content,
+            module_source_text="",
+            proof_source_texts={"il/statute/example/rate": source},
+        ), validate_rulespec_proofs(
+            content, source_texts={"il/statute/example/rate": source}
+        ).passed
+
+    from axiom_encode.harness.validator_pipeline import _PARAGRAPH_GAP_PATTERN
+
+    # A CRLF is one line end to a pattern that backtracks, never a CR and
+    # an LF that make a blank line; two line ends in any mix are one.
+    assert _PARAGRAPH_GAP_PATTERN.search("\r\n") is None
+    assert _PARAGRAPH_GAP_PATTERN.search("\r") is None
+    for gap in ("\r\r", "\n\r", "\r\n\r", "\r\r\n", "\r\n\r\n", "\n\n"):
+        assert _PARAGRAPH_GAP_PATTERN.search(gap) is not None, repr(gap)
+
+    sources = {
+        "השיעור הוא 2.5% ו־חצי.": ([0.03], "0.03", "0.025"),
+        "השיעור הוא 3 אלפים ו־250%.": ([32.5], "32.5", "2.5"),
+        "השיעור הוא עשרים ו־שלושה אחוזים.": ([0.23], "0.23", "0.03"),
+    }
+    spacings = (
+        " ",
+        "  ",
+        " " * 8,
+        " " * 20,
+        "\t",
+        "\u00a0",
+        "\r",
+        "\r\n",
+        "\n",
+        " \n ",
+        " \r ",
+    )
+    for source, (values, stated, unstated) in sources.items():
+        assert sorted(extract_numbers_from_text(source)) == values, source
+        assert sorted(_hebrew_recall(source)) == values, source
+        for spacing in spacings:
+            excerpt = source.replace("\u05be", "\u05be" + spacing)
+            label = (source, repr(spacing))
+            assert _source_contains_proof_evidence(
+                source_text=source, evidence_text=excerpt
+            ), label
+            assert _source_evidence_fragment_is_body_bound(excerpt, source), label
+            assert sorted(extract_numbers_from_text(excerpt)) == values, (
+                *label,
+                sorted(extract_numbers_from_text(excerpt)),
+            )
+            assert sorted(_hebrew_recall(excerpt)) == values, (
+                *label,
+                sorted(_hebrew_recall(excerpt)),
+            )
+            issues, passed = scoped(source, excerpt, stated)
+            assert (issues, passed) == ([], True), (*label, issues)
+            issues, passed = scoped(source, excerpt, unstated)
+            assert passed and len(issues) == 1, (*label, issues)
+    # The readers that run on the raw text see the bound form too: a
+    # schedule ordinal after a spaced maqaf stays a name and a reference
+    # count stays a reference in the recall inventory, and grounding is
+    # the source's for every spelling.
+    for source, recall in (
+        ("לפי התוספת ה־שנייה ישולם סכום של 100 שקלים", [100.0]),
+        ("לפי התוספות ה-שנייה, ה־שלישית וה-רביעית ישולם סכום של 100 שקלים", [100.0]),
+        ("תוספת 2 עד כ־3 שקלים", [2.0, 3.0]),
+    ):
+        assert sorted(_hebrew_recall(source)) == recall, source
+        grounding = sorted(extract_numbers_from_text(source))
+        for spacing in spacings:
+            excerpt = source.replace("\u05be", "\u05be" + spacing)
+            assert sorted(_hebrew_recall(excerpt)) == recall, (
+                source,
+                repr(spacing),
+                sorted(_hebrew_recall(excerpt)),
+            )
+            assert sorted(extract_numbers_from_text(excerpt)) == grounding, (
+                source,
+                repr(spacing),
+            )
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

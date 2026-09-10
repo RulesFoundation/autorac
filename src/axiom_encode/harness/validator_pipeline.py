@@ -1941,8 +1941,18 @@ _HEBREW_TEEN_TENS_WORDS = ("עשר", "עשרה")
 # A blank line, a form feed or a Unicode line or paragraph separator ends a
 # paragraph; number words never compose across one ("שלושה\n\nעשר" is
 # three, then ten), while a single line wrap joins them.
+# A line ends in "\r\n", "\r" or "\n" (a Windows, a classic Mac or a Unix
+# source, or one that mixes them), so a bare carriage return is a line end
+# to the readers that run before the cleaner normalizes it. A bare carriage
+# return is one only when no newline follows, so a CRLF is one line end to
+# a pattern that backtracks, never a CR and an LF that make a blank line.
+_LINE_END_FRAGMENT = "(?:\\r\\n|\\r(?!\\n)|\\n)"
 _PARAGRAPH_GAP_FRAGMENT = (
-    "(?:[\\u2028\\u2029\\x0b\\x0c\\x85]|\\r?\\n[^\\S\\r\\n]*\\r?\\n)"
+    "(?:[\\u2028\\u2029\\x0b\\x0c\\x85]|"
+    + _LINE_END_FRAGMENT
+    + "[^\\S\\r\\n]*"
+    + _LINE_END_FRAGMENT
+    + ")"
 )
 _PARAGRAPH_GAP_PATTERN = re.compile(_PARAGRAPH_GAP_FRAGMENT)
 _HORIZONTAL_SPACE_FRAGMENT = "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]"
@@ -1956,9 +1966,13 @@ _HORIZONTAL_SPACE_FRAGMENT = "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\
 _WRAP_SPACE_FRAGMENT = (
     "(?:"
     + _HORIZONTAL_SPACE_FRAGMENT
-    + "|\\r?\\n(?!"
+    + "|"
+    + _LINE_END_FRAGMENT
+    + "(?!"
     + _HORIZONTAL_SPACE_FRAGMENT
-    + "*\\r?\\n))"
+    + "*"
+    + _LINE_END_FRAGMENT
+    + "))"
 )
 _HEBREW_TEEN_SEPARATOR_PATTERN = (
     "(?:(?!\\s*" + _PARAGRAPH_GAP_FRAGMENT + ")\\s+|\\s*[-\\u05be]\\s*)"
@@ -10859,9 +10873,11 @@ def _call_body_contains_any(
 def _extract_legacy_grounding_values(text: str) -> set[float]:
     """Extract numeric values from embedded statute text."""
     implied_cents_matches = _iter_form_implied_cents_matches(text)
-    original_text = _FORM_IMPLIED_CENTS_PATTERN.sub(
-        lambda match: " " * len(match.group(0)),
-        text,
+    original_text = _bind_hebrew_source_text(
+        _FORM_IMPLIED_CENTS_PATTERN.sub(
+            lambda match: " " * len(match.group(0)),
+            text,
+        )
     )
     two_line_table_occurrences = _extract_two_line_table_value_occurrences(text)
     text = _clean_source_text_for_numeric_extraction(original_text)
@@ -11507,8 +11523,14 @@ def _iter_direct_percentage_rate_matches(
         tail = _HEBREW_PERCENT_TAIL_AFTER_PATTERN.match(text, match.end())
         if tail is not None and not _HEBREW_UNIT_AFTER_PATTERN.match(text, tail.end()):
             continue
-        if _HEBREW_PRINTED_REMAINDER_JOIN_BEFORE_PATTERN.search(
-            text, max(0, match.start("number") - 6), match.start("number")
+        # The join is read before the wrap space, whatever its width, as
+        # the continuation check reads it: "ו־" eight spaces before "250"
+        # joins as "ו־250" does.
+        if _search_before(
+            _HEBREW_PRINTED_REMAINDER_JOIN_BEFORE_PATTERN,
+            text,
+            match.start("number"),
+            6,
         ):
             if tokens is None:
                 tokens = _HebrewWordTokens(text)
@@ -12587,6 +12609,34 @@ def _hebrew_close_prefix_maqaf_space(
     )
 
 
+_CARRIAGE_RETURN_PATTERN = re.compile("\r\n?")
+
+
+def _normalize_line_end(match: "re.Match[str]") -> str:
+    """A CRLF becomes a space and a newline, keeping its width; a bare CR the newline it is."""
+    return " \n" if match.group(0) == "\r\n" else "\n"
+
+
+def _bind_hebrew_source_text_tracked(tracked: _TrackedText) -> _TrackedText:
+    """Read line ends and the wrap space after a maqaf as the cleaner reads them.
+
+    The readers that run on the raw text -- the direct-percentage and money
+    matchers, the structural reference passes -- see a bare carriage return
+    as the line end it is and a prefix's maqaf bound to the token after it
+    across wrap space, as every reader of the cleaned text does, so no
+    spelling of the space after a maqaf changes what a text states. Each
+    character keeps its offset.
+    """
+    tracked = tracked.sub(_CARRIAGE_RETURN_PATTERN, _normalize_line_end)
+    return tracked.rewrite_mapped(
+        _HEBREW_PREFIX_MAQAF_SPACE_PATTERN, _hebrew_close_prefix_maqaf_space
+    )
+
+
+def _bind_hebrew_source_text(text: str) -> str:
+    return _bind_hebrew_source_text_tracked(_TrackedText.identity(text)).text
+
+
 def _hebrew_attach_prefix_cluster(
     match: "re.Match[str]",
 ) -> list[tuple[str, int | None]]:
@@ -12658,9 +12708,7 @@ def _clean_source_text_for_numeric_extraction_tracked(
     # so the line-level cleaners see the same lines as the author. The
     # escaped literals a JSON-embedded source carries ("\\r\\n", "\\t") become
     # their character right-aligned in their slot.
-    tracked = tracked.sub(
-        re.compile("\r\n?"), lambda m: " \n" if m.group(0) == "\r\n" else "\n"
-    )
+    tracked = tracked.sub(_CARRIAGE_RETURN_PATTERN, _normalize_line_end)
     tracked = tracked.sub(
         re.compile(r"\\r\\n|\\n|\\r"), lambda m: " " * (len(m.group(0)) - 1) + "\n"
     )
@@ -13122,9 +13170,11 @@ def _extract_two_line_table_value_occurrences(text: str) -> list[float]:
 def _extract_legacy_inventory_values(text: str) -> list[float]:
     """Extract substantive numeric occurrences from source text, preserving repeats."""
     implied_cents_matches = _iter_form_implied_cents_matches(text)
-    raw_text = _FORM_IMPLIED_CENTS_PATTERN.sub(
-        lambda match: " " * len(match.group(0)),
-        text,
+    raw_text = _bind_hebrew_source_text(
+        _FORM_IMPLIED_CENTS_PATTERN.sub(
+            lambda match: " " * len(match.group(0)),
+            text,
+        )
     )
     two_line_table_occurrences = _extract_two_line_table_value_occurrences(text)
     cleaned = _clean_source_text_for_numeric_extraction(raw_text)
@@ -13798,9 +13848,11 @@ def _fallback_numeric_occurrence(text: str, value: float) -> NumericOccurrence:
 
 def _legacy_surface_numeric_occurrences(text: str) -> list[NumericOccurrence]:
     """Return exact-span surface candidates used to type legacy numeric values."""
-    raw_text = _FORM_IMPLIED_CENTS_PATTERN.sub(
-        lambda match: " " * len(match.group(0)),
-        text,
+    raw_text = _bind_hebrew_source_text(
+        _FORM_IMPLIED_CENTS_PATTERN.sub(
+            lambda match: " " * len(match.group(0)),
+            text,
+        )
     )
     cleaned = _clean_source_text_for_numeric_extraction(raw_text)
     _, cleaned = _extract_collapsed_schedule_row_occurrences(cleaned)
@@ -14075,15 +14127,27 @@ class _LegacyNumericCollector:
     structural_component_spans: tuple[tuple[int, int], ...] = field(init=False)
     structural_component_span_starts: tuple[int, ...] = field(init=False)
     structural_component_prefix_max_ends: tuple[int, ...] = field(init=False)
+    context_text: str = field(init=False)
     context_boundaries: _NumericContextBoundaries = field(init=False)
     money_spans: tuple[tuple[int, int], ...] = field(init=False)
 
     def __post_init__(self) -> None:
+        # Context is classified on the text with its line ends and the wrap
+        # space after a prefix's maqaf as the cleaner reads them -- the same
+        # width, so every span is a span in the source -- so a schedule
+        # ordinal after "ה־ " is the reference it is after "ה־", and a rate
+        # or currency marker across a spaced maqaf is seen. The raw slice of
+        # an occurrence stays the source's own.
+        self.context_text = (
+            self.source
+            if self.profile == "da-DK"
+            else _bind_hebrew_source_text(self.source)
+        )
         self.rate_table_cell_spans = (
             ()
             if self.profile == "da-DK"
             else _pipe_table_rate_cell_spans(
-                self.source,
+                self.context_text,
                 profile=self.profile,
             )
         )
@@ -14091,9 +14155,11 @@ class _LegacyNumericCollector:
             self.rate_table_cell_span_starts,
             self.rate_table_cell_prefix_max_ends,
         ) = _span_containment_index(self.rate_table_cell_spans)
-        self.temporal_component_spans = _temporal_numeric_component_spans(self.source)
+        self.temporal_component_spans = _temporal_numeric_component_spans(
+            self.context_text
+        )
         self.structural_component_spans = _structural_numeric_component_spans(
-            self.source,
+            self.context_text,
             profile=self.profile,
         )
         (
@@ -14107,23 +14173,25 @@ class _LegacyNumericCollector:
         )
         money_spans = {
             span
-            for span, _value in _iter_raw_european_money_value_matches(self.source)
+            for span, _value in _iter_raw_european_money_value_matches(
+                self.context_text
+            )
             if self.profile != "da-DK"
             or _currency_marker_before_number(
-                self.source,
+                self.context_text,
                 span[0],
                 profile=self.profile,
                 boundaries=self.context_boundaries,
             )
             or _currency_marker_after_number(
-                self.source,
+                self.context_text,
                 span[1],
                 profile=self.profile,
                 boundaries=self.context_boundaries,
             )
         }
         shared_rate_spans: set[tuple[int, int]] = set()
-        for match in _TEMPORAL_YEAR_RANGE_PATTERN.finditer(self.source):
+        for match in _TEMPORAL_YEAR_RANGE_PATTERN.finditer(self.context_text):
             endpoint_spans = (match.span("start"), match.span("end"))
             has_money_context = (
                 any(
@@ -14133,7 +14201,7 @@ class _LegacyNumericCollector:
                 )
                 or bool(
                     _currency_marker_before_number(
-                        self.source,
+                        self.context_text,
                         match.start(),
                         profile=self.profile,
                         boundaries=self.context_boundaries,
@@ -14141,7 +14209,7 @@ class _LegacyNumericCollector:
                 )
                 or bool(
                     _currency_marker_after_number(
-                        self.source,
+                        self.context_text,
                         match.end(),
                         profile=self.profile,
                         boundaries=self.context_boundaries,
@@ -14151,7 +14219,7 @@ class _LegacyNumericCollector:
             if has_money_context:
                 money_spans.update(endpoint_spans)
             if _local_rate_context_after_number(
-                self.source,
+                self.context_text,
                 match.end(),
                 profile=self.profile,
                 boundaries=self.context_boundaries,
@@ -14187,7 +14255,7 @@ class _LegacyNumericCollector:
         has_rate_context = (
             force_rate_context
             or _local_rate_context_after_number(
-                self.source,
+                self.context_text,
                 end,
                 profile=self.profile,
                 boundaries=self.context_boundaries,
@@ -14205,7 +14273,7 @@ class _LegacyNumericCollector:
             )
             or bool(
                 _currency_marker_before_number(
-                    self.source,
+                    self.context_text,
                     start,
                     profile=self.profile,
                     boundaries=self.context_boundaries,
@@ -14213,7 +14281,7 @@ class _LegacyNumericCollector:
             )
             or bool(
                 _currency_marker_after_number(
-                    self.source,
+                    self.context_text,
                     end,
                     profile=self.profile,
                     boundaries=self.context_boundaries,
@@ -15599,15 +15667,27 @@ def _tokenize_numeric_occurrences_from_text(
     collector = _LegacyNumericCollector(text)
     source_view = _NumericTextView.identity(text)
     implied_cents_matches = _iter_form_implied_cents_matches(text)
-    raw_text = _FORM_IMPLIED_CENTS_PATTERN.sub(
-        lambda match: " " * len(match.group(0)),
-        text,
+    raw_tracked = _bind_hebrew_source_text_tracked(
+        _TrackedText.identity(text).sub(
+            _FORM_IMPLIED_CENTS_PATTERN,
+            lambda match: " " * len(match.group(0)),
+        )
     )
-    raw_view = _NumericTextView.aligned(text, raw_text)
+    raw_text = raw_tracked.text
+    raw_view = _NumericTextView.tracked(text, raw_tracked)
     two_line_table_matches = _iter_two_line_table_value_occurrences(text)
-    # raw_text is text with implied-cents runs blanked in place, so offsets
-    # carried through the cleaning of raw_text are offsets into text.
+    # raw_text is text with implied-cents runs blanked in place and its line
+    # ends and maqaf wrap space read as the cleaner reads them, each
+    # character carrying its offset into text; offsets carried through the
+    # cleaning of raw_text are offsets into raw_text, composed here.
     cleaned_tracked = _clean_source_text_for_numeric_extraction_tracked(raw_text)
+    cleaned_tracked = _TrackedText(
+        cleaned_tracked.text,
+        [
+            None if offset is None else raw_tracked.offsets[offset]
+            for offset in cleaned_tracked.offsets
+        ],
+    )
     cleaned_before_schedule = cleaned_tracked.text
     cleaned_before_schedule_view = _NumericTextView.tracked(text, cleaned_tracked)
     schedule_matches, cleaned = _iter_collapsed_schedule_row_occurrences(
