@@ -2090,8 +2090,10 @@ _HEBREW_MIXED_FRACTION_VALUES = {
 # number: "אחד ושני שלישים" is one and two thirds.
 _HEBREW_COUNTED_FRACTION_VALUES = {
     "שלישים": 1.0 / 3.0,
+    "שלישיות": 1.0 / 3.0,
     "שלישי": 1.0 / 3.0,
     "רבעים": 0.25,
+    "רביעיות": 0.25,
     "רבעי": 0.25,
     "חמישיות": 0.2,
     "שישיות": 1.0 / 6.0,
@@ -3367,10 +3369,10 @@ def _hebrew_fraction_count_before(
     if not run:
         # A printed count flush before the word: "3 עשיריות" is three
         # tenths, "ל־3 רבעי השכר" three quarters of the wage.
-        printed = _hebrew_printed_count_before(text, position)
-        if printed is not None:
-            return printed
-    return None
+        return _hebrew_printed_count_before(text, position)
+    # A printed whole and a spelled tail before the word: "3 וחצי עשיריות"
+    # is three and a half tenths.
+    return _hebrew_printed_mixed_count(text, run)
 
 
 def _hebrew_printed_count_before(text: str, position: int) -> tuple[float, int] | None:
@@ -3509,11 +3511,24 @@ def _iter_hebrew_fraction_word_readings(
             ((start, match.end("fraction")), value, bool(count) or counted is not None)
         )
     # A vav-bound fraction word that is the tail of a rate before it ("שלושה%
-    # וחצי") is read with the rate by the percent passes.
+    # וחצי") is read with the rate by the percent passes; one inside a
+    # counted fraction's count ("וחצי" of "3 וחצי עשיריות") is that count's.
+    counted_spans = sorted(span for span, _, is_counted in matches if is_counted)
+    counted_starts = [span[0] for span in counted_spans]
+
+    def inside_a_count(span: tuple[int, int]) -> bool:
+        index = bisect_right(counted_starts, span[0]) - 1
+        while index >= 0 and counted_spans[index][1] > span[0]:
+            if counted_spans[index] != span and counted_spans[index][1] >= span[1]:
+                return True
+            index -= 1
+        return False
+
     return [
         (span, value, counted)
         for span, value, counted in matches
         if not _hebrew_fraction_word_is_percent_tail(text, span)
+        and not inside_a_count(span)
     ]
 
 
@@ -3728,19 +3743,29 @@ def _hebrew_printed_fraction_count(
     """A printed count and a fraction word before the percent noun.
 
     "3 עשיריות האחוז" is three tenths of a percent, "3 עשיריות של האחוז"
-    too: the run before the noun is the fraction word, then any partitive,
-    and the printed count sits flush before it. Returns (count, start of
-    the count) or None.
+    too, and "3 וחצי עשיריות האחוז" three and a half tenths: the run
+    before the noun is the fraction word, then any partitive, and the
+    printed count -- with its spelled tail, if any -- sits flush before
+    it. Returns (count, start of the count) or None.
     """
+    if not run:
+        return None
     end = len(run)
     while end > 1 and run[end - 1].group(0) in _HEBREW_FRACTION_PARTITIVE_WORDS:
         end -= 1
-    if end != 1 or run[0].group(0) not in _HEBREW_COUNTED_FRACTION_VALUES:
+    word = run[end - 1].group(0)
+    if word not in _HEBREW_COUNTED_FRACTION_VALUES:
         return None
-    printed = _hebrew_printed_count_before(text, run[0].start())
+    # The count is the printed number flush before the fraction word, or
+    # a printed whole and its spelled tail ("3 וחצי עשיריות האחוז").
+    printed = (
+        _hebrew_printed_count_before(text, run[0].start())
+        if end == 1
+        else _hebrew_printed_mixed_count(text, run[: end - 1])
+    )
     if printed is None:
         return None
-    return printed[0] * _HEBREW_COUNTED_FRACTION_VALUES[run[0].group(0)], printed[1]
+    return printed[0] * _HEBREW_COUNTED_FRACTION_VALUES[word], printed[1]
 
 
 def _iter_hebrew_percent_phrase_matches(
@@ -5131,16 +5156,30 @@ _HEBREW_PRINTED_MIXED_NUMBER_PATTERN = re.compile(
 )
 
 
+# A counted fraction word after a number makes the number its count: "3 וחצי
+# עשיריות" is three and a half tenths, read by the fraction reader.
+_HEBREW_COUNTED_FRACTION_AFTER_PATTERN = re.compile(
+    _WRAP_SPACE_FRAGMENT
+    + "+(?:"
+    + _hebrew_alternation(_HEBREW_COUNTED_FRACTION_VALUES)
+    + ")(?![\u0590-\u05ff])"
+)
+
+
 def _iter_hebrew_printed_mixed_number_matches(
     text: str,
 ) -> list[tuple[tuple[int, int], float, bool]]:
     """Printed wholes with spelled fractional tails: (span, value, is a rate).
 
     A percent marker right after the tail ("3 וחצי%") makes the number a
-    rate, marker included in the span.
+    rate, marker included in the span. A counted fraction word after the
+    tail makes the number a count ("3 וחצי עשיריות"), the fraction
+    reader's to read.
     """
     matches: list[tuple[tuple[int, int], float, bool]] = []
     for match in _HEBREW_PRINTED_MIXED_NUMBER_PATTERN.finditer(text):
+        if _HEBREW_COUNTED_FRACTION_AFTER_PATTERN.match(text, match.end()):
+            continue
         value = float(match.group("whole").replace(",", ""))
         if match.group("tail"):
             value += _HEBREW_MIXED_FRACTION_VALUES[match.group("tail")]
@@ -5149,7 +5188,7 @@ def _iter_hebrew_printed_mixed_number_matches(
                 _HEBREW_FRACTION_COUNT_VALUES[match.group("tail_count")]
                 * _HEBREW_COUNTED_FRACTION_VALUES[match.group("tail_fraction")]
             )
-        marker = _PERCENT_MARKER_AFTER_NUMBER_PATTERN.match(text, match.end())
+        marker = _PERCENT_MARKER_AFTER_NUMBER_WRAP_PATTERN.match(text, match.end())
         if marker is not None:
             # The tail after the marker is the rate's too, unless a unit of
             # its own follows: "3 וחצי% וחצי" is four percent.
@@ -7217,6 +7256,13 @@ _DIRECT_PERCENTAGE_PATTERN = re.compile(
 )
 _PERCENT_MARKER_AFTER_NUMBER_PATTERN = re.compile(
     r"\s*(?:%|\bp\.?\s*c\.?\b)",
+    re.IGNORECASE,
+)
+# The same marker across wrap space only: a blank line or a paragraph
+# separator between a figure and "%" leaves the figure a figure ("3 וחצי"
+# before a blank line and a sign is three and a half, not a rate).
+_PERCENT_MARKER_AFTER_NUMBER_WRAP_PATTERN = re.compile(
+    _WRAP_SPACE_FRAGMENT + r"*(?:%|\bp\.?\s*c\.?\b)",
     re.IGNORECASE,
 )
 _LOCAL_RATE_CONTEXT_AFTER_NUMBER_PATTERN = re.compile(
@@ -15664,7 +15710,7 @@ def _tokenize_numeric_occurrences_from_text(
             if match.group("sign"):
                 value = -value
             span = match.span()
-            marker = _PERCENT_MARKER_AFTER_NUMBER_PATTERN.match(
+            marker = _PERCENT_MARKER_AFTER_NUMBER_WRAP_PATTERN.match(
                 cleaned, match.end()
             ) or _HEBREW_PERCENT_WORD_PATTERN.match(cleaned, match.end())
             if marker is not None:
@@ -15711,7 +15757,7 @@ def _tokenize_numeric_occurrences_from_text(
                 grounding_spans.append(match.span())
                 continue
             if (
-                _PERCENT_MARKER_AFTER_NUMBER_PATTERN.match(cleaned, match.end())
+                _PERCENT_MARKER_AFTER_NUMBER_WRAP_PATTERN.match(cleaned, match.end())
                 or _LOCAL_RATE_CONTEXT_AFTER_NUMBER_PATTERN.match(cleaned, match.end())
                 or _HEBREW_PERCENT_WORD_PATTERN.match(cleaned, match.end())
             ):
@@ -15721,7 +15767,7 @@ def _tokenize_numeric_occurrences_from_text(
                 # printed figure grounds as well, for an encoding that states
                 # the percentage and divides itself.
                 span = match.span()
-                marker = _PERCENT_MARKER_AFTER_NUMBER_PATTERN.match(
+                marker = _PERCENT_MARKER_AFTER_NUMBER_WRAP_PATTERN.match(
                     cleaned, match.end()
                 ) or _HEBREW_PERCENT_WORD_PATTERN.match(cleaned, match.end())
                 if marker is not None:

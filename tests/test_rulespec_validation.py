@@ -21806,6 +21806,61 @@ def test_a_printed_count_counts_a_fraction_word_and_a_mixed_number_is_the_gramma
         ), (text, issue)
 
 
+def test_the_plural_fraction_words_agree_and_a_printed_mixed_count_counts():
+    # Review round 174 on #1585: the counted-fraction vocabulary carries
+    # every plural the fraction table does, so "שלוש רביעיות" and "שתי
+    # שלישיות" keep their counts; a printed whole with a spelled tail
+    # ("3 וחצי") is a count before a fraction word, in the fraction reader
+    # and the percent-phrase reader, and is not read again on its own; and
+    # the percent sign after a printed figure binds across wrap space only.
+    import math
+
+    for text, expected in (
+        ("העובד זכאי לשלוש רביעיות מהשכר", 0.75),
+        ("העובד זכאי לשתי שלישיות מהשכר", 2 / 3),
+        ("השיעור הוא שלוש רביעיות האחוז", 0.0075),
+        ("השיעור הוא אחת עשרה שלישיות האחוז", 11 / 3 / 100),
+        ("השיעור הוא 3 וחצי עשיריות האחוז", 0.0035),
+        ("השיעור הוא 3 וחצי עשיריות של האחוז", 0.0035),
+        ("השיעור הוא 3 ושלושה רבעים עשיריות האחוז", 0.00375),
+        ("העובד זכאי ל־3 וחצי עשיריות מהשכר", 0.35),
+        ("העובד זכאי ל־3 ושלושה רבעים עשיריות מהשכר", 0.375),
+        ("השיעור הוא 3.5 עשיריות האחוז", 0.0035),
+        ("השיעור הוא שלוש וחצי עשיריות האחוז", 0.0035),
+        ("3 וחצי נקודות זיכוי", 3.5),
+        ("3 וחצי %", 0.035),
+        ("3 וחצי\n%", 0.035),
+        ("3 וחצי% וחצי", 0.04),
+    ):
+        (value,) = _hebrew_recall(text)
+        assert math.isclose(value, expected, rel_tol=1e-9), text
+        (value,) = extract_numbers_from_text(text)
+        assert math.isclose(value, expected, rel_tol=1e-9), text
+    for text, expected, grounded, ungrounded in (
+        ("העובד זכאי לשלוש רביעיות מהשכר", 0.75, "0.75", "0.25"),
+        ("העובד זכאי לשתי שלישיות מהשכר", 2 / 3, "0.6666666667", "0.3333333333"),
+        ("השיעור הוא 3 וחצי עשיריות האחוז", 0.0035, "0.0035", "0.001"),
+        ("העובד זכאי ל־3 וחצי עשיריות מהשכר", 0.35, "0.35", "0.5"),
+        ("3 וחצי\n\n%", 3.5, "3.5", "0.035"),
+        ("3 וחצי\u2029%", 3.5, "3.5", "0.035"),
+    ):
+        (value,) = _hebrew_recall(text)
+        assert math.isclose(value, expected, rel_tol=1e-9), text
+        (value,) = extract_numbers_from_text(text)
+        assert math.isclose(value, expected, rel_tol=1e-9), text
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
