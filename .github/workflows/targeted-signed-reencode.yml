@@ -508,12 +508,12 @@ jobs:
              { jq -e 'length > 0' <<< "$source_bundle_json" > /dev/null && \
                jq -e 'length > 0' <<< "$primary_required_test_cases_json" \
                  > /dev/null; } || \
-             ! jq -e 'type == "array" and length == 0' \
+             ! jq -e 'type == "array" and all(.[]; type == "string" and length > 0)' \
                <<< "${EXISTING_SIGNED_IMPORTS_JSON:-[]}" > /dev/null || \
              ! jq -e 'type == "array" and length == 0' \
                <<< "${LEGACY_RETAINED_SUCCESSOR_RULESPEC_PATHS_JSON:-[]}" \
                > /dev/null; then
-            echo "repair replay is limited to one non-legacy target and at most one direct dependent, with at most one exact source or test bundle and without refreshes, imports, second dependents, or queue authorization" >&2
+            echo "repair replay is limited to one non-legacy target and at most one direct dependent, with at most one exact source or test bundle, artifact-bound imports, and without refreshes, second dependents, or queue authorization" >&2
             exit 1
           fi
 
@@ -585,6 +585,7 @@ jobs:
             --rulespec-ref "$RULESPEC_REF" \
             --allow-rulespec-base-advance \
             --atomic-source-json "$ATOMIC_SOURCE_JSON" \
+            --existing-signed-imports-json "${EXISTING_SIGNED_IMPORTS_JSON:-[]}" \
             --repair-lane "$REPAIR_RUN_LANE" \
             --replace-rulespec-path "$repair_rulespec_path" \
             --transaction-citation "$CITATION" \
@@ -593,6 +594,7 @@ jobs:
             > "$RUNNER_TEMP/repair-candidate.json"
           jq -e '
             (.root | type == "string" and length > 0)
+            and (.lane == "target" or .lane == "target-preflight" or .lane == "dependent")
             and (.path | type == "string" and length > 0)
             and (.source_rulespec_ref | test("^[0-9a-f]{40}$"))
             and (.rulespec_sha256 | test("^[0-9a-f]{64}$"))
@@ -609,7 +611,8 @@ jobs:
             --current-ref "$RULESPEC_REF" \
             --candidate-path "$repair_candidate_path" \
             --rulespec-path "$repair_rulespec_path"
-          echo "lane=$REPAIR_RUN_LANE" >> "$GITHUB_OUTPUT"
+          echo "lane=$(jq -r '.lane' "$RUNNER_TEMP/repair-candidate.json")" \
+            >> "$GITHUB_OUTPUT"
           echo "rulespec_path=$repair_rulespec_path" >> "$GITHUB_OUTPUT"
           echo "root=$(jq -r '.root' "$RUNNER_TEMP/repair-candidate.json")" \
             >> "$GITHUB_OUTPUT"
@@ -1647,6 +1650,8 @@ jobs:
                 --rulespec-ref "$RULESPEC_REF" \
                 --allow-rulespec-base-advance \
                 --atomic-source-json "$ATOMIC_SOURCE_JSON" \
+                --existing-signed-imports-json \
+                  "${EXISTING_SIGNED_IMPORTS_JSON:-[]}" \
                 --replace-rulespec-path "$REPLACE_RULESPEC_PATH" \
                 --source-rulespec-paths-json "$source_rulespec_paths_json" \
                 --workflow-run-id "$REPAIR_RUN_ID"

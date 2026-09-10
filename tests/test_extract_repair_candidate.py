@@ -222,6 +222,7 @@ def _args(tmp_path: Path, archive: Path, **overrides) -> Namespace:
         "rulespec_ref": "d" * 40,
         "allow_rulespec_base_advance": False,
         "atomic_source_json": "[]",
+        "existing_signed_imports_json": "[]",
         "replace_rulespec_path": "us/statutes/42/1437c-1.yaml",
         "workflow_run_id": "1234",
     }
@@ -239,6 +240,49 @@ def test_extracts_checksum_bound_final_candidate(tmp_path):
     assert result["source_rulespec_ref"] == "d" * 40
     assert (root / result["path"]).read_text() == "format: rulespec/v1\nrules: []\n"
     assert (root / "statutes/42/1437c-1.test.yaml").read_text() == "[]\n"
+
+
+def test_extracts_candidate_with_exact_artifact_bound_signed_imports(tmp_path):
+    archive, metadata = _archive(tmp_path)
+    imports = '["us/statutes/7/2015/f.yaml"]'
+    metadata["existing_signed_imports_input"] = imports
+    replacement = _rewrite_metadata(
+        archive,
+        tmp_path / "signed-imports.tar",
+        metadata,
+    )
+
+    result = extract_candidate(
+        _args(
+            tmp_path,
+            replacement,
+            existing_signed_imports_json=imports,
+        )
+    )
+
+    assert result["runner"] == "openai-gpt-5.6-sol"
+
+
+def test_rejects_candidate_when_signed_imports_change_between_runs(tmp_path):
+    archive, metadata = _archive(tmp_path)
+    metadata["existing_signed_imports_input"] = '["us/statutes/7/2015/f.yaml"]'
+    replacement = _rewrite_metadata(
+        archive,
+        tmp_path / "changed-signed-imports.tar",
+        metadata,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="compatible single-target run: existing_signed_imports_input",
+    ):
+        extract_candidate(
+            _args(
+                tmp_path,
+                replacement,
+                existing_signed_imports_json=('["us/statutes/7/2015/different.yaml"]'),
+            )
+        )
 
 
 def test_prefers_integrity_bound_retained_best_candidate(tmp_path):
@@ -563,6 +607,72 @@ def test_extracts_digest_bound_source_candidates_from_final_composition(tmp_path
     assert first["runner"] == "openai-gpt-5.6-sol"
     assert (Path(first["root"]) / first["path"]).read_bytes() == source_one
     assert (Path(second["root"]) / second["path"]).read_bytes() == source_two
+
+
+def test_extracts_partial_source_repair_after_successful_target_preflight(tmp_path):
+    source_citation = "us/guidance/example/source"
+    source_path = "us/guidance/example/source.yaml"
+    atomic_source_input = json.dumps(
+        {
+            "schema": "axiom-encode/atomic-source-transaction/v2",
+            "source_bundle": [source_citation],
+            "canonical_refresh_bundle": [],
+            "primary_required_test_cases": [],
+        }
+    )
+    _, metadata = _archive(tmp_path)
+    metadata.pop("source_bundle_input")
+    metadata["atomic_source_input"] = atomic_source_input
+    metadata["generated_lanes"] = ["source-01", "target-preflight"]
+    target_candidate = b"format: rulespec/v1\n# successful preflight\nrules: []\n"
+    source_candidate = b"format: rulespec/v1\n# source needs repair\nrules: []\n"
+    payloads = {
+        "target-preflight/openai-gpt-5.6-terra/statutes/42/1437c-1.yaml": (
+            target_candidate
+        ),
+        "target-preflight/openai-gpt-5.6-terra/statutes/42/1437c-1.test.yaml": (
+            b"[]\n"
+        ),
+        f"source-01/openai-gpt-5.6-sol/{source_path.removeprefix('us/')}": (
+            source_candidate
+        ),
+        f"source-01/openai-gpt-5.6-sol/"
+        f"{source_path.removeprefix('us/').removesuffix('.yaml')}.test.yaml": (b"[]\n"),
+    }
+    metadata["files"] = [
+        {
+            "path": path,
+            "size": len(body),
+            "sha256": hashlib.sha256(body).hexdigest(),
+        }
+        for path, body in sorted(payloads.items())
+    ]
+    archive = tmp_path / "partial-source-repair.tar"
+    with tarfile.open(archive, "w") as bundle:
+        members = {"metadata.json": json.dumps(metadata).encode()}
+        members.update({f"generated/{path}": body for path, body in payloads.items()})
+        for name, body in members.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(body)
+            bundle.addfile(info, io.BytesIO(body))
+
+    result = extract_candidate(
+        _args(
+            tmp_path,
+            archive,
+            atomic_source_json=atomic_source_input,
+            destination=tmp_path / "partial-extracted",
+            source_rulespec_paths_json=json.dumps([source_path]),
+        )
+    )
+
+    assert result["lane"] == "target-preflight"
+    assert result["runner"] == "openai-gpt-5.6-terra"
+    assert (Path(result["root"]) / result["path"]).read_bytes() == target_candidate
+    assert len(result["source_candidates"]) == 1
+    source = result["source_candidates"][0]
+    assert source["citation"] == source_citation
+    assert (Path(source["root"]) / source["path"]).read_bytes() == source_candidate
 
 
 def test_rejects_source_candidates_without_final_composed_target(tmp_path):

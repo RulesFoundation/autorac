@@ -2358,6 +2358,11 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert "targeted-reencode-failure-${REPAIR_RUN_ID}-1" in repair_command
     assert "extract_repair_candidate.py" in repair_command
     assert '--atomic-source-json "$ATOMIC_SOURCE_JSON"' in repair_command
+    assert (
+        '--existing-signed-imports-json "${EXISTING_SIGNED_IMPORTS_JSON:-[]}"'
+        in repair_command
+    )
+    assert "echo \"lane=$(jq -r '.lane'" in repair_command
     assert '--repair-lane "$REPAIR_RUN_LANE"' in repair_command
     for immutable_argument in (
         "--citation",
@@ -2514,6 +2519,7 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert '[[ "$output_lane" =~ ^source-[0-9]{2}$ ]]' in command
     assert ".lane == $lane and .citation == $citation" in command
     assert '--source-rulespec-paths-json "$source_rulespec_paths_json"' in command
+    assert "--existing-signed-imports-json" in command
     assert 'source_repair_candidates_json="$(' in command
     assert "args+=(--repair-candidate-tests-only)" in command
     assert (
