@@ -279,8 +279,11 @@ def _repair_lane_for_atomic_source(
         ]
         final_lanes = sorted(["target", "target-preflight", *source_lanes])
         replayed_final_lanes = sorted(["target", *source_lanes])
+        partial_source_lanes = sorted(["target-preflight", *source_lanes])
         if generated_lanes in (final_lanes, replayed_final_lanes):
             return "target", generated_lanes
+        if generated_lanes == partial_source_lanes:
+            return "target-preflight", generated_lanes
         raise ValueError(
             "repair artifact generated lanes do not bind a target preflight "
             "or final composed target"
@@ -453,6 +456,9 @@ def extract_candidate(args: argparse.Namespace) -> dict[str, object]:
         ):
             raise ValueError("repair artifact metadata mismatch: rulespec_ref")
         expected_mode_fields = dict(SINGLE_TARGET_MODE_FIELDS)
+        expected_mode_fields["existing_signed_imports_input"] = (
+            args.existing_signed_imports_json
+        )
         if requested_repair_lane == "dependent":
             expected_mode_fields["dependent_citation"] = args.citation
         for field, expected in expected_mode_fields.items():
@@ -511,6 +517,10 @@ def extract_candidate(args: argparse.Namespace) -> dict[str, object]:
             raise ValueError(
                 f"repair artifact must contain only the {repair_lane} lane"
             )
+        is_partial_source_repair = (
+            repair_lane == "target-preflight"
+            and expected_generated_lanes != ["target-preflight"]
+        )
 
         files = _metadata_file_map(metadata)
         repair_pattern = re.compile(
@@ -522,23 +532,45 @@ def extract_candidate(args: argparse.Namespace) -> dict[str, object]:
             for path in files
             if repair_pattern.fullmatch(path) is not None
         ]
-        if len(repair_matches) != 1:
-            raise ValueError("repair artifact must bind one final repair manifest")
-        repair_path, repair_match = repair_matches[0]
-        assert repair_match is not None
-        runner = repair_match.group(1)
-        repair_payload = json.loads(
-            _verified_generated_file(bundle, members, files, repair_path).decode(
-                "utf-8", errors="strict"
+        if len(repair_matches) == 1:
+            repair_path, repair_match = repair_matches[0]
+            assert repair_match is not None
+            runner = repair_match.group(1)
+            repair_payload = json.loads(
+                _verified_generated_file(bundle, members, files, repair_path).decode(
+                    "utf-8", errors="strict"
+                )
             )
-        )
-        if (
-            not isinstance(repair_payload, dict)
-            or repair_payload.get("schema_version") != "axiom-encode/repair-manifest/v1"
-            or repair_payload.get("citation") != args.citation
-            or repair_payload.get("runner") != runner
-        ):
-            raise ValueError("final repair manifest identity is invalid")
+            if (
+                not isinstance(repair_payload, dict)
+                or repair_payload.get("schema_version")
+                != "axiom-encode/repair-manifest/v1"
+                or repair_payload.get("citation") != args.citation
+                or repair_payload.get("runner") != runner
+            ):
+                raise ValueError("final repair manifest identity is invalid")
+        elif len(repair_matches) == 0 and is_partial_source_repair:
+            candidate_pattern = re.compile(
+                rf"{re.escape(repair_lane)}/({RUNNER_PATTERN.pattern})/"
+                rf"{re.escape(expected_module)}"
+            )
+            runners = sorted(
+                {
+                    match.group(1)
+                    for path in files
+                    if (match := candidate_pattern.fullmatch(path)) is not None
+                    and f"{repair_lane}/{match.group(1)}/"
+                    f"{expected_module.removesuffix('.yaml')}.test.yaml"
+                    in files
+                }
+            )
+            if len(runners) != 1:
+                raise ValueError(
+                    "successful target preflight must bind one final candidate"
+                )
+            runner = runners[0]
+        else:
+            raise ValueError("repair artifact must bind one final repair manifest")
 
         retained = _retained_candidate(
             bundle,
@@ -558,9 +590,12 @@ def extract_candidate(args: argparse.Namespace) -> dict[str, object]:
             runner = "retained-best"
 
         source_rulespec_paths_json = getattr(args, "source_rulespec_paths_json", None)
-        if source_rulespec_paths_json is not None and repair_lane != "target":
+        if source_rulespec_paths_json is not None and not (
+            repair_lane == "target" or is_partial_source_repair
+        ):
             raise ValueError(
-                "source repair candidates require a final composed target artifact"
+                "source repair candidates require a final composed target artifact "
+                "or completed target preflight and source lanes"
             )
         source_candidates = _source_repair_candidates(
             bundle,
@@ -577,6 +612,7 @@ def extract_candidate(args: argparse.Namespace) -> dict[str, object]:
 
     return {
         "root": str(root),
+        "lane": repair_lane,
         "path": expected_module,
         "rulespec_sha256": hashlib.sha256(candidate).hexdigest(),
         "tests_sha256": hashlib.sha256(tests).hexdigest(),
@@ -598,6 +634,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--rulespec-ref", required=True)
     parser.add_argument("--allow-rulespec-base-advance", action="store_true")
     parser.add_argument("--atomic-source-json", required=True)
+    parser.add_argument("--existing-signed-imports-json", default="[]")
     parser.add_argument("--replace-rulespec-path", required=True)
     parser.add_argument("--repair-lane", choices=sorted(REPAIR_LANES), default="target")
     parser.add_argument("--source-rulespec-paths-json")
