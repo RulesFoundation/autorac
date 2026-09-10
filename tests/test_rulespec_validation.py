@@ -23102,6 +23102,94 @@ def test_raw_percent_readers_read_wrap_space_after_a_maqaf_as_the_bound_readers_
             )
 
 
+def test_evidence_matching_and_the_numeric_cleaner_bind_the_same_maqafs():
+    # Gate round 7 on #1615: evidence matching bound the space after any
+    # maqaf while the cleaner bound only a prefix stack's, so "שלושה־ רבעים"
+    # quoted "שלושה־רבעים" (which the readers leave unread) and read a
+    # quarter of its own. One pattern now binds for both -- the Hebrew word
+    # before the maqaf, a prefix stack or a word of a compound -- so an
+    # accepted spelling reads as its source does, whatever the source reads,
+    # and a maqaf after a digit binds nothing in either.
+    import json
+    import textwrap as tw
+
+    from axiom_encode.harness.proof_validator import (
+        HEBREW_MAQAF_WRAP_SPACE_PATTERN,
+        _source_contains_proof_evidence,
+        bind_maqaf_space,
+    )
+    from axiom_encode.harness.validator_pipeline import (
+        _HEBREW_MAQAF_WRAP_SPACE_PATTERN,
+        _bind_hebrew_source_text,
+        _source_evidence_fragment_is_body_bound,
+    )
+
+    assert _HEBREW_MAQAF_WRAP_SPACE_PATTERN is HEBREW_MAQAF_WRAP_SPACE_PATTERN
+    assert bind_maqaf_space("שלושה־ רבעים") == "שלושה־רבעים"
+    assert _bind_hebrew_source_text("שלושה־ רבעים") == " שלושה־רבעים"
+    assert bind_maqaf_space("בית־ספר־ חדש") == "בית־ספר־חדש"
+    assert _bind_hebrew_source_text("בית־ספר־ חדש") == " בית־ספר־חדש"
+    assert bind_maqaf_space("3־ 5") == "3־ 5"
+    assert _bind_hebrew_source_text("3־ 5") == "3־ 5"
+    assert bind_maqaf_space("ו־\n\nשלושה") == "ו־\n\nשלושה"
+
+    def scoped(source, excerpt, formula):
+        content = tw.dedent(
+            f"""
+            format: rulespec/v1
+            rules:
+              - name: rate
+                kind: parameter
+                dtype: Decimal
+                metadata:
+                  proof:
+                    atoms:
+                      - path: versions[0].formula
+                        kind: parameter
+                        source:
+                          corpus_citation_path: il/statute/example/rate
+                          excerpt: {json.dumps(excerpt, ensure_ascii=False)}
+                versions:
+                  - effective_from: '2026-01-01'
+                    formula: {formula}
+            """
+        ).strip()
+        return find_ungrounded_numeric_issues_scoped(
+            content,
+            module_source_text="",
+            proof_source_texts={"il/statute/example/rate": source},
+        ), validate_rulespec_proofs(
+            content, source_texts={"il/statute/example/rate": source}
+        ).passed
+
+    spacings = (" ", "  ", " " * 8, "\t", "\u00a0", "\r", "\r\n", "\n", " \n ")
+    assert sorted(extract_numbers_from_text("העובד זכאי לשנים־עשר חודשים.")) == [12.0]
+    for source, unstated in (
+        ("העובד זכאי לשלושה־רבעים מהסכום.", "0.25"),
+        ("העובד זכאי לשני־שלישים מהסכום.", "0.3333333"),
+        ("העובד זכאי לשנים־עשר חודשים.", "10"),
+    ):
+        grounding = sorted(round(v, 9) for v in extract_numbers_from_text(source))
+        recall = sorted(round(v, 9) for v in _hebrew_recall(source))
+        for spacing in spacings:
+            excerpt = source.replace("\u05be", "\u05be" + spacing)
+            label = (source, repr(spacing))
+            assert _source_contains_proof_evidence(
+                source_text=source, evidence_text=excerpt
+            ), label
+            assert _source_evidence_fragment_is_body_bound(excerpt, source), label
+            assert (
+                sorted(round(v, 9) for v in extract_numbers_from_text(excerpt))
+                == grounding
+            ), (*label, sorted(extract_numbers_from_text(excerpt)))
+            assert sorted(round(v, 9) for v in _hebrew_recall(excerpt)) == recall, (
+                *label,
+                sorted(_hebrew_recall(excerpt)),
+            )
+            issues, passed = scoped(source, excerpt, unstated)
+            assert passed and len(issues) == 1, (*label, issues)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

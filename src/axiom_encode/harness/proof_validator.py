@@ -547,37 +547,45 @@ def _validate_source_proof_atom(
     return issues
 
 
-# A maqaf (U+05BE) binds a prefix to the token after it; a source that sets a
-# space or a line wrap after the maqaf ("ל־ 1⁄2", "ו־\nשלושה") and an excerpt
-# that does not ("ל־1⁄2", "ו־שלושה") quote the same text. A blank line or a
-# paragraph separator after the maqaf is a boundary the binding does not
-# cross, so the two are bound before any run of whitespace is collapsed.
 # A line ends in "\r\n", "\r" or "\n" (a Windows, a classic Mac or a Unix
-# source, or one that mixes them), as the numeric cleaner reads it, so a bare
-# carriage return is a line wrap and two line ends in a row are a blank line.
-# A bare carriage return is one only when no newline follows, so a CRLF is one
-# line end to a pattern that backtracks, never a CR and an LF that make a gap.
-_LINE_BREAK_FRAGMENT = "(?:\\r\\n|\\r(?!\\n)|\\n)"
-_HORIZONTAL_EVIDENCE_SPACE_FRAGMENT = (
-    "[ \\t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]"
-)
-_MAQAF_WRAP_SPACE_PATTERN = re.compile(
-    "\u05be(?:"
-    + _HORIZONTAL_EVIDENCE_SPACE_FRAGMENT
+# source, or one that mixes them); a bare carriage return is one only when no
+# newline follows, so a CRLF is one line end to a pattern that backtracks,
+# never a CR and an LF that make a blank line. The numeric readers share
+# these fragments, so the two read whitespace alike.
+LINE_END_FRAGMENT = "(?:\\r\\n|\\r(?!\\n)|\\n)"
+HORIZONTAL_SPACE_FRAGMENT = "[ \\t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]"
+# Whitespace a bound token may run across: spaces of any width and a single
+# line wrap, never a blank line or a paragraph separator.
+WRAP_SPACE_FRAGMENT = (
+    "(?:"
+    + HORIZONTAL_SPACE_FRAGMENT
     + "|"
-    + _LINE_BREAK_FRAGMENT
+    + LINE_END_FRAGMENT
     + "(?!"
-    + _HORIZONTAL_EVIDENCE_SPACE_FRAGMENT
+    + HORIZONTAL_SPACE_FRAGMENT
     + "*"
-    + _LINE_BREAK_FRAGMENT
-    + "))+"
-    "(?=[\u0590-\u05ff\\d.\u00bc-\u00be\u2150-\u215e])"
+    + LINE_END_FRAGMENT
+    + "))"
+)
+# A maqaf (U+05BE) binds the Hebrew word before it -- a prefix stack ("ו־",
+# "ל־", "וכש־") or a word of a compound ("שלושה־רבעים", "שנים־עשר") -- to the
+# word or number after it; a source that sets wrap space after the maqaf
+# ("ל־ 1⁄2", "ו־\nשלושה", "שלושה־ רבעים") and one that does not quote the
+# same text. A blank line or a paragraph separator after the maqaf is a
+# boundary the binding does not cross, and a maqaf after a digit binds
+# nothing. This one pattern is the binding evidence matching applies and the
+# binding the numeric cleaner applies, so the two never accept different
+# texts: group 1 is the word, 2 the maqaf, 3 the wrap space.
+HEBREW_MAQAF_WRAP_SPACE_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])([\u05d0-\u05ea]+(?:\u05be[\u05d0-\u05ea]+)*)(\u05be)("
+    + WRAP_SPACE_FRAGMENT
+    + "+)(?=[\u0590-\u05ff\\d.\u00bc-\u00be\u2150-\u215e])"
 )
 
 
 def bind_maqaf_space(text: str) -> str:
     """Drop the wrap space a source sets after a maqaf, so "ל־ 1⁄2" reads "ל־1⁄2"."""
-    return _MAQAF_WRAP_SPACE_PATTERN.sub("\u05be", text)
+    return HEBREW_MAQAF_WRAP_SPACE_PATTERN.sub("\\1\\2", text)
 
 
 # A paragraph gap -- a blank line or a paragraph separator -- is a boundary
@@ -587,7 +595,7 @@ def bind_maqaf_space(text: str) -> str:
 # and becomes a blank line when it holds a paragraph separator or a second
 # line end, and a space otherwise.
 _WHITESPACE_RUN_PATTERN = re.compile(r"\s+")
-_LINE_BREAK_PATTERN = re.compile(_LINE_BREAK_FRAGMENT)
+_LINE_BREAK_PATTERN = re.compile(LINE_END_FRAGMENT)
 _PARAGRAPH_SEPARATOR_PATTERN = re.compile("[\u2028\u2029\x0b\x0c\x85]")
 
 

@@ -122,6 +122,10 @@ from .policyengine_runtime import (
     policyengine_subprocess_environment,
 )
 from .proof_validator import (
+    HEBREW_MAQAF_WRAP_SPACE_PATTERN,
+    HORIZONTAL_SPACE_FRAGMENT,
+    LINE_END_FRAGMENT,
+    WRAP_SPACE_FRAGMENT,
     _bounded_source_evidence_match,
     bind_maqaf_space,
     collapse_evidence_whitespace,
@@ -1946,7 +1950,7 @@ _HEBREW_TEEN_TENS_WORDS = ("עשר", "עשרה")
 # to the readers that run before the cleaner normalizes it. A bare carriage
 # return is one only when no newline follows, so a CRLF is one line end to
 # a pattern that backtracks, never a CR and an LF that make a blank line.
-_LINE_END_FRAGMENT = "(?:\\r\\n|\\r(?!\\n)|\\n)"
+_LINE_END_FRAGMENT = LINE_END_FRAGMENT
 _PARAGRAPH_GAP_FRAGMENT = (
     "(?:[\\u2028\\u2029\\x0b\\x0c\\x85]|"
     + _LINE_END_FRAGMENT
@@ -1955,7 +1959,7 @@ _PARAGRAPH_GAP_FRAGMENT = (
     + ")"
 )
 _PARAGRAPH_GAP_PATTERN = re.compile(_PARAGRAPH_GAP_FRAGMENT)
-_HORIZONTAL_SPACE_FRAGMENT = "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]"
+_HORIZONTAL_SPACE_FRAGMENT = HORIZONTAL_SPACE_FRAGMENT
 # A printed number in the Hebrew readers: grouped or plain digits with an
 # optional decimal part, or a decimal part alone (".5 אחוזים" is half a
 # percent); the readers' lookbehinds keep ".5" out of "3.5".
@@ -1963,17 +1967,7 @@ _HORIZONTAL_SPACE_FRAGMENT = "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\
 # wrap, never a blank line or a paragraph separator ("10 וחצי מיליון" and
 # "10\nוחצי מיליון" are one amount; "10\n\nוחצי מיליון" is ten, then half a
 # million).
-_WRAP_SPACE_FRAGMENT = (
-    "(?:"
-    + _HORIZONTAL_SPACE_FRAGMENT
-    + "|"
-    + _LINE_END_FRAGMENT
-    + "(?!"
-    + _HORIZONTAL_SPACE_FRAGMENT
-    + "*"
-    + _LINE_END_FRAGMENT
-    + "))"
-)
+_WRAP_SPACE_FRAGMENT = WRAP_SPACE_FRAGMENT
 _HEBREW_TEEN_SEPARATOR_PATTERN = (
     "(?:(?!\\s*" + _PARAGRAPH_GAP_FRAGMENT + ")\\s+|\\s*[-\\u05be]\\s*)"
 )
@@ -12580,24 +12574,20 @@ _HEBREW_PREFIX_HYPHEN_PATTERN = re.compile(
     + _HEBREW_PREFIX_STACK_FRAGMENT
     + "-(?=[\u0590-\u05ff\\d\u00bc-\u00be\u2150-\u215e])"
 )
-# A prefix stack, its maqaf, then wrap space -- spaces or one line wrap,
-# never a blank line -- before the word or the number it binds ("ו־ שלושה",
-# "ו־\nשלושה", "ל־ 1⁄2", "מ־ 301,201"): a typesetting artifact the readers
-# must not see as a boundary, since "עשרים ו־ שלושה" is twenty-three, not
-# twenty and three. A paragraph gap after the maqaf stays a boundary.
-_HEBREW_PREFIX_MAQAF_SPACE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])"
-    + _HEBREW_PREFIX_STACK_FRAGMENT
-    + "(\u05be)("
-    + _WRAP_SPACE_FRAGMENT
-    + "+)(?=[\u0590-\u05ff\\d.\u00bc-\u00be\u2150-\u215e])"
-)
+# A Hebrew word -- a prefix stack or a word of a compound -- its maqaf, then
+# wrap space -- spaces or one line wrap, never a blank line -- before the
+# word or the number it binds ("ו־ שלושה", "ו־\nשלושה", "ל־ 1⁄2", "מ־ 301,201",
+# "שלושה־ רבעים"): a typesetting artifact the readers must not see as a
+# boundary, since "עשרים ו־ שלושה" is twenty-three, not twenty and three. A
+# paragraph gap after the maqaf stays a boundary. The pattern is the proof
+# validator's, so evidence matching binds exactly what the readers bind.
+_HEBREW_MAQAF_WRAP_SPACE_PATTERN = HEBREW_MAQAF_WRAP_SPACE_PATTERN
 
 
-def _hebrew_close_prefix_maqaf_space(
+def _hebrew_close_maqaf_wrap_space(
     match: "re.Match[str]",
 ) -> list[tuple[str, int | None]]:
-    """Move the space after a prefix's maqaf ahead of the prefix: "ו־ שלושה" becomes " ו־שלושה"."""
+    """Move the wrap space after a maqaf ahead of the word: "ו־ שלושה" becomes " ו־שלושה", "שלושה־ רבעים" " שלושה־רבעים"."""
     stack_start, maqaf_start = match.start(1), match.start(2)
     return (
         [(" ", None)] * len(match.group(3))
@@ -12629,7 +12619,7 @@ def _bind_hebrew_source_text_tracked(tracked: _TrackedText) -> _TrackedText:
     """
     tracked = tracked.sub(_CARRIAGE_RETURN_PATTERN, _normalize_line_end)
     return tracked.rewrite_mapped(
-        _HEBREW_PREFIX_MAQAF_SPACE_PATTERN, _hebrew_close_prefix_maqaf_space
+        _HEBREW_MAQAF_WRAP_SPACE_PATTERN, _hebrew_close_maqaf_wrap_space
     )
 
 
@@ -12799,7 +12789,7 @@ def _clean_source_text_for_numeric_extraction_tracked(
     # moves ahead of the prefix, each character keeping its offset, so the
     # spaced and the bound spellings are one text to every reader below.
     tracked = tracked.rewrite_mapped(
-        _HEBREW_PREFIX_MAQAF_SPACE_PATTERN, _hebrew_close_prefix_maqaf_space
+        _HEBREW_MAQAF_WRAP_SPACE_PATTERN, _hebrew_close_maqaf_wrap_space
     )
     # A maqaf after a prefix stack before a Hebrew letter ("ו־עד",
     # "ו־המתינה", "ה־שיעורים", "וכש־המתינה") binds the prefix to the word the
