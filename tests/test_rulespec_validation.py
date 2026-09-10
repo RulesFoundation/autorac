@@ -22136,7 +22136,7 @@ def test_a_fraction_endpoint_shares_the_noun_whatever_the_order():
         ("שיעור המס יהיה בין מחצית לשלוש עשיריות האחוז", [0.003, 0.005]),
         ("שיעור המס יהיה בין שלושה רבעים לחצי האחוז", [0.005, 0.0075]),
         ("שיעור המס יהיה בין 3 עשיריות ל־2 עשיריות האחוז", [0.002, 0.003]),
-        ("שיעור המס יהיה בין 5 ל־3 עשיריות האחוז", [0.003, 5.0]),
+        ("שיעור המס יהיה בין 5 ל־3 עשיריות האחוז", [0.003, 0.005]),
         ("שיעור המס יהיה בין 500 ל־3 אחוזים", [0.03, 500.0]),
         ("שיעור המס יהיה בין 500 לשלושה אחוזים", [0.03, 500.0]),
         ("שיעור המס יופחת מ־5 ל־3 אחוזים", [0.03, 0.05]),
@@ -22157,6 +22157,57 @@ def test_a_fraction_endpoint_shares_the_noun_whatever_the_order():
         ("שיעור המס יהיה בין 1/2 ל־3 עשיריות האחוז", "0.005", "0.05"),
         ("שיעור המס יהיה בין חצי לבין שלוש עשיריות האחוז", "0.005", "0.5"),
         ("שיעור המס יהיה בין 500 לשלושה אחוזים", "500", "5"),
+    ):
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+
+
+def test_a_rate_word_makes_a_descending_range_a_range_of_rates():
+    # Review round 181 on #1585: where a rate word governs the clause, a
+    # "בין" range shares its percent noun whatever the order of a number a
+    # rate could be ("שיעור המס יהיה בין 5 ל־3 אחוזים" runs from five
+    # percent, whole, spelled or mixed); a number no rate could be ("בין 500
+    # ל־3 אחוזים") and a pair with no rate word keep the guard.
+    import math
+
+    for text, expected in (
+        ("שיעור המס יהיה בין 5 ל־3 אחוזים", [0.03, 0.05]),
+        ("שיעור המס יהיה בין חמישה לשלושה אחוזים", [0.03, 0.05]),
+        ("שיעור המס יהיה בין 3½ ל־2½ אחוזים", [0.025, 0.035]),
+        ("שיעור המס יהיה בין 3 וחצי ל־2 וחצי אחוזים", [0.025, 0.035]),
+        ("הריבית תהיה בין 5 ל־3 אחוזים", [0.03, 0.05]),
+        ("בשיעור של בין 5 ל־3 אחוזים", [0.03, 0.05]),
+        ("שיעור המס יהיה בין 5 ל־3 עשיריות האחוז", [0.003, 0.005]),
+        ("השיעור הוא בין 500 ל־3 אחוזים", [0.03, 500.0]),
+        ("שיעור המס יהיה בין 500 לשלושה אחוזים", [0.03, 500.0]),
+        ("הקנס יהיה בין 500 ל־3 אחוזים", [0.03, 500.0]),
+        ("הקנס יהיה בין 5 ל־3 אחוזים", [0.03, 5.0]),
+        ("שיעור המס יופחת מ־5 ל־3 אחוזים", [0.03, 0.05]),
+    ):
+        values = sorted(_hebrew_recall(text))
+        assert len(values) == len(expected) and all(
+            math.isclose(value, want, rel_tol=1e-9)
+            for value, want in zip(values, expected, strict=True)
+        ), (text, values)
+        found = extract_numbers_from_text(text)
+        assert all(
+            any(math.isclose(value, want, rel_tol=1e-9) for value in found)
+            for want in expected
+        ), (text, found)
+    for text, grounded, ungrounded in (
+        ("שיעור המס יהיה בין 5 ל־3 אחוזים", "0.05", "5"),
+        ("שיעור המס יהיה בין חמישה לשלושה אחוזים", "0.05", "5"),
+        ("שיעור המס יהיה בין 3½ ל־2½ אחוזים", "0.035", "3.5"),
+        ("הקנס יהיה בין 5 ל־3 אחוזים", "5", "0.05"),
     ):
         content = _danish_numeric_rulespec(
             grounded, citation_path="il/statute/example/1"
