@@ -182,6 +182,8 @@ from axiom_encode.cli import (
     _resolve_encode_replacement_target,
     _resolve_explicit_policy_repo_for_corpus_source,
     _resolve_required_import_rulespec_paths,
+    _resolve_scheduled_proof_hash_dependents,
+    _rewrite_generated_yaml_without_non_ascii_escapes,
     _rewrite_gpt_runner_backend,
     _rewrite_import_output_test_input_refs,
     _rewrite_judgment_conditional_formulas,
@@ -194,6 +196,7 @@ from axiom_encode.cli import (
     _rulespec_file_for_absolute_module_ref,
     _rulespec_module_source_path,
     _rulespec_scalar_matches,
+    _rulespec_test_path,
     _safe_wrapped_direct_source_match,
     _sha256_file,
     _sha256_text,
@@ -249,9 +252,11 @@ from axiom_encode.cli import (
     _try_repair_generated_unsupported_entity_outputs_for_apply,
     _try_repair_generated_upstream_placement_duplicates_and_proofs_for_apply,
     _try_repair_generated_upstream_placement_duplicates_for_apply,
+    _unescape_non_ascii_yaml_escapes,
     _unit_scoped_person_definition_issue_names,
     _unit_scoped_person_definition_issue_units,
     _validate_generated_encoding_in_policy_overlay,
+    _validate_generated_encoding_in_policy_overlay_with_release,
     _validated_eval_suite_report_payload,
     _write_applied_encoding_manifest,
     cmd_calibration,
@@ -13185,6 +13190,9 @@ class TestCmdEncode:
             None,
         )
         args.apply_target_only = overrides.get("apply_target_only", False)
+        args.scheduled_dependent_rulespec_path = overrides.get(
+            "scheduled_dependent_rulespec_path", []
+        )
         args.allow_shrink = overrides.get("allow_shrink", False)
         return args
 
@@ -14801,6 +14809,7 @@ rules:
         assert "preserved-rule" in candidate.rulespec
         assert candidate.tests is not None
         assert "preserved-companion" in candidate.tests
+        assert mock_run.call_args.kwargs["accept_valid_retry_candidate"] is True
 
     def test_encode_passes_cross_run_candidate_issues_to_first_attempt_feedback(
         self, tmp_path
@@ -15191,6 +15200,10 @@ rules:
         assert "preserved-cross-run-rule" in retry_candidates[0].rulespec
         assert "rejected-attempt-1" in retry_candidates[1].rulespec
         assert "preserved-cross-run-rule" not in retry_candidates[1].rulespec
+        assert mock_run.call_args_list[0].kwargs["accept_valid_retry_candidate"] is True
+        assert (
+            mock_run.call_args_list[1].kwargs["accept_valid_retry_candidate"] is False
+        )
         assert mock_run.call_args_list[1].kwargs["validation_retry_feedback"] == (
             "first candidate regressed",
         )
@@ -23024,6 +23037,424 @@ rules:
 
         assert repaired == []
         assert rules_file.read_text() == original
+
+    def test_embedded_scalar_literal_repair_keeps_non_latin_text_readable(
+        self, tmp_path
+    ):
+        # The repair rewrites the module the model produced. For a Hebrew
+        # provision that means the summary, the proof excerpt and the rule
+        # source are Hebrew; escaping them to \\uXXXX on the way out would make
+        # the encoding unreadable next to the statute it encodes, for no gain,
+        # since the YAML is read back by a parser either way.
+        output_root = tmp_path / "out"
+        rules_file = output_root / "runner" / "statutes" / "section-68.yaml"
+        rules_file.parent.mkdir(parents=True)
+        summary = "קצבת ילדים לפי סעיף 68 לחוק הביטוח הלאומי."
+        source = "סעיף 68(ב) לחוק הביטוח הלאומי"
+        excerpt = "בעד כל ילד עד ארבעה ילדים 1 2 3 4"
+        rules_file.write_text(
+            f"""format: rulespec/v1
+module:
+  summary: {summary}
+rules:
+- name: child_count
+  kind: derived
+  entity: Household
+  dtype: Count
+  period: Month
+  versions:
+  - effective_from: '2025-01-01'
+    formula: household_child_count
+- name: child_allowance_size_category
+  kind: derived
+  entity: Household
+  dtype: Count
+  period: Month
+  source: {source}
+  metadata:
+    proof:
+      atoms:
+      - path: versions[0].formula
+        kind: formula
+        source:
+          corpus_citation_path: il/statute/national-insurance-law-1995/section-68
+          excerpt: {excerpt}
+  versions:
+  - effective_from: '2025-01-01'
+    formula: min(child_count, 4)
+""",
+            encoding="utf-8",
+        )
+        result = SimpleNamespace(output_file=rules_file, runner="runner")
+
+        repaired = _try_repair_generated_embedded_scalar_literals_for_apply(
+            result,
+            output_root=output_root,
+            policy_repo_path=_canonical_rulespec_content_root(tmp_path, "il"),
+            issues=[
+                "Embedded scalar literal: child_allowance_size_category line 22 "
+                "embeds 4 in `min(child_count, 4)`; extract the value to its "
+                "own named numeric concept or indexed table/grid value"
+            ],
+        )
+
+        assert repaired
+        rewritten = rules_file.read_text(encoding="utf-8")
+        assert "\\u05" not in rewritten
+        assert summary in rewritten
+        assert source in rewritten
+        assert excerpt in rewritten
+
+    def test_generated_yaml_unescape_rewrites_a_module_written_in_escapes(
+        self, tmp_path
+    ):
+        # The repair paths no longer escape, but a model asked for a Hebrew
+        # provision sometimes writes its OWN yaml that way, and everything
+        # downstream binds the generated bytes. The escaped and unescaped forms
+        # parse identically, so the file that lands in the repository is the
+        # readable one.
+        source = tmp_path / "section-68.yaml"
+        source.write_text(
+            "format: rulespec/v1\n"
+            "module:\n"
+            '  summary: "\\u05e7\\u05e6\\u05d1\\u05ea '
+            '\\u05d4\\u05d9\\u05dc\\u05d3\\u05d9\\u05dd"\n'
+            "rules:\n"
+            "  - name: monthly_child_allowance_for_child\n"
+            '    source: "\\u05e1\\u05e2\\u05d9\\u05e3 68(\\u05d0)"\n',
+            encoding="utf-8",
+        )
+        before = yaml.safe_load(source.read_text(encoding="utf-8"))
+
+        assert _rewrite_generated_yaml_without_non_ascii_escapes(source) is True
+
+        after_text = source.read_text(encoding="utf-8")
+        assert "\\u05" not in after_text
+        assert "קצבת הילדים" in after_text
+        assert yaml.safe_load(after_text) == before
+
+    def test_generated_yaml_unescape_leaves_a_readable_module_alone(self, tmp_path):
+        source = tmp_path / "section-34.yaml"
+        original = "format: rulespec/v1\nmodule:\n  summary: שתי נקודות זיכוי\n"
+        source.write_text(original, encoding="utf-8")
+
+        assert _rewrite_generated_yaml_without_non_ascii_escapes(source) is False
+        assert source.read_text(encoding="utf-8") == original
+
+    def test_generated_yaml_unescape_keeps_an_ascii_escape(self, tmp_path):
+        # \\u0041 is "A". Rewriting it would change nothing a reader cares about
+        # and this pass exists for scripts, so it is left as written.
+        source = tmp_path / "section-1.yaml"
+        original = 'format: rulespec/v1\nmodule:\n  summary: "\\u0041"\n'
+        source.write_text(original, encoding="utf-8")
+
+        assert _rewrite_generated_yaml_without_non_ascii_escapes(source) is False
+        assert source.read_text(encoding="utf-8") == original
+
+    def test_generated_yaml_unescape_refuses_an_unparseable_file(self, tmp_path):
+        # The rewrite only fires when both forms parse and parse to the same
+        # value, so a file it cannot prove equivalent is left exactly as the
+        # model wrote it.
+        source = tmp_path / "section-2.yaml"
+        original = 'module: "\\u05d0"\n  bad indent: ]\n'
+        source.write_text(original, encoding="utf-8")
+
+        assert _rewrite_generated_yaml_without_non_ascii_escapes(source) is False
+        assert source.read_text(encoding="utf-8") == original
+
+    def test_generated_yaml_unescape_ignores_a_non_yaml_path(self, tmp_path):
+        source = tmp_path / "notes.txt"
+        original = '"\\u05d0"\n'
+        source.write_text(original, encoding="utf-8")
+
+        assert _rewrite_generated_yaml_without_non_ascii_escapes(source) is False
+        assert source.read_text(encoding="utf-8") == original
+
+    def test_overlay_validation_unescapes_generated_module_and_companion(
+        self, tmp_path
+    ):
+        # The rewrite has to happen before anything binds the generated bytes:
+        # the validation snapshot's digests, the planned apply bytes and the
+        # manifest's generated_output_sha256 are all taken later, and a rewrite
+        # after any of them would be rejected as a post-validation mutation.
+        # This test drives the entry of the overlay validation, which cannot
+        # complete without a bound corpus release and a built engine; what it
+        # proves is the position of the rewrite in that sequence.
+        output_root = tmp_path / "out"
+        rules_file = output_root / "runner" / "statutes" / "section-68.yaml"
+        rules_file.parent.mkdir(parents=True)
+        rules_file.write_text(
+            "format: rulespec/v1\n"
+            "module:\n"
+            '  summary: "\\u05e7\\u05e6\\u05d1\\u05ea '
+            '\\u05d4\\u05d9\\u05dc\\u05d3\\u05d9\\u05dd"\n'
+            "rules: []\n",
+            encoding="utf-8",
+        )
+        test_file = _rulespec_test_path(rules_file)
+        test_file.write_text(
+            '- name: "\\u05de\\u05e7\\u05e8\\u05d4"\n',
+            encoding="utf-8",
+        )
+        result = SimpleNamespace(
+            output_file=rules_file,
+            runner="runner",
+            backend="test",
+        )
+
+        with pytest.raises(RuntimeError):
+            _validate_generated_encoding_in_policy_overlay_with_release(
+                result,
+                output_root=output_root,
+                policy_repo_path=_canonical_rulespec_content_root(tmp_path, "il"),
+                axiom_rules_path=tmp_path / "engine",
+                local_corpus_release=None,
+            )
+
+        assert "קצבת הילדים" in rules_file.read_text(encoding="utf-8")
+        assert "מקרה" in test_file.read_text(encoding="utf-8")
+
+    def test_generated_yaml_unescape_refuses_a_symlinked_target(self, tmp_path):
+        # A generated artifact is a regular file the encoder just wrote. A link
+        # in that position is not one, and writing through it would change the
+        # bytes of a file this generation never produced.
+        outside = tmp_path / "outside.yaml"
+        original = 'format: rulespec/v1\nmodule:\n  summary: "\\u05d0"\n'
+        outside.write_text(original, encoding="utf-8")
+        link = tmp_path / "section-68.test.yaml"
+        link.symlink_to(outside)
+
+        assert _rewrite_generated_yaml_without_non_ascii_escapes(link) is False
+        assert outside.read_text(encoding="utf-8") == original
+
+    def test_generated_yaml_unescape_refuses_a_path_outside_the_output_root(
+        self, tmp_path
+    ):
+        root = tmp_path / "out"
+        root.mkdir()
+        outside = tmp_path / "elsewhere" / "section-68.yaml"
+        outside.parent.mkdir()
+        original = 'format: rulespec/v1\nmodule:\n  summary: "\\u05d0"\n'
+        outside.write_text(original, encoding="utf-8")
+
+        assert (
+            _rewrite_generated_yaml_without_non_ascii_escapes(
+                outside,
+                contained_in=root,
+            )
+            is False
+        )
+        assert outside.read_text(encoding="utf-8") == original
+        # The same file inside the root is rewritten, so the refusal above is
+        # containment and not a blanket refusal.
+        inside = root / "section-68.yaml"
+        inside.write_text(original, encoding="utf-8")
+        assert (
+            _rewrite_generated_yaml_without_non_ascii_escapes(
+                inside,
+                contained_in=root,
+            )
+            is True
+        )
+        assert "א" in inside.read_text(encoding="utf-8")
+
+    def test_generated_yaml_unescape_declines_a_self_referential_alias(self):
+        # `a: &a [*a]` parses to a list that contains itself; comparing two of
+        # those recurses without end. An equivalence that cannot be proved is a
+        # rewrite that does not happen, not an exception out of the validator.
+        text = 'a: &a [*a]\nsummary: "\\u05d0"\n'
+        assert _unescape_non_ascii_yaml_escapes(text) is None
+
+    def test_generated_yaml_rewrite_leaves_a_self_referential_file_as_written(
+        self, tmp_path
+    ):
+        target = tmp_path / "section-68.test.yaml"
+        original = 'a: &a [*a]\nsummary: "\\u05d0"\n'
+        target.write_text(original, encoding="utf-8")
+
+        assert (
+            _rewrite_generated_yaml_without_non_ascii_escapes(
+                target, contained_in=tmp_path
+            )
+            is False
+        )
+        assert target.read_text(encoding="utf-8") == original
+
+    def test_generated_yaml_unescape_compares_alias_graphs_in_linear_time(self):
+        # Each level aliases the previous one twice: a path-by-path comparison
+        # is exponential in the depth, a node-pair comparison is linear.
+        import time
+
+        lines = ["a0: &a0 [0]"]
+        for level in range(1, 33):
+            lines.append(f"a{level}: &a{level} [*a{level - 1}, *a{level - 1}]")
+        lines.append('summary: "\\u05d0"')
+        text = "\n".join(lines) + "\n"
+        started = time.perf_counter()
+        rewritten = _unescape_non_ascii_yaml_escapes(text)
+        assert time.perf_counter() - started < 2.0
+        assert rewritten is not None
+        assert "א" in rewritten
+
+    @pytest.mark.parametrize("tag", ["!!omap", "!!pairs"])
+    def test_generated_yaml_unescape_compares_tuple_alias_graphs_in_linear_time(
+        self, tag
+    ):
+        # The safe loader builds !!omap and !!pairs as lists of tuples. A
+        # tuple compared by Python's own equality walks every alias path
+        # again -- depths 22, 24 and 26 took 0.16, 0.67 and 2.68 seconds --
+        # so it is a node of the memoized comparison like a list.
+        import time
+
+        lines = ["a0: &a0 [0]"]
+        for level in range(1, 33):
+            lines.append(
+                f"a{level}: &a{level} {tag} "
+                f"[{{x: *a{level - 1}}}, {{y: *a{level - 1}}}]"
+            )
+        lines.append('summary: "\\u05d0"')
+        text = "\n".join(lines) + "\n"
+        started = time.perf_counter()
+        rewritten = _unescape_non_ascii_yaml_escapes(text)
+        assert time.perf_counter() - started < 2.0
+        assert rewritten is not None
+        assert "א" in rewritten
+
+    def test_generated_yaml_unescape_declines_a_document_its_constructor_rejects(self):
+        # An unquoted date that does not exist raises ValueError from the
+        # constructor; the rewrite declines and the companion loader reports.
+        text = 'date: 2026-02-30\nsummary: "\\u05d0"\n'
+        assert _unescape_non_ascii_yaml_escapes(text) is None
+
+    def test_generated_yaml_unescape_refuses_a_hard_linked_target(self, tmp_path):
+        # A hard link passes every test a symlink fails -- it is a regular
+        # file, not a link, and it resolves where it sits -- and still shares
+        # its bytes with another name. Writing it in place would rewrite that
+        # other file.
+        outside = tmp_path / "outside.yaml"
+        original = 'format: rulespec/v1\nmodule:\n  summary: "\\u05d0"\n'
+        outside.write_text(original, encoding="utf-8")
+        link = tmp_path / "section-68.test.yaml"
+        os.link(outside, link)
+        assert link.stat().st_nlink == 2
+
+        assert (
+            _rewrite_generated_yaml_without_non_ascii_escapes(
+                link, contained_in=tmp_path
+            )
+            is False
+        )
+        assert outside.read_text(encoding="utf-8") == original
+        assert link.read_text(encoding="utf-8") == original
+
+    def test_generated_yaml_unescape_replaces_the_entry_not_the_inode(self, tmp_path):
+        # The rewrite lands as a new directory entry, so a name that shares
+        # the old bytes keeps them even if the link check were bypassed.
+        target = tmp_path / "section-68.yaml"
+        original = 'format: rulespec/v1\nmodule:\n  summary: "\\u05d0"\n'
+        target.write_text(original, encoding="utf-8")
+        before = target.stat().st_ino
+
+        assert (
+            _rewrite_generated_yaml_without_non_ascii_escapes(
+                target, contained_in=tmp_path
+            )
+            is True
+        )
+        assert "\u05d0" in target.read_text(encoding="utf-8")
+        assert target.stat().st_ino != before
+        assert not [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
+
+    def test_overlay_validation_refuses_a_hard_linked_companion_before_writing(
+        self, tmp_path
+    ):
+        escaped_companion = '- name: "\\u05de\\u05e7\\u05e8\\u05d4"\n'
+        outside = tmp_path / "outside" / "already-encoded.test.yaml"
+        outside.parent.mkdir(parents=True)
+        outside.write_text(escaped_companion, encoding="utf-8")
+        before = outside.read_bytes()
+
+        output_root = tmp_path / "out"
+        rules_file = output_root / "runner" / "statutes" / "section-68.yaml"
+        rules_file.parent.mkdir(parents=True)
+        rules_file.write_text(
+            "format: rulespec/v1\n"
+            "module:\n"
+            '  summary: "\\u05e7\\u05e6\\u05d1\\u05ea"\n'
+            "rules: []\n",
+            encoding="utf-8",
+        )
+        module_before = rules_file.read_bytes()
+        test_file = _rulespec_test_path(rules_file)
+        os.link(outside, test_file)
+        result = SimpleNamespace(
+            output_file=rules_file,
+            runner="runner",
+            backend="test",
+        )
+
+        valid, issues, _ = _validate_generated_encoding_in_policy_overlay_with_release(
+            result,
+            output_root=output_root,
+            policy_repo_path=_canonical_rulespec_content_root(tmp_path, "il"),
+            axiom_rules_path=tmp_path / "engine",
+            local_corpus_release=None,
+        )
+
+        assert valid is False
+        assert any("hard link" in issue for issue in issues)
+        assert outside.read_bytes() == before
+        assert test_file.read_bytes() == before
+        assert rules_file.read_bytes() == module_before
+
+    def test_overlay_validation_refuses_a_symlinked_companion_before_writing(
+        self, tmp_path
+    ):
+        # The companion rewrite runs before the structured-review contract
+        # check that rejects a linked companion, so ordering is the whole
+        # point: a link pointing out of the generated directory has to be
+        # refused before anything is written, not after the target's bytes
+        # have already changed under a hash something else binds.
+        escaped_companion = '- name: "\\u05de\\u05e7\\u05e8\\u05d4"\n'
+        outside = tmp_path / "outside" / "already-encoded.test.yaml"
+        outside.parent.mkdir(parents=True)
+        outside.write_text(escaped_companion, encoding="utf-8")
+        before = outside.read_bytes()
+
+        output_root = tmp_path / "out"
+        rules_file = output_root / "runner" / "statutes" / "section-68.yaml"
+        rules_file.parent.mkdir(parents=True)
+        rules_file.write_text(
+            "format: rulespec/v1\n"
+            "module:\n"
+            '  summary: "\\u05e7\\u05e6\\u05d1\\u05ea '
+            '\\u05d4\\u05d9\\u05dc\\u05d3\\u05d9\\u05dd"\n'
+            "rules: []\n",
+            encoding="utf-8",
+        )
+        module_before = rules_file.read_bytes()
+        test_file = _rulespec_test_path(rules_file)
+        test_file.symlink_to(outside)
+        result = SimpleNamespace(
+            output_file=rules_file,
+            runner="runner",
+            backend="test",
+        )
+
+        valid, issues, _ = _validate_generated_encoding_in_policy_overlay_with_release(
+            result,
+            output_root=output_root,
+            policy_repo_path=_canonical_rulespec_content_root(tmp_path, "il"),
+            axiom_rules_path=tmp_path / "engine",
+            local_corpus_release=None,
+        )
+
+        assert valid is False
+        assert any("regular file" in issue for issue in issues)
+        assert outside.read_bytes() == before
+        # The module is not rewritten either: the whole validation is refused
+        # before the pass that would have touched it.
+        assert rules_file.read_bytes() == module_before
 
     def test_bare_snapunit_entity_repair_scopes_assistance_group_to_household(
         self, tmp_path
@@ -40422,6 +40853,82 @@ class TestEncodeReplacementTarget:
             "policies/income_tax/pilot_liability_pipeline.yaml"
         )
 
+    def test_accepts_direct_child_source_refinement_at_canonical_path(self, tmp_path):
+        (
+            args,
+            checkout,
+            content_root,
+            target,
+            _companion,
+            source_unit,
+            _replacement_source,
+        ) = self._fixture(tmp_path)
+        args.replace_rulespec_path = Path("us-nc/statutes/105/105-153.7/a.yaml")
+        target = content_root / "statutes" / "105" / "105-153.7" / "a.yaml"
+        target.parent.mkdir(parents=True)
+        target.write_text(
+            "format: rulespec/v1\n"
+            "module:\n"
+            "  source_verification:\n"
+            "    corpus_citation_path: us-nc/statute/105/105-153.7\n"
+            "rules: []\n"
+        )
+        source_unit.requested = "us-nc/statute/105/105-153.7/a"
+        source_unit.citation_path = source_unit.requested
+        replacement_source = SimpleNamespace(
+            requested="us-nc/statute/105/105-153.7",
+            citation_path="us-nc/statute/105/105-153.7",
+            body="broader official source",
+            resolved_source=object(),
+        )
+
+        with patch(
+            "axiom_encode.cli.resolve_corpus_source_unit",
+            return_value=replacement_source,
+        ):
+            resolved = _resolve_encode_replacement_target(
+                args,
+                policy_checkout_path=checkout,
+                policy_repo_path=content_root,
+                source_unit=source_unit,
+                corpus_release=SimpleNamespace(),
+            )
+
+        assert resolved is not None
+        assert resolved.relative_output == Path("statutes/105/105-153.7/a.yaml")
+        assert resolved.context_paths == (target,)
+
+    def test_rejects_non_direct_source_refinement(self, tmp_path):
+        (
+            args,
+            checkout,
+            content_root,
+            _target,
+            _companion,
+            source_unit,
+            _replacement_source,
+        ) = self._fixture(tmp_path)
+        args.replace_rulespec_path = Path("us-nc/statutes/105/105-153.7/a.yaml")
+        target = content_root / "statutes" / "105" / "105-153.7" / "a.yaml"
+        target.parent.mkdir(parents=True)
+        target.write_text(
+            "format: rulespec/v1\n"
+            "module:\n"
+            "  source_verification:\n"
+            "    corpus_citation_path: us-nc/statute/105\n"
+            "rules: []\n"
+        )
+        source_unit.requested = "us-nc/statute/105/105-153.7/a"
+
+        with pytest.raises(ValueError, match="does not match the requested source"):
+            _resolve_encode_replacement_target(
+                args,
+                policy_checkout_path=checkout,
+                policy_repo_path=content_root,
+                source_unit=source_unit,
+                corpus_release=SimpleNamespace(),
+            )
+
     @pytest.mark.parametrize(
         ("attribute", "value", "match"),
         [
@@ -47167,6 +47674,102 @@ rules:
         )
         assert overlay_pipeline.validate.call_count == 2
 
+    def test_dependent_regression_validation_normalizes_overlay_and_baseline_roots(
+        self, tmp_path
+    ):
+        from axiom_encode.cli import (
+            _DEPENDENT_BASELINE_DEBT_ATTR,
+            _DependentRegressionPipeline,
+        )
+
+        baseline_root = tmp_path / "baseline" / "rulespec-us" / "us"
+        overlay_root = tmp_path / "overlay" / "rulespec-us" / "us"
+        relative = Path("policies/usda/snap/state-plan-composition.yaml")
+        baseline_path = baseline_root / relative
+        overlay_path = overlay_root / relative
+        baseline_path.parent.mkdir(parents=True)
+        overlay_path.parent.mkdir(parents=True)
+        baseline_path.write_text("format: rulespec/v1\nrules: []\n")
+        overlay_path.write_text("format: rulespec/v1\nrules: []\n")
+
+        def failed(path):
+            issue = (
+                "Axiom rules engine compile failed: failed to load RuleSpec module "
+                f"`{path}`: atomic RuleSpec module must not declare module.kind"
+            )
+            return SimpleNamespace(
+                all_passed=False,
+                results={
+                    "compile": SimpleNamespace(
+                        passed=False,
+                        issues=[issue],
+                        error=issue,
+                    )
+                },
+            )
+
+        baseline_pipeline = MagicMock()
+        baseline_pipeline.validate.side_effect = lambda path, **_kwargs: failed(path)
+        overlay_pipeline = MagicMock()
+        overlay_pipeline.validate.side_effect = lambda path, **_kwargs: failed(path)
+        pipeline = _DependentRegressionPipeline(
+            overlay_pipeline=overlay_pipeline,
+            baseline_pipeline=baseline_pipeline,
+            overlay_root=overlay_root,
+            baseline_root=baseline_root,
+        )
+
+        result = pipeline.validate(overlay_path, skip_reviewers=True)
+
+        assert result.all_passed is True
+        assert getattr(result, _DEPENDENT_BASELINE_DEBT_ATTR, False) is True
+
+    def test_dependent_regression_validation_still_blocks_different_root_relative_issue(
+        self, tmp_path
+    ):
+        from axiom_encode.cli import _DependentRegressionPipeline
+
+        baseline_root = tmp_path / "baseline" / "rulespec-us" / "us"
+        overlay_root = tmp_path / "overlay" / "rulespec-us" / "us"
+        relative = Path("policies/usda/snap/state-plan-composition.yaml")
+        baseline_path = baseline_root / relative
+        overlay_path = overlay_root / relative
+        baseline_path.parent.mkdir(parents=True)
+        overlay_path.parent.mkdir(parents=True)
+        baseline_path.write_text("format: rulespec/v1\nrules: []\n")
+        overlay_path.write_text("format: rulespec/v1\nrules: []\n")
+
+        def failed(issue):
+            return SimpleNamespace(
+                all_passed=False,
+                results={
+                    "compile": SimpleNamespace(
+                        passed=False,
+                        issues=[issue],
+                        error=None,
+                    )
+                },
+            )
+
+        baseline_pipeline = MagicMock()
+        baseline_pipeline.validate.return_value = failed(
+            f"failed to load `{baseline_path}`: legacy failure"
+        )
+        overlay_pipeline = MagicMock()
+        overlay_pipeline.validate.return_value = failed(
+            f"failed to load `{overlay_root / 'policies/new.yaml'}`: new failure"
+        )
+        pipeline = _DependentRegressionPipeline(
+            overlay_pipeline=overlay_pipeline,
+            baseline_pipeline=baseline_pipeline,
+            overlay_root=overlay_root,
+            baseline_root=baseline_root,
+        )
+
+        result = pipeline.validate(overlay_path, skip_reviewers=True)
+
+        assert result.all_passed is False
+
     def test_dependent_regression_validation_fails_closed_without_issues(
         self, tmp_path
     ):
@@ -47372,6 +47975,58 @@ rules:
         assert issues == []
         assert supplemental == {}
         assert [path.name for path in validated_paths] == ["h.yaml"]
+
+    def test_scheduled_proof_hash_dependent_is_narrowly_authenticated(self, tmp_path):
+        content_root = tmp_path / "rulespec-us" / "us"
+        target = content_root / "policies/usda/snap/maximum.yaml"
+        scheduled = content_root / "statutes/7/2017/a.yaml"
+        ordinary = content_root / "regulations/7-cfr/273/10.yaml"
+        target.parent.mkdir(parents=True)
+        scheduled.parent.mkdir(parents=True)
+        ordinary.parent.mkdir(parents=True)
+        target.write_text("format: rulespec/v1\nrules: []\n")
+        scheduled.write_text(
+            """format: rulespec/v1
+imports:
+  - us:policies/usda/snap/maximum
+rules:
+  - name: allotment
+    metadata:
+      proof:
+        atoms:
+          - kind: import
+            import:
+              target: us:policies/usda/snap/maximum#maximum
+              hash: sha256:deadbeef
+"""
+        )
+        ordinary.write_text(
+            "format: rulespec/v1\n"
+            "imports:\n  - us:policies/usda/snap/maximum\n"
+            "rules: []\n"
+        )
+
+        resolved = _resolve_scheduled_proof_hash_dependents(
+            (Path("us/statutes/7/2017/a.yaml"),),
+            overlay_content_root=content_root,
+            dependents=[scheduled, ordinary],
+        )
+
+        assert resolved == {scheduled}
+        assert scheduled.read_text().endswith("hash: sha256:deadbeef\n")
+
+    def test_scheduled_dependent_without_stale_proof_hash_is_rejected(self, tmp_path):
+        content_root = tmp_path / "rulespec-us" / "us"
+        dependent = content_root / "regulations/7-cfr/273/10.yaml"
+        dependent.parent.mkdir(parents=True)
+        dependent.write_text("format: rulespec/v1\nrules: []\n")
+
+        with pytest.raises(ValueError, match="no stale proof import hash"):
+            _resolve_scheduled_proof_hash_dependents(
+                (Path("us/regulations/7-cfr/273/10.yaml"),),
+                overlay_content_root=content_root,
+                dependents=[dependent],
+            )
 
     def test_apply_overlay_validation_fills_dependent_inputs_from_baseline(
         self, tmp_path

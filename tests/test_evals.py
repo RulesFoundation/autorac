@@ -1360,12 +1360,13 @@ def test_repair_candidate_overlay_normalizes_destination_root_deferrals(tmp_path
 def test_run_model_eval_appends_repair_parameters_after_existing_public_parameters():
     parameters = list(inspect.signature(run_model_eval).parameters)
 
-    assert parameters[-5:] == [
+    assert parameters[-6:] == [
         "required_import_targets",
         "legacy_replacement",
         "replacement_overlay_scope",
         "validation_retry_candidate",
         "repair_candidate_tests_only",
+        "accept_valid_retry_candidate",
     ]
 
 
@@ -1550,6 +1551,69 @@ def test_provision_inherits_document_identifiers_for_de_amendment_discovery(tmp_
         provision.amendment_documents[0].metadata["source_note"].startswith("Official")
     )
     assert provision.amendment_documents == document.amendment_documents
+
+
+@pytest.mark.parametrize(
+    ("amendment_metadata", "select_amendment_scope", "expected"),
+    [
+        ({"amendment_targets": ["de/statute/bgb"]}, True, True),
+        ({"amendment_targets": ["de/statute/bgb/1591"]}, True, True),
+        ({"amendment_targets": ["de/statute/bgbeg"]}, True, False),
+        ({"amends": "Bürgerliches Gesetzbuch"}, True, False),
+        ({"amendment_targets": ["de/statute/bgb"]}, False, False),
+    ],
+)
+def test_explicit_amendment_targets_cross_only_selected_release_scopes(
+    tmp_path, amendment_metadata, select_amendment_scope, expected
+):
+    target = "de/statute/bgb/1591"
+    amendment = "de/statute/kindrg/document-1"
+    target_scope = ("de", "statute", "civil-capture")
+    amendment_scope = ("de", "statute", "historical-capture")
+    release = _write_test_corpus_release(
+        tmp_path,
+        [
+            {
+                "citation_path": "de/statute/bgb",
+                "body": "Bürgerliches Gesetzbuch",
+                "heading": "Bürgerliches Gesetzbuch",
+                "source_path": "sources/de/bgb.xml",
+                "version": target_scope[2],
+            },
+            {
+                "citation_path": target,
+                "body": "Mutter eines Kindes ist die Frau, die es geboren hat.",
+                "source_path": "sources/de/bgb.xml",
+                "version": target_scope[2],
+            },
+            {
+                "citation_path": amendment,
+                "body": "Dieses Gesetz tritt am 1. Juli 1998 in Kraft.",
+                "source_path": "sources/de/kindrg.pdf",
+                "version": amendment_scope[2],
+                "metadata": {
+                    "document_type": "amendment act",
+                    **amendment_metadata,
+                },
+            },
+        ],
+        selected_scopes=(
+            [target_scope, amendment_scope]
+            if select_amendment_scope
+            else [target_scope]
+        ),
+    )
+
+    source = resolve_corpus_source_unit(target, release)
+
+    assert [item.citation_path for item in source.amendment_documents] == (
+        [amendment] if expected else []
+    )
+    if expected:
+        assert source.amendment_documents[0].match_tier == "structured"
+        assert source.amendment_documents[0].body == (
+            "Dieses Gesetz tritt am 1. Juli 1998 in Kraft."
+        )
 
 
 def test_dk_full_parity_structured_amendment_timelines_are_exhaustive(tmp_path):
@@ -9918,7 +9982,10 @@ rules:
             for case in repaired_tests
         )
 
-    def test_test_input_assignment_ignores_formula_builtins(self):
+    @pytest.mark.parametrize(
+        "date_function", ["date_add_days", "date_add_months", "date_add_years"]
+    )
+    def test_test_input_assignment_ignores_formula_builtins(self, date_function):
         content = """format: rulespec/v1
 module:
   proof_validation:
@@ -9947,9 +10014,11 @@ rules:
       - effective_from: '2025-01-01'
         formula: days_between(period_start, period_end)
 """
+        content = content.replace("date_add_days", date_function)
         test_cases = [
             {
                 "name": "deadline case",
+                "period": "2026-01",
                 "input": {"#input.application_date": "2026-01-01"},
                 "output": {
                     "#deadline": "2026-01-08",
@@ -9959,6 +10028,10 @@ rules:
         ]
 
         assert find_test_input_assignment_issues(content, test_cases) == []
+        test_cases[0]["input"] = {"#input.unrelated_fact": True}
+        issues = find_test_input_assignment_issues(content, test_cases)
+        assert any("application_date" in str(issue) for issue in issues)
+        assert all(date_function not in str(issue) for issue in issues)
 
     def test_numeric_occurrence_check_uses_embedded_operating_excerpt(self, tmp_path):
         source_text = (
@@ -13173,6 +13246,51 @@ rules:
 
     def test_normalize_test_case_value_preserves_invalid_numeric_expression(self):
         assert _normalize_test_case_value("30 / 0") == "30 / 0"
+
+    @pytest.mark.parametrize(
+        "literal", ("2024-12-31", "1990-11-30", "2025-01-01", "2024-02-30")
+    )
+    def test_normalize_test_case_value_preserves_date_facts(self, literal):
+        assert _normalize_test_case_value(literal) == literal
+        wrapped = {"entity": "person", "value": literal}
+        assert _normalize_test_case_value(wrapped) == wrapped
+        assert _normalize_test_case_value({"values": {"2025": literal}}) == literal
+        assert _normalize_test_case_value([literal]) == [literal]
+
+    def test_normalize_test_case_value_keeps_explicit_subtraction(self):
+        assert _normalize_test_case_value("2024 - 12 - 31") == 1981
+
+    def test_materialize_eval_artifact_preserves_quoted_date_facts(self, tmp_path):
+        output_file = tmp_path / "source" / "receipt.yaml"
+        response = """=== FILE: receipt.yaml ===
+format: rulespec/v1
+module:
+  summary: Compare a recorded receipt date with the end of the query month.
+inputs:
+  - name: receipt_date
+    entity: Person
+    dtype: Date
+    period: Month
+rules:
+  - name: receipt_cutoff_reached
+    kind: derived
+    entity: Person
+    dtype: Judgment
+    period: Month
+    versions:
+      - effective_from: '2025-01-01'
+        formula: receipt_date <= period_end
+=== FILE: receipt.test.yaml ===
+- name: prior_year_receipt
+  period: 2025-01
+  input:
+    receipt_date: '2024-12-31'
+  output:
+    receipt_cutoff_reached: holds
+"""
+        assert _materialize_eval_artifact(response, output_file)
+        cases = yaml.safe_load(output_file.with_suffix(".test.yaml").read_text())
+        assert cases[0]["input"]["receipt_date"] == "2024-12-31"
 
     @pytest.mark.parametrize(
         "literal",

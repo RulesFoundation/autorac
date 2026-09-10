@@ -154,6 +154,7 @@ jobs:
           REPAIR_RUN_ID: ${{ inputs.repair_run_id }}
           ATTEMPT_BUDGET: ${{ vars.ATTEMPT_BUDGET }}
           ATTEMPT_BUDGET_OVERRIDE: ${{ vars.ATTEMPT_BUDGET_OVERRIDE }}
+          ATTEMPT_BUDGET_BY_CITATION_JSON: ${{ vars.ATTEMPT_BUDGET_BY_CITATION_JSON }}
         run: |
           python3 "$GITHUB_WORKSPACE/axiom-encode/scripts/enforce_attempt_budget.py"
 
@@ -400,6 +401,37 @@ jobs:
           git -C axiom-corpus merge-base --is-ancestor HEAD refs/remotes/origin/main
           git -C axiom-rules-engine merge-base --is-ancestor HEAD refs/remotes/origin/main
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.7"
+
+      - name: Set up Go 1.26.1
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: 1.26.1
+          cache: false
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+
+      - name: Build Axiom rules engine
+        working-directory: axiom-rules-engine
+        run: |
+          cargo build --release --locked
+          test -x target/release/axiom-rules-engine
+
+      - name: Install encoder
+        working-directory: axiom-encode
+        run: |
+          uv sync --locked --python 3.13 --extra api
+          rm -rf "$RUNNER_TEMP/axiom-verification-site-packages"
+          uv pip install --python .venv/bin/python \
+            --target "$RUNNER_TEMP/axiom-verification-site-packages" ".[api]"
+
       - name: Resolve trusted prior-run repair candidate
         id: repair_candidate
         if: ${{ inputs.repair_run_id != '' }}
@@ -425,7 +457,7 @@ jobs:
         run: |
           set -euo pipefail
           atomic_source_payload="$(
-            python \
+            axiom-encode/.venv/bin/python \
               axiom-encode/scripts/prepare_signed_backfill.py \
               split-atomic-source-input "${ATOMIC_SOURCE_JSON:-[]}"
           )"
@@ -450,11 +482,25 @@ jobs:
             echo "repair_run_id must identify a different decimal workflow run" >&2
             exit 1
           fi
+          # The supported transaction determines the replay lane. Derive its
+          # canonical path rather than spending two additional dispatch inputs
+          # or trusting a separately supplied path (GitHub permits at most 25).
+          REPAIR_RUN_LANE=target
+          repair_citation="$CITATION"
+          repair_rulespec_path="$REPLACE_RULESPEC_PATH"
+          if [ -n "$DEPENDENT_CITATION" ]; then
+            REPAIR_RUN_LANE=dependent
+            repair_citation="$DEPENDENT_CITATION"
+            repair_rulespec_path="$(
+              axiom-encode/.venv/bin/python \
+                axiom-encode/scripts/prepare_signed_backfill.py \
+                citation-rulespec-path "$DEPENDENT_CITATION"
+            )"
+          fi
           if [ -z "$REPLACE_RULESPEC_PATH" ] || \
              [ -n "$REPLACE_LEGACY_RULESPEC_PATH" ] || \
              [ -n "$LEGACY_EXACT_DEPENDENT_RULESPEC_PATH" ] || \
              [ -n "$SECOND_LEGACY_EXACT_DEPENDENT_RULESPEC_PATH" ] || \
-             [ -n "$DEPENDENT_CITATION" ] || \
              [ -n "$SECOND_DEPENDENT_CITATION" ] || \
              [ -n "$QUEUE_ID" ] || \
              ! jq -e 'type == "array" and length == 0' \
@@ -467,7 +513,7 @@ jobs:
              ! jq -e 'type == "array" and length == 0' \
                <<< "${LEGACY_RETAINED_SUCCESSOR_RULESPEC_PATHS_JSON:-[]}" \
                > /dev/null; then
-            echo "repair replay is limited to one non-legacy target with at most one exact source or test bundle, without refreshes, imports, dependents, or queue authorization" >&2
+            echo "repair replay is limited to one non-legacy target and at most one direct dependent, with at most one exact source or test bundle and without refreshes, imports, second dependents, or queue authorization" >&2
             exit 1
           fi
 
@@ -529,9 +575,9 @@ jobs:
             --dir "$repair_download"
           repair_archive="$repair_download/targeted-reencode-failure.tar"
           test -f "$repair_archive" && test ! -L "$repair_archive"
-          python3 axiom-encode/scripts/extract_repair_candidate.py \
+          axiom-encode/.venv/bin/python axiom-encode/scripts/extract_repair_candidate.py \
             "$repair_archive" "$RUNNER_TEMP/repair-candidate" \
-            --citation "$CITATION" \
+            --citation "$repair_citation" \
             --country "$COUNTRY" \
             --encoder-commit "$repair_encoder_commit" \
             --corpus-ref "$CORPUS_REF" \
@@ -539,7 +585,10 @@ jobs:
             --rulespec-ref "$RULESPEC_REF" \
             --allow-rulespec-base-advance \
             --atomic-source-json "$ATOMIC_SOURCE_JSON" \
-            --replace-rulespec-path "$REPLACE_RULESPEC_PATH" \
+            --repair-lane "$REPAIR_RUN_LANE" \
+            --replace-rulespec-path "$repair_rulespec_path" \
+            --transaction-citation "$CITATION" \
+            --transaction-rulespec-path "$REPLACE_RULESPEC_PATH" \
             --workflow-run-id "$REPAIR_RUN_ID" \
             > "$RUNNER_TEMP/repair-candidate.json"
           jq -e '
@@ -553,13 +602,15 @@ jobs:
             "$RUNNER_TEMP/repair-candidate.json")"
           repair_candidate_path="$(jq -er '.path' \
             "$RUNNER_TEMP/repair-candidate.json")"
-          python3 axiom-encode/scripts/verify_repair_base_advance.py \
+          axiom-encode/.venv/bin/python axiom-encode/scripts/verify_repair_base_advance.py \
             "$RULESPEC_CHECKOUT" \
             --country "$COUNTRY" \
             --source-ref "$repair_source_rulespec_ref" \
             --current-ref "$RULESPEC_REF" \
             --candidate-path "$repair_candidate_path" \
-            --rulespec-path "$REPLACE_RULESPEC_PATH"
+            --rulespec-path "$repair_rulespec_path"
+          echo "lane=$REPAIR_RUN_LANE" >> "$GITHUB_OUTPUT"
+          echo "rulespec_path=$repair_rulespec_path" >> "$GITHUB_OUTPUT"
           echo "root=$(jq -r '.root' "$RUNNER_TEMP/repair-candidate.json")" \
             >> "$GITHUB_OUTPUT"
           echo "path=$(jq -r '.path' "$RUNNER_TEMP/repair-candidate.json")" \
@@ -572,37 +623,6 @@ jobs:
             >> "$GITHUB_OUTPUT"
           echo "tests_sha256=$(jq -r '.tests_sha256' "$RUNNER_TEMP/repair-candidate.json")" \
             >> "$GITHUB_OUTPUT"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-        with:
-          version: "0.11.7"
-
-      - name: Set up Go 1.26.1
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version: 1.26.1
-          cache: false
-
-      - name: Set up Python
-        run: uv python install 3.13
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
-
-      - name: Build Axiom rules engine
-        working-directory: axiom-rules-engine
-        run: |
-          cargo build --release --locked
-          test -x target/release/axiom-rules-engine
-
-      - name: Install encoder
-        working-directory: axiom-encode
-        run: |
-          uv sync --locked --python 3.13 --extra api
-          rm -rf "$RUNNER_TEMP/axiom-verification-site-packages"
-          uv pip install --python .venv/bin/python \
-            --target "$RUNNER_TEMP/axiom-verification-site-packages" ".[api]"
 
       - name: Validate atomic source inputs
         env:
@@ -930,8 +950,20 @@ jobs:
           if [ -n "$cascade_target" ]; then
             cascade_args+=(--target-rulespec-path "$cascade_target")
           fi
+          if [ -n "$REPLACE_RULESPEC_PATH" ] && \
+             [ -z "$REPLACE_LEGACY_RULESPEC_PATH" ]; then
+            cascade_args+=(--allow-proof-import-subset)
+          fi
           cascade_args+=("${dependent_citations[@]}")
-          "${cascade_args[@]}"
+          cascade_mode="$("${cascade_args[@]}")"
+          case "$cascade_mode" in
+            all-direct|proof-import-subset) ;;
+            *)
+              echo "dependent cascade returned an invalid scheduling mode" >&2
+              exit 1
+              ;;
+          esac
+          printf 'DEPENDENT_CASCADE_MODE=%s\n' "$cascade_mode" >> "$GITHUB_ENV"
 
       - name: Verify existing signed imports
         env:
@@ -1104,6 +1136,8 @@ jobs:
           REPAIR_CANDIDATE_TESTS_SHA256: ${{ steps.repair_candidate.outputs.tests_sha256 }}
           REPAIR_TESTS_ONLY: ${{ steps.repair_candidate.outputs.tests_only }}
           REPAIR_RUN_ID: ${{ inputs.repair_run_id }}
+          REPAIR_RUN_LANE: ${{ steps.repair_candidate.outputs.lane }}
+          REPAIR_RULESPEC_PATH: ${{ steps.repair_candidate.outputs.rulespec_path }}
           REPLACE_RULESPEC_PATH: ${{ inputs.replace_rulespec_path }}
           REPLACE_LEGACY_RULESPEC_PATH: ${{ inputs.replace_legacy_rulespec_path }}
           LEGACY_EXACT_DEPENDENT_RULESPEC_PATH: ${{ inputs.legacy_exact_dependent_rulespec_path }}
@@ -1121,6 +1155,8 @@ jobs:
         run: |
           set -euo pipefail
           : "${REPAIR_TESTS_ONLY:=false}"
+          : "${REPAIR_RUN_LANE:=target}"
+          : "${REPAIR_RULESPEC_PATH:=}"
           : "${QUEUE_ID:=}"
           : "${REPLACE_RULESPEC_PATH:=}"
           : "${REPLACE_LEGACY_RULESPEC_PATH:=}"
@@ -1159,6 +1195,7 @@ jobs:
             local deferred_output_contracts_json="${8:-[]}"
             local required_test_cases_json="${9:-[]}"
             local require_complete_source_unit="${10:-true}"
+            local scheduled_dependent_paths_json="${11:-[]}"
             local review_finding_path=""
             local review_contract_json=""
             local candidate_root=""
@@ -1194,6 +1231,13 @@ jobs:
             if [ "$target_only" = "true" ]; then
               args+=(--apply-target-only)
             fi
+            while IFS= read -r scheduled_dependent_path; do
+              args+=(--scheduled-dependent-rulespec-path \
+                "$scheduled_dependent_path")
+            done < <(
+              jq -er 'if type == "array" then .[] else error("not array") end' \
+                <<< "$scheduled_dependent_paths_json"
+            )
             if [ -n "$replacement_path" ]; then
               args+=(--replace-rulespec-path "$replacement_path")
             fi
@@ -1288,6 +1332,9 @@ jobs:
               )
             fi
             if [ -n "${REPAIR_CANDIDATE_ROOT:-}" ] && \
+               { [ "$output_lane" = "$REPAIR_RUN_LANE" ] || \
+                 { [ "$REPAIR_RUN_LANE" = "target" ] && \
+                   [[ "$output_lane" =~ ^target(-preflight)?$ ]]; }; } && \
                [ -n "$replacement_path" ]; then
               candidate_root="$REPAIR_CANDIDATE_ROOT"
               candidate_path="$REPAIR_CANDIDATE_PATH"
@@ -1444,9 +1491,24 @@ jobs:
             dependent_rulespec_path="$("$workflow_python" "$backfill_helper" \
               citation-rulespec-path "$DEPENDENT_CITATION")"
           fi
+          if [ -n "${REPAIR_CANDIDATE_ROOT:-}" ] && \
+             [ "$REPAIR_RUN_LANE" = "dependent" ] && \
+             [ "$dependent_rulespec_path" != "$REPAIR_RULESPEC_PATH" ]; then
+            echo "dependent repair RuleSpec path does not match its citation" >&2
+            exit 1
+          fi
           if [ -n "$SECOND_DEPENDENT_CITATION" ]; then
             second_dependent_rulespec_path="$("$workflow_python" "$backfill_helper" \
               citation-rulespec-path "$SECOND_DEPENDENT_CITATION")"
+          fi
+          scheduled_dependent_paths_json="[]"
+          if [ "${DEPENDENT_CASCADE_MODE:-}" = "proof-import-subset" ]; then
+            scheduled_dependent_paths_json="$(
+              jq -cn \
+                --arg first "$dependent_rulespec_path" \
+                --arg second "$second_dependent_rulespec_path" \
+                '[$first, $second] | map(select(length > 0))'
+            )"
           fi
 
           atomic_source_payload="$(
@@ -1762,18 +1824,30 @@ jobs:
             done < "$RUNNER_TEMP/source-bundle-citations.txt"
 
             if [ -n "$DEPENDENT_CITATION" ]; then
+              primary_target_only=true
+              if [ "${DEPENDENT_CASCADE_MODE:-}" = "proof-import-subset" ]; then
+                primary_target_only=false
+              fi
               run_signed_encode \
-                "$CITATION" "$REVIEW_FINDING" true target \
+                "$CITATION" "$REVIEW_FINDING" "$primary_target_only" target \
                 "$REPLACE_RULESPEC_PATH" "$REPLACE_LEGACY_RULESPEC_PATH" \
                 "$required_imports_enabled" "[]" \
-                "$primary_required_test_cases_json"
+                "$primary_required_test_cases_json" \
+                "$target_require_complete_source_unit" \
+                "$scheduled_dependent_paths_json"
               dependent_target_only=false
               if [ -n "$SECOND_DEPENDENT_CITATION" ]; then
                 dependent_target_only=true
               fi
+              dependent_replacement_path=""
+              if [ -n "${REPAIR_CANDIDATE_ROOT:-}" ] && \
+                 [ "$REPAIR_RUN_LANE" = "dependent" ]; then
+                dependent_replacement_path="$dependent_rulespec_path"
+              fi
               run_signed_encode \
                 "$DEPENDENT_CITATION" "$DEPENDENT_REVIEW_FINDING" \
-                "$dependent_target_only" dependent "" "" false
+                "$dependent_target_only" dependent \
+                "$dependent_replacement_path" "" false
               if [ -n "$SECOND_DEPENDENT_CITATION" ]; then
                 run_signed_encode \
                   "$SECOND_DEPENDENT_CITATION" \

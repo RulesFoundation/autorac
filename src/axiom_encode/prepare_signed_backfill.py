@@ -1461,8 +1461,28 @@ def validate_dependent_cascade(
     target_citation: str,
     *dependent_citations: str,
     target_rulespec_path: str | None = None,
+    allow_proof_import_subset: bool = False,
 ) -> tuple[PurePosixPath, ...]:
-    """Require the supplied modules to be all of the target's direct dependents."""
+    """Require all direct dependents, or the exact proof-pinned subset when allowed."""
+
+    dependents, _mode = _classify_dependent_cascade(
+        repo,
+        target_citation,
+        *dependent_citations,
+        target_rulespec_path=target_rulespec_path,
+        allow_proof_import_subset=allow_proof_import_subset,
+    )
+    return dependents
+
+
+def _classify_dependent_cascade(
+    repo: Path,
+    target_citation: str,
+    *dependent_citations: str,
+    target_rulespec_path: str | None = None,
+    allow_proof_import_subset: bool = False,
+) -> tuple[tuple[PurePosixPath, ...], str]:
+    """Authenticate a complete cascade and identify its safe scheduling mode."""
 
     import yaml
 
@@ -1521,6 +1541,7 @@ def validate_dependent_cascade(
     target_import = target_relative.with_suffix("").as_posix()
     canonical_target_import = f"{target_jurisdiction}:{target_import}"
     direct_dependents: set[PurePosixPath] = set()
+    proof_import_dependents: set[PurePosixPath] = set()
     for atomic_root in sorted(RULESPEC_ATOMIC_ROOTS):
         root = content_root / atomic_root
         if not root.exists():
@@ -1549,18 +1570,61 @@ def validate_dependent_cascade(
                 in {target_import, canonical_target_import}
                 for raw_import in imports
             ):
-                direct_dependents.add(
-                    PurePosixPath(candidate.relative_to(content_root).as_posix())
+                relative_candidate = PurePosixPath(
+                    candidate.relative_to(content_root).as_posix()
                 )
+                direct_dependents.add(relative_candidate)
+                if _payload_has_proof_import_for_target(
+                    payload,
+                    target_import=target_import,
+                    canonical_target_import=canonical_target_import,
+                ):
+                    proof_import_dependents.add(relative_candidate)
 
     expected = set(dependent_relatives)
-    if direct_dependents != expected:
-        rendered = ", ".join(map(str, sorted(direct_dependents))) or "<none>"
-        raise ValueError(
-            "target direct-dependent set does not exactly match supplied dependents: "
-            f"{rendered}"
-        )
-    return tuple(dependent_relatives)
+    if direct_dependents == expected:
+        return tuple(dependent_relatives), "all-direct"
+    if allow_proof_import_subset and proof_import_dependents == expected:
+        return tuple(dependent_relatives), "proof-import-subset"
+    rendered = ", ".join(map(str, sorted(direct_dependents))) or "<none>"
+    raise ValueError(
+        "target direct-dependent set does not exactly match supplied dependents: "
+        f"{rendered}"
+    )
+
+
+def _payload_has_proof_import_for_target(
+    payload: dict[str, object],
+    *,
+    target_import: str,
+    canonical_target_import: str,
+) -> bool:
+    """Return whether a rule proof pins an import from the selected target."""
+
+    rules = payload.get("rules")
+    if not isinstance(rules, list):
+        return False
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        metadata = rule.get("metadata")
+        proof = metadata.get("proof") if isinstance(metadata, dict) else None
+        atoms = proof.get("atoms") if isinstance(proof, dict) else None
+        if not isinstance(atoms, list):
+            continue
+        for atom in atoms:
+            raw_import = atom.get("import") if isinstance(atom, dict) else None
+            if not isinstance(raw_import, dict) or not isinstance(
+                raw_import.get("hash"), str
+            ):
+                continue
+            raw_target = raw_import.get("target")
+            if not isinstance(raw_target, str):
+                continue
+            imported = raw_target.split("#", 1)[0].strip().strip("/")
+            if imported in {target_import, canonical_target_import}:
+                return True
+    return False
 
 
 def _git(repo: Path, *args: str) -> bytes:
@@ -1819,6 +1883,39 @@ def _normal_model_apply_manifest_for_target(
     return manifest_path, payload
 
 
+def _require_absent_inventory(repo: Path) -> None:
+    """Verify optional inventory absence without following any path symlinks."""
+
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    with contextlib.ExitStack() as stack:
+        try:
+            descriptor = os.open(repo, flags)
+        except OSError as exc:
+            raise ValueError(
+                "retired manifest inventory has unsafe repository root"
+            ) from exc
+        stack.callback(os.close, descriptor)
+        for part in RETIRED_MANIFEST_INVENTORY.parts[:-1]:
+            try:
+                descriptor = os.open(part, flags, dir_fd=descriptor)
+            except FileNotFoundError:
+                return
+            except OSError as exc:
+                raise ValueError(
+                    "retired manifest inventory has unsafe parent"
+                ) from exc
+            stack.callback(os.close, descriptor)
+        try:
+            os.stat(
+                RETIRED_MANIFEST_INVENTORY.name,
+                dir_fd=descriptor,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            return
+        raise ValueError("retired manifest inventory exists outside HEAD")
+
+
 def reconcile_retired_manifest_inventory(
     repo: Path,
     target_rulespec_path: str,
@@ -1837,6 +1934,20 @@ def reconcile_retired_manifest_inventory(
         raise ValueError(
             "retired manifest inventory changed before exact reconciliation"
         )
+    entry = _git(
+        repo,
+        "ls-tree",
+        "--full-tree",
+        "-z",
+        "HEAD",
+        "--",
+        RETIRED_MANIFEST_INVENTORY.as_posix(),
+    )
+    if not entry:
+        _require_absent_inventory(repo)
+        return None
+    if not entry.startswith(b"100644 blob "):
+        raise ValueError("retired manifest inventory is not a regular HEAD file")
     try:
         base_raw = _git(
             repo,
@@ -4015,6 +4126,7 @@ def main() -> None:
     cascade_parser.add_argument("repo", type=Path)
     cascade_parser.add_argument("target_citation")
     cascade_parser.add_argument("--target-rulespec-path")
+    cascade_parser.add_argument("--allow-proof-import-subset", action="store_true")
     cascade_parser.add_argument("dependent_citations", nargs="+")
     citation_path_parser = subparsers.add_parser("citation-rulespec-path")
     citation_path_parser.add_argument("citation")
@@ -4152,14 +4264,14 @@ def main() -> None:
                 )
             )
         elif args.command == "validate-dependent-cascade":
-            print(
-                validate_dependent_cascade(
-                    args.repo,
-                    args.target_citation,
-                    *args.dependent_citations,
-                    target_rulespec_path=args.target_rulespec_path,
-                )
+            _dependents, mode = _classify_dependent_cascade(
+                args.repo,
+                args.target_citation,
+                *args.dependent_citations,
+                target_rulespec_path=args.target_rulespec_path,
+                allow_proof_import_subset=args.allow_proof_import_subset,
             )
+            print(mode)
         elif args.command == "citation-rulespec-path":
             print(citation_rulespec_path(args.citation))
         elif args.command == "authorize-legacy-index-manifest-shrink":

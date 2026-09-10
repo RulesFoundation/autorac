@@ -4405,6 +4405,105 @@ def test_explicit_satz_markers_after_absatz_are_recognized():
     }
 
 
+@pytest.mark.parametrize("separator", [" ", "", "\n"])
+def test_glued_section_sign_starts_a_distinct_german_sentence(separator: str):
+    source = (
+        "(5) 1Abweichend von § 64 Absatz 2 und 3 bleibt der Vorrang bestehen."
+        f"{separator}2§ 64 Absatz 2 und 3 ist vom Beginn des Monats an anzuwenden."
+    )
+    branches = recognize_source_structure(source)
+    sentences = {
+        branch.path: branch for branch in branches if branch.kind == "sentence"
+    }
+    assert set(sentences) == {("5", "satz-1"), ("5", "satz-2")}
+    assert sentences[("5", "satz-1")].text.endswith("Vorrang bestehen.")
+    assert sentences[("5", "satz-2")].text.startswith("2§ 64 Absatz 2 und 3")
+    for branch in sentences.values():
+        assert source[branch.start : branch.end].strip() == branch.text
+
+
+@pytest.mark.parametrize("source", ["(1) 1§ 64 gilt.", "1§§ 64 und 65 gelten."])
+def test_section_sign_sentence_can_begin_a_paragraph(source: str):
+    sentences = [b for b in recognize_source_structure(source) if b.kind == "sentence"]
+    assert len(sentences) == 1
+    assert sentences[0].label == "Satz 1"
+
+
+@pytest.mark.parametrize("separator", [" ", "", "\n"])
+def test_numeric_recall_ignores_glued_section_sentence_labels(separator: str):
+    source = (
+        "(5) 1Die Zahlung beträgt 73 Euro."
+        f"{separator}2§ 64 Absatz 2 und 3 ist anzuwenden."
+    )
+    cleaned = authoritative_numeric_recall_text(source)
+    values = [item.value for item in DE_NUMERIC_OCCURRENCE_EXTRACTOR(cleaned)]
+    assert values == [73]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "(1) 1§ 64 gilt bei 73 Euro.",
+        "(1) Eine Regel gilt.\n(2) 2§ 64 gilt bei 73 Euro.",
+        "1§§ 64 und 65 gelten bei 73 Euro.",
+    ],
+)
+def test_numeric_recall_handles_section_sentence_at_paragraph_start(source: str):
+    cleaned = authoritative_numeric_recall_text(source)
+    assert [item.value for item in DE_NUMERIC_OCCURRENCE_EXTRACTOR(cleaned)] == [73]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "(1) 1Es gelten 2 Euro.2§ 64 gilt zusätzlich.",
+        "(1) 1Die Regel gilt.2§ 64 gilt bei 2 Euro.",
+        "(1) Die Zahlung beträgt 2 Euro nach § 64.",
+        "(1) Die Zahl 2§ 64 ist hier kein Satzanfang.",
+        "(1) Die Zahl 2 § 64 ist hier kein geklebter Satzanfang.",
+    ],
+)
+def test_numeric_recall_retains_substantive_two_near_section_sign(source: str):
+    cleaned = authoritative_numeric_recall_text(source)
+    assert [item.value for item in DE_NUMERIC_OCCURRENCE_EXTRACTOR(cleaned)] == [2]
+
+
+def test_glued_section_sentence_label_does_not_require_a_dummy_parameter():
+    content = "format: rulespec/v1\nmodule: {}\nrules: []\n"
+    source = "(5) 1Die Zahlung beträgt 73 Euro.2§ 64 ist anzuwenden."
+    result = _analyze(content, source, artifact_numeric_values=(73,), test_cases=[])
+    assert not _has_issue(result, "numeric-recall")
+
+    substantive = _analyze(
+        content,
+        source.replace("ist anzuwenden", "gilt bei 2 Euro"),
+        artifact_numeric_values=(73,),
+        test_cases=[],
+    )
+    assert _has_issue(substantive, "numeric-recall", "numeric value 2")
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        "Art. 2§ 3",
+        "Abs. 2§ 3",
+        "Nr. 2§ 3",
+        "S. 2§ 3",
+        "Sec. 2§ 3",
+        "Sect. 2§ 3",
+        "Artikel 2§ 3",
+        "(Artikel 2)3§ 4",
+        "Nummer 2§ 3",
+        "2 § 3",
+        "2§ note",
+    ],
+)
+def test_compound_section_addresses_are_not_sentence_markers(reference: str):
+    branches = recognize_source_structure(f"(1) Die Fundstelle ist {reference}.")
+    assert not [b for b in branches if b.kind == "sentence"]
+
+
 def test_nj_title_54a_citations_are_not_glued_german_sentence_markers():
     branches = recognize_source_structure(
         "54A:4-7 New Jersey credit. N.J.S.54A:1-1 applies. "
@@ -9248,6 +9347,35 @@ def test_editorial_slash_date_does_not_create_computation_obligation():
     assert source_states_explicit_computation(
         "The amount is computed by dividing income by the divisor."
     )
+
+
+@pytest.mark.parametrize(
+    "conjunction", ["und/oder", "und / oder", "UND/ODER", "and/or", "and / or"]
+)
+def test_slash_conjunction_does_not_create_arithmetic_obligation(conjunction: str):
+    source = (
+        "Artikel 59\nRegelungen für den Fall, in dem sich die anzuwendenden\n"
+        f"Rechtsvorschriften {conjunction} die Zuständigkeit für die Gewährung\n"
+        "von Familienleistungen ändern"
+    )
+    assert not source_states_explicit_computation(source)
+    assert "divide" not in completeness_module._formula_operation_kinds(source)
+    assert "divide" not in completeness_module._formula_operation_kinds(conjunction)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "income / days",
+        "land/orbit",
+        "und / order",
+        "The agency notifies the parent and/or guardian; payment = income / 2.",
+        "Rechtsvorschriften und/oder Zuständigkeit; Betrag = Einkommen / 2.",
+    ],
+)
+def test_slash_conjunction_mask_preserves_real_arithmetic(source: str):
+    assert source_states_explicit_computation(source)
+    assert "divide" in completeness_module._formula_operation_kinds(source)
 
 
 def test_formula_subject_matches_established_boundary_helper_suffix():
@@ -22951,6 +23079,27 @@ penalty waived under the voluntary disclosure program.
     ] == [("twenty-five\nthousand", 25000.0)]
 
 
+def test_statutory_proviso_starts_a_distinct_source_clause():
+    source = (
+        "The allotment equals the food plan reduced by 30 percent of income, "
+        "rounded down: Provided , That the minimum is 8 percent of the food "
+        "plan, rounded to the nearest dollar."
+    )
+
+    clauses = tuple(completeness_module._source_clause_spans(source, branches=()))
+
+    assert [clause for _start, _end, clause in clauses] == [
+        (
+            "The allotment equals the food plan reduced by 30 percent of income, "
+            "rounded down:"
+        ),
+        (
+            "Provided , That the minimum is 8 percent of the food plan, rounded "
+            "to the nearest dollar."
+        ),
+    ]
+
+
 @pytest.mark.parametrize(
     "reference",
     (
@@ -26435,6 +26584,49 @@ def test_formula_runtime_numeric_equality_is_exact():
     assert not completeness_module._formula_runtime_values_equal(
         0,
         Decimal("0.0000000000001"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("runtime", "asserted"),
+    [
+        (Decimal("197.51000000000001"), 197.51),
+        (Decimal("100.48999999999999"), 100.49),
+        (Decimal("197.50000000000002"), 197.5),
+        (Decimal("100.49999999999998"), 100.5),
+    ],
+)
+def test_asserted_money_runtime_equality_tolerates_one_binary64_step(
+    runtime: Decimal,
+    asserted: float,
+):
+    assert completeness_module._asserted_formula_runtime_values_equal(
+        {"dtype": "Money"}, runtime, asserted
+    )
+
+
+@pytest.mark.parametrize(
+    ("rule", "runtime", "asserted"),
+    [
+        ({"dtype": "Decimal"}, Decimal("197.51000000000001"), 197.51),
+        (
+            {"dtype": "Money"},
+            Decimal("555.53333333333333333333333333"),
+            555.5333333333333,
+        ),
+        ({"dtype": "Money"}, Decimal(2**53 + 1), float(2**53 + 1)),
+        ({"dtype": "Money"}, Decimal("0.9999999999999998"), 1.0),
+    ],
+)
+def test_asserted_money_runtime_equality_rejects_non_cent_or_unsafe_collapses(
+    rule,
+    runtime,
+    asserted,
+):
+    assert not completeness_module._asserted_formula_runtime_values_equal(
+        rule,
+        runtime,
+        asserted,
     )
 
 
@@ -35545,14 +35737,20 @@ rules:
         "auf volle Euro zu runden",
     ],
 )
+@pytest.mark.parametrize(
+    "rounded_formula",
+    [
+        "floor(income * multiplier + 0.5)",
+        "floor(income * multiplier + (1 / 2))",
+    ],
+)
 def test_generic_german_rounding_requires_nearest_rounding_and_fractional_proof(
     rounding_text: str,
+    rounded_formula: str,
 ):
     source = f"(1) Der Betrag wird als Einkommen * 2 berechnet und ist {rounding_text}."
     unrounded = _single_rounding_content("income * multiplier")
-    rounded = _single_rounding_content(
-        "floor(income * multiplier + 0.5)",
-    )
+    rounded = _single_rounding_content(rounded_formula)
     fractional_case = {
         "name": "nearest fractional result",
         "period": "2026",
@@ -35590,6 +35788,364 @@ def test_generic_german_rounding_requires_nearest_rounding_and_fractional_proof(
     assert _has_issue(missing_operator, "rounding", "principal formula")
     assert _has_issue(missing_fractional_proof, "rounding", "fractional")
     assert not complete.issues
+
+
+def test_nearest_rounding_accepts_fractional_fixed_base_on_selected_branch():
+    source = (
+        "(1) For eligible household sizes up to 2, the amount is 8 percent "
+        "of the 298 dollar base, rounded to the nearest whole dollar."
+    )
+    content = """\
+format: rulespec/v1
+module:
+  source_verification:
+    corpus_citation_path: us/statute/7/2017/a
+rules:
+  - name: base_amount
+    kind: parameter
+    dtype: Money
+    source: us/statute/7/2017/a(1)
+    versions: [{formula: 298}]
+  - name: minimum_rate
+    kind: parameter
+    dtype: Rate
+    source: us/statute/7/2017/a(1)
+    versions: [{formula: 0.08}]
+  - name: rounded_amount
+    kind: derived
+    dtype: Money
+    source: us/statute/7/2017/a(1)
+    versions:
+      - formula: >-
+          if household_size <= 2:
+            floor(base_amount * minimum_rate + (1 / 2))
+          else:
+            0
+"""
+    test_cases = [
+        {
+            "name": "selected fractional branch",
+            "period": "2026",
+            "input": {"household_size": 2},
+            "output": {"rounded_amount": 24},
+        },
+        {
+            "name": "unselected branch",
+            "period": "2026",
+            "input": {"household_size": 3},
+            "output": {"rounded_amount": 0},
+        },
+    ]
+
+    result = _analyze(
+        content,
+        source,
+        corpus_citation_path="us/statute/7/2017/a",
+        test_cases=test_cases,
+        extract_numeric_occurrences=EN_NUMERIC_OCCURRENCE_EXTRACTOR,
+        extract_numeric_grounding_occurrences=(
+            EN_NUMERIC_GROUNDING_OCCURRENCE_EXTRACTOR
+        ),
+    )
+
+    assert not _has_issue(result, "rounding", "fractional"), "\n".join(result.issues)
+
+
+def test_nearest_lower_whole_dollar_is_downward_rounding():
+    source = "The amount is rounded to the nearest lower whole dollar."
+
+    assert completeness_module._rounding_direction(source) == "downward"
+
+
+@pytest.mark.parametrize(
+    ("source", "expected_directions"),
+    [
+        (
+            "Amount A is rounded down, and amount B is rounded up.",
+            ["downward", "upward"],
+        ),
+        (
+            "Amount A is rounded to the nearest whole dollar, and amount B "
+            "is rounded up.",
+            ["nearest", "upward"],
+        ),
+        (
+            "Amount A is rounded to the nearest lower whole dollar, and amount B "
+            "is rounded up.",
+            ["downward", "upward"],
+        ),
+    ],
+)
+def test_rounding_obligations_keep_match_local_directions(
+    source: str,
+    expected_directions: list[str],
+):
+    branches = recognize_source_structure(source)
+
+    obligations = completeness_module._source_rounding_obligations(
+        source,
+        branches=branches,
+        active_branches=branches,
+        deferred_paths=set(),
+    )
+
+    assert [direction for _, direction in obligations] == expected_directions
+
+
+def test_import_backed_assertion_can_corroborate_local_dependency_chain():
+    imported_amount = {
+        "name": "import_backed_amount",
+        "kind": "derived",
+        "metadata": {
+            "proof": {
+                "atoms": [
+                    {
+                        "path": "versions[0].formula",
+                        "kind": "import",
+                        "import": {
+                            "target": "us:statutes/source#external_amount",
+                            "output": "external_amount",
+                            "hash": "sha256:abc123",
+                        },
+                    }
+                ]
+            }
+        },
+        "versions": [{"formula": "max(0, external_amount)"}],
+    }
+    rounded_amount = {
+        "name": "rounded_amount",
+        "kind": "derived",
+        "versions": [{"formula": "floor(import_backed_amount)"}],
+    }
+    principal_rules = {
+        "import_backed_amount": imported_amount,
+        "rounded_amount": rounded_amount,
+    }
+    case = {
+        "input": {},
+        "output": {"import_backed_amount": 23.84, "rounded_amount": 23},
+    }
+
+    dependencies = completeness_module._case_asserted_dependency_environment(
+        principal_rules,
+        case,
+        formula_environment={},
+    )
+
+    assert dependencies == {
+        "import_backed_amount": 23.84,
+        "rounded_amount": 23,
+    }
+    imported_amount["metadata"]["proof"]["atoms"][0]["import"]["hash"] = "sha256:local"
+    assert not completeness_module._case_asserted_dependency_environment(
+        principal_rules,
+        case,
+        formula_environment={},
+    )
+
+
+def test_snap_proviso_rounding_uses_import_backed_selected_branch_evidence():
+    source = (
+        "The allotment equals the maximum allotment reduced by 30 percent of "
+        "income, rounded to the nearest lower whole dollar: Provided, That for "
+        "households of one and two persons the minimum allotment is 8 percent "
+        "of the cost for a household containing 1 member, rounded to the nearest "
+        "whole dollar."
+    )
+    content = """\
+format: rulespec/v1
+module:
+  source_verification:
+    corpus_citation_path: us/statute/7/2017/a
+imports:
+  - us:statutes/net-income#snap_net_income
+  - us:policies/maximum-allotments#snap_maximum_allotment
+  - us:policies/maximum-allotments#snap_one_person_food_plan_cost
+inputs:
+  - name: household_size
+    dtype: Count
+rules:
+  - name: contribution_rate
+    kind: parameter
+    versions: [{formula: 0.30}]
+  - name: minimum_rate
+    kind: parameter
+    versions: [{formula: 0.08}]
+  - name: size_limit
+    kind: parameter
+    versions: [{formula: 2}]
+  - name: one_member_size
+    kind: parameter
+    versions: [{formula: 1}]
+  - name: net_income_for_allotment
+    kind: derived
+    source: us/statute/7/2017/a
+    metadata:
+      proof:
+        atoms:
+          - path: versions[0].formula
+            kind: formula
+            source:
+              corpus_citation_path: us/statute/7/2017/a
+              excerpt: income
+          - path: versions[0].formula
+            kind: import
+            import:
+              target: us:statutes/net-income#snap_net_income
+              output: snap_net_income
+              hash: sha256:net
+    versions: [{formula: 'max(0, snap_net_income)'}]
+  - name: contribution
+    kind: derived
+    source: us/statute/7/2017/a
+    metadata:
+      proof:
+        atoms:
+          - path: versions[0].formula
+            kind: formula
+            source:
+              corpus_citation_path: us/statute/7/2017/a
+              excerpt: 30 percent of income
+    versions: [{formula: 'net_income_for_allotment * contribution_rate'}]
+  - name: allotment_before_rounding
+    kind: derived
+    source: us/statute/7/2017/a
+    metadata:
+      proof:
+        atoms:
+          - path: versions[0].formula
+            kind: formula
+            source:
+              corpus_citation_path: us/statute/7/2017/a
+              excerpt: maximum allotment reduced by 30 percent of income
+          - path: versions[0].formula
+            kind: import
+            import:
+              target: us:policies/maximum-allotments#snap_maximum_allotment
+              output: snap_maximum_allotment
+              hash: sha256:maximum
+    versions: [{formula: 'max(0, snap_maximum_allotment - contribution)'}]
+  - name: ordinary_allotment
+    kind: derived
+    source: us/statute/7/2017/a
+    metadata:
+      proof:
+        atoms:
+          - path: versions[0].formula
+            kind: ordering
+            source:
+              corpus_citation_path: us/statute/7/2017/a
+              excerpt: rounded to the nearest lower whole dollar
+    versions: [{formula: 'floor(allotment_before_rounding)'}]
+  - name: minimum_before_rounding
+    kind: derived
+    source: us/statute/7/2017/a
+    metadata:
+      proof:
+        atoms:
+          - path: versions[0].formula
+            kind: formula
+            source:
+              corpus_citation_path: us/statute/7/2017/a
+              excerpt: households of one and two persons the minimum allotment is 8 percent of the cost for a household containing 1 member
+          - path: versions[0].formula
+            kind: import
+            import:
+              target: us:policies/maximum-allotments#snap_one_person_food_plan_cost
+              output: snap_one_person_food_plan_cost
+              hash: sha256:one-person
+    versions:
+      - formula: >-
+          if household_size >= one_member_size and household_size <= size_limit:
+            snap_one_person_food_plan_cost * minimum_rate
+          else: 0
+  - name: minimum_allotment
+    kind: derived
+    source: us/statute/7/2017/a
+    metadata:
+      proof:
+        atoms:
+          - path: versions[0].formula
+            kind: ordering
+            source:
+              corpus_citation_path: us/statute/7/2017/a
+              excerpt: rounded to the nearest whole dollar
+    versions: [{formula: 'floor(minimum_before_rounding + (1 / 2))'}]
+"""
+    cases = [
+        {
+            "name": "ordinary fractional allotment",
+            "input": {"household_size": 3},
+            "output": {
+                "net_income_for_allotment": 100,
+                "contribution": 30,
+                "allotment_before_rounding": 100.49,
+                "ordinary_allotment": 100,
+                "minimum_before_rounding": 0,
+                "minimum_allotment": 0,
+            },
+        },
+        {
+            "name": "two-person rounded minimum",
+            "input": {"household_size": 2},
+            "output": {
+                "net_income_for_allotment": 100,
+                "contribution": 30,
+                "allotment_before_rounding": 0,
+                "ordinary_allotment": 0,
+                "minimum_before_rounding": 23.84,
+                "minimum_allotment": 24,
+            },
+        },
+    ]
+
+    result = _analyze(
+        content,
+        source,
+        corpus_citation_path="us/statute/7/2017/a",
+        test_cases=cases,
+        extract_numeric_occurrences=EN_NUMERIC_OCCURRENCE_EXTRACTOR,
+        extract_numeric_grounding_occurrences=(
+            EN_NUMERIC_GROUNDING_OCCURRENCE_EXTRACTOR
+        ),
+    )
+
+    assert not _has_issue(result, "formula branch", "test"), "\n".join(result.issues)
+    assert not _has_issue(result, "rounding", "fractional"), "\n".join(result.issues)
+
+
+@pytest.mark.parametrize(
+    ("operand", "demonstrated_operand"),
+    [
+        ("amount + 0.5", "amount"),
+        ("0.5 + amount", "amount"),
+        ("amount + 0.5 + adjustment", "amount + adjustment"),
+        ("amount + (adjustment + (1 / 2))", "amount + adjustment"),
+    ],
+)
+def test_nearest_rounding_half_is_exact_and_addition_order_independent(
+    operand: str,
+    demonstrated_operand: str,
+):
+    assert (
+        completeness_module._rounding_demonstrated_operand(
+            operand,
+            direction="nearest",
+        )
+        == demonstrated_operand
+    )
+
+
+@pytest.mark.parametrize("offset", ["0.4999999999", "0.5000000001"])
+def test_nearest_rounding_rejects_near_half_offsets(offset: str):
+    assert (
+        completeness_module._rounding_demonstrated_operand(
+            f"amount + {offset}",
+            direction="nearest",
+        )
+        is None
+    )
 
 
 def test_estg_66_precise_absatz_3_deferral_suppresses_rounding_test_demand():
@@ -42323,3 +42879,721 @@ def test_louisiana_cycle70_accepts_plural_article_paragraph_labels():
         "Constitution, the amount is determined under R.S. 47:32.",
         corpus_citation_path="us-la/statute/47:295",
     )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "(5) 1Abweichend von § 64 Absatz 2 und 3 steht Berechtigten, die für "
+        "Dezember 1990 für ihre Kinder Kindergeld in dem in Artikel 3 des "
+        "Einigungsvertrages genannten Gebiet bezogen haben, das Kindergeld für "
+        "diese Kinder auch für die folgende Zeit zu, solange sie ihren Wohnsitz "
+        "oder gewöhnlichen Aufenthalt in diesem Gebiet beibehalten und die "
+        "Kinder die Voraussetzungen ihrer Berücksichtigung weiterhin erfüllen.",
+        "(5) 2§ 64 Absatz 2 und 3 ist insoweit erst für die Zeit vom Beginn des "
+        "Monats an anzuwenden, in dem ein hierauf gerichteter Antrag bei der "
+        "zuständigen Stelle eingegangen ist.",
+    ],
+)
+def test_estg78_explicit_priority_dependency_accepts_exact_typed_blocker(source):
+    # Verbatim operative clauses from de/statute/estg/78 in the pinned corpus.
+    # Test each independently: one accepted clause must not mask the other.
+    covered, issues = completeness_module._deferred_coverage(
+        {
+            "module": {
+                "deferred_outputs": [
+                    {
+                        "output": "de:statutes/estg/78/5#recipient_priority",
+                        "blocked_by": ["de:statutes/estg/64#recipient_priority"],
+                        "reason": "Cannot be computed until the recipient_priority "
+                        "rule cited in EStG § 64 is encoded.",
+                    }
+                ]
+            }
+        },
+        corpus_citation_path="de/statute/estg/78",
+        source_text=source,
+        branches=recognize_source_structure(source),
+    )
+    assert not issues
+    assert covered == {("5",)}
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "Nicht abweichend von § 64 Absatz 2 und 3 wird diese Frage behandelt.",
+        "Keinesfalls abweichend von § 64 Absatz 2 und 3 wird diese Frage behandelt.",
+        "§ 64 Absatz 2 und 3 ist nicht anzuwenden.",
+        "§ 64 Absatz 2 und 3 ist insoweit erst für die Zeit vom Beginn des "
+        "Monats an nicht anzuwenden.",
+        "§ 64 Absatz 2 und 3 wird erwähnt; eine andere Vorschrift ist anzuwenden.",
+        "§ 64 Absatz 2 und 3 wird erwähnt und eine andere Vorschrift ist anzuwenden.",
+        "§ 64 Absatz 2 und 3 bleibt unberührt.",
+        "Abweichend von § 65 wird der Betrag bestimmt.",
+    ],
+)
+def test_german_dependency_links_reject_negation_unrelated_clause_and_other_section(
+    source,
+):
+    assert not completeness_module._source_scope_identifies_blocker(
+        source,
+        "de:statutes/estg/64#recipient_priority",
+        corpus_citation_path="de/statute/estg/78",
+    )
+
+
+def test_estg32_service_citations_do_not_create_executable_numeric_requirements():
+    # Corpus de/statute/estg/32/absatz-4/document-1: these are instrument
+    # identifiers and publication locators, not additional eligibility values.
+    source = """noch nicht das 25. Lebensjahr vollendet hat und
+Verordnung (EU) 2021/888 des Europäischen Parlaments und des Rates vom 20. Mai 2021
+zur Aufstellung des Programms für das Europäische Solidaritätskorps und zur Aufhebung
+der Verordnungen (EU) 2018/1475 und (EU) Nr. 375/2014 (ABl. L 202 vom 8.6.2021, S. 32),
+Richtlinie vom 4. Januar 2021 (GMBl S. 77);
+bis zu 20 Stunden regelmäßiger wöchentlicher Arbeitszeit."""
+    inventory = extract_typed_numeric_inventory_occurrences_from_text(
+        authoritative_numeric_recall_text(source), profile="de-DE"
+    )
+    assert [(item.raw, item.value) for item in inventory] == [
+        ("25", 25.0),
+        ("20", 20.0),
+    ]
+
+
+@pytest.mark.parametrize(
+    "citation",
+    [
+        "Verordnung (EU) 2021/888",
+        "Verordnung (EG) Nr. 883/2004",
+        "Verordnung (EWG) Nr. 1408/71",
+        "Verordnungen (EU) 2018/1475 und (EU) Nr. 375/2014",
+        "Verordnungen (EU) 2018/1475, (EU) Nr. 375/2014",
+    ],
+)
+def test_eu_regulation_identifiers_are_not_division_formulas(citation):
+    assert not completeness_module.source_states_explicit_computation(citation)
+    # An equal-valued operation outside the citation remains a computation.
+    assert completeness_module.source_states_explicit_computation(
+        f"{citation}; Der Betrag ist 2021 / 888."
+    )
+
+
+def test_estg32_regulation_title_does_not_create_formula_clause_witnesses():
+    source = """(4) 1Ein Kind wird berücksichtigt, wenn es eine Freiwilligentätigkeit
+im Rahmen des Europäischen Solidaritätskorps im Sinne der
+Verordnung (EU) 2021/888 des Europäischen Parlaments und des Rates vom 20. Mai 2021
+zur Aufstellung des Programms für das Europäische Solidaritätskorps und zur Aufhebung
+der Verordnungen (EU) 2018/1475 und (EU) Nr. 375/2014 (ABl. L 202 vom 8.6.2021, S. 32)
+leistet. 2Der Betrag wird durch drei geteilt."""
+    branches = recognize_source_structure(source)
+    clauses = completeness_module._source_formula_branches(
+        source,
+        branches=branches,
+        active_branches=branches,
+        deferred_paths=set(),
+    )
+    assert len(clauses) == 1
+    assert "durch drei geteilt" in clauses[0].text
+    assert source[clauses[0].start : clauses[0].end] == clauses[0].text
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "Der Betrag ist 2021 / 888.",
+        "Der Betrag ist 883/2004.",
+        "Der Betrag ist 1408/71.",
+        "Verordnung (EU) 2021/888/32",
+        "Verordnung (EU) 2021/888888 Euro",
+        "Verordnung (EU) 2021/888.5",
+        "Verordnung (EU) 2021/888,5",
+        "Verordnungen (EU) 2018/1475 und (EU) Nr. 375/2014.5",
+        "Verordnungen (EU) 2018/1475 und (EU) Nr. 375/2014,5",
+    ],
+)
+def test_eu_reference_formula_mask_preserves_unbound_or_partial_arithmetic(source):
+    assert completeness_module.source_states_explicit_computation(source)
+
+
+@pytest.mark.parametrize("operator", ["*", "+", "-", "/", "×", "plus", "minus", "mal"])
+@pytest.mark.parametrize("before", [False, True])
+def test_eu_reference_formula_mask_preserves_attached_numeric_operators(
+    operator, before
+):
+    citation = "Verordnung (EU) 2021/888"
+    source = f"2 {operator} {citation}" if before else f"{citation} {operator} 2"
+    assert completeness_module.source_states_explicit_computation(source)
+
+
+@pytest.mark.parametrize("operand", ["-2", "+2", "−2", ".5", ",5", "-.5", "+,5"])
+@pytest.mark.parametrize("operator", ["*", "/", "plus"])
+@pytest.mark.parametrize("before", [False, True])
+def test_eu_reference_formula_mask_preserves_signed_and_decimal_operands(
+    operand, operator, before
+):
+    citation = "Verordnung (EU) 2021/888"
+    source = (
+        f"{operand} {operator} {citation}"
+        if before
+        else f"{citation} {operator} {operand}"
+    )
+    assert completeness_module.source_states_explicit_computation(source)
+
+
+@pytest.mark.parametrize("suffix", [".", ",", ";", " – Aktuelle Fassung", " - Titel"])
+def test_eu_reference_formula_mask_accepts_ordinary_citation_punctuation(suffix):
+    assert not completeness_module.source_states_explicit_computation(
+        f"Verordnung (EU) 2021/888{suffix}"
+    )
+
+
+@pytest.mark.parametrize(
+    "citation",
+    [
+        "(ABl. L 202 vom 8.6.2021, S. 32)",
+        "(ABl. C 110 vom 25.04.1983, S. 60)",
+        "(ABl. L 202\nvom 8.6.2021,\nS. 32–40)",
+        "(GMBl S. 77)",
+        "(GMBl. 2021 S. 77)",
+        "(GMBl 2021, S. 77-80)",
+        "Verordnung (EG) Nr. 883/2004",
+        "Verordnung (EWG) Nr. 1408/71",
+        "Verordnungen (EU) 2018/1475 und (EU) Nr. 375/2014",
+    ],
+)
+def test_german_instrument_citation_cleanup_preserves_equal_operative_values(citation):
+    source = f"{citation}; Freibetrag 32 Euro, Zuschlag 77 Euro, Grenze 202 Euro."
+    inventory = extract_typed_numeric_inventory_occurrences_from_text(
+        authoritative_numeric_recall_text(source), profile="de-DE"
+    )
+    assert [item.value for item in inventory] == [32.0, 77.0, 202.0]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "(GMBl S. 77 Euro)",
+        "(GMBl S. 77; der Freibetrag beträgt 77 Euro)",
+        "(ABl. L 202 vom 8.6.2021, S. 32; der Freibetrag beträgt 32 Euro)",
+        "Verordnung (EU) 2021/888888 Euro",
+        "Verordnung (EU) 2021/888a",
+        "Verordnung (EU) 2021/888/32",
+        "Eine Zahlung von 32 Euro auf S. 77.",
+    ],
+)
+def test_german_instrument_cleanup_does_not_hide_mixed_or_partial_text(source):
+    assert authoritative_numeric_recall_text(source) == source
+
+
+def _closed_statutory_rounding_example():
+    source = (
+        "(3) Werden die Freibeträge für Kinder nach § 31 Satz 1 in Verbindung "
+        "mit § 32 Absatz 6 Satz 1 angehoben, wird das Kindergeld entsprechend "
+        "erhöht. Das Kindergeld ist dabei auf volle Euro kaufmännisch zu runden."
+    )
+    parameters = {
+        "base": "255",
+        "new_allowance": "4878",
+        "old_allowance": "4800",
+        "half": "1 / 2",
+        "unit": "1",
+    }
+    rules = [
+        {
+            "name": name,
+            "kind": "parameter",
+            "dtype": "Decimal",
+            "source": "de/statute/estg/66(3)",
+            "versions": [{"effective_from": "2026-01-01", "formula": formula}],
+        }
+        for name, formula in parameters.items()
+    ]
+    rules += [
+        {
+            "name": name,
+            "kind": "derived",
+            "dtype": "Money",
+            "source": "de/statute/estg/66(3)",
+            "versions": [{"effective_from": "2026-01-01", "formula": formula}],
+        }
+        for name, formula in {
+            "unrounded": "base * new_allowance / old_allowance",
+            "rounded": "floor(unrounded / unit + half) * unit",
+        }.items()
+    ]
+    payload = {
+        "format": "rulespec/v1",
+        "module": {
+            "source_verification": {"corpus_citation_path": "de/statute/estg/66"}
+        },
+        "rules": rules,
+    }
+    case = {
+        "period": "2026",
+        "input": {},
+        "output": {"unrounded": 259.14375, "rounded": 259},
+    }
+    return source, payload, case
+
+
+@pytest.mark.parametrize("multiline", [False, True])
+def test_closed_statutory_rounding_accepts_named_half_and_asserted_fraction(multiline):
+    source, payload, case = _closed_statutory_rounding_example()
+    if multiline:
+        for rule in payload["rules"]:
+            formula = rule["versions"][0]["formula"]
+            rule["versions"][0]["formula"] = formula.replace(" + ", "\n    + ").replace(
+                " * ", "\n    * "
+            )
+    result = _analyze(
+        yaml.safe_dump(payload),
+        source,
+        corpus_citation_path="de/statute/estg/66",
+        test_cases=[case],
+    )
+    assert not _has_issue(result, "rounding"), "\n".join(result.issues)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "wrong_half",
+        "other_period_half",
+        "input_half",
+        "import_half",
+        "hidden_input",
+        "integral_operand",
+        "wrong_result",
+        "missing_intermediate",
+        "cycle",
+        "unavailable_version",
+        "missing_period",
+        "conflicting_override",
+        "inactive_rounding",
+    ],
+)
+def test_closed_statutory_rounding_rejects_unproved_witnesses(mutation: str):
+    source, payload, case = _closed_statutory_rounding_example()
+    rules = {rule["name"]: rule for rule in payload["rules"]}
+    if mutation == "wrong_half":
+        rules["half"]["versions"][0]["formula"] = "0.49"
+    elif mutation == "other_period_half":
+        rules["half"]["versions"].append(
+            {"effective_from": "2027-01-01", "formula": "0.49"}
+        )
+        case["period"] = "2027"
+    elif mutation == "input_half":
+        payload["rules"].remove(rules["half"])
+        payload["inputs"] = [{"name": "half", "dtype": "Decimal"}]
+        case["input"]["half"] = 0.5
+    elif mutation == "import_half":
+        rules["half"]["kind"] = "derived"
+        rules["half"]["versions"][0]["formula"] = "external_half"
+        case["output"]["half"] = 0.5
+    elif mutation == "hidden_input":
+        rules["old_allowance"]["versions"][0]["formula"] = "4800 + hidden - hidden"
+        payload["inputs"] = [{"name": "hidden", "dtype": "Decimal"}]
+        case["input"]["hidden"] = 1
+    elif mutation == "integral_operand":
+        rules["new_allowance"]["versions"][0]["formula"] = "4800"
+        case["output"] = {"unrounded": 255, "rounded": 255}
+    elif mutation == "wrong_result":
+        case["output"]["rounded"] = 260
+    elif mutation == "missing_intermediate":
+        del case["output"]["unrounded"]
+    elif mutation == "cycle":
+        rules["old_allowance"]["versions"][0]["formula"] = "new_allowance"
+        rules["new_allowance"]["versions"][0]["formula"] = "old_allowance"
+    elif mutation == "unavailable_version":
+        rules["base"]["versions"][0]["effective_from"] = "2027-01-01"
+    elif mutation == "missing_period":
+        del case["period"]
+    elif mutation == "conflicting_override":
+        case["input"]["base"] = 256
+    elif mutation == "inactive_rounding":
+        rules["rounded"]["versions"][0]["formula"] = (
+            "if enabled:\n  floor(unrounded / unit + half) * unit\nelse: base"
+        )
+        payload["inputs"] = [{"name": "enabled", "dtype": "Boolean"}]
+        case["input"]["enabled"] = False
+        case["output"]["rounded"] = 255
+    result = _analyze(
+        yaml.safe_dump(payload),
+        source,
+        corpus_citation_path="de/statute/estg/66",
+        test_cases=[case],
+    )
+    assert _has_issue(result, "rounding"), "\n".join(result.issues)
+
+
+@pytest.mark.parametrize("separator", [" ", "\n"])
+def test_spaced_german_sentence_chain_is_not_numeric_policy(separator):
+    source = separator.join(
+        [
+            "(1a) 1 Die Arbeitszeit beträgt 10 Wochenstunden.",
+            "2 Sie wird mit 130 vervielfacht und durch 3 geteilt.",
+            "3 Die Grenze beträgt 1 Euro.",
+        ]
+    )
+    cleaned = authoritative_numeric_recall_text(source)
+    inventory = extract_typed_numeric_inventory_occurrences_from_text(
+        cleaned, profile="de-DE"
+    )
+    assert [item.value for item in inventory] == [10.0, 130.0, 3.0, 1.0]
+
+
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        ("(1) 1 Euro wird gezahlt. 2 Personen erhalten 3 Euro.", [1, 2, 3]),
+        ("(1) 1 Die Zahlung beträgt 130 Euro.", [1, 130]),
+        ("(1) 1 Die Zahlung beträgt 130 Euro. 3 Sie bleibt bestehen.", [1, 130, 3]),
+        ("1 Die Zahlung beträgt 130 Euro. 2 Sie bleibt bestehen.", [1, 130, 2]),
+        ("(1) 1 Die Zahlung beträgt 130 Euro und 2 Sie bleibt bestehen.", [1, 130, 2]),
+        ("(1) 1 The payment is 130 euros. 2 It remains.", [1, 130, 2]),
+    ],
+)
+def test_spaced_sentence_cleanup_preserves_unauthenticated_numbers(source, expected):
+    inventory = extract_typed_numeric_inventory_occurrences_from_text(
+        authoritative_numeric_recall_text(source), profile="de-DE"
+    )
+    assert [item.value for item in inventory] == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("bei einer Arbeitszeit von zehn Wochenstunden zum Mindestlohn", None),
+        ("bei einer Arbeitszeit von 10 Wochenstunden zum Mindestlohn", None),
+        ("ein Betrag von 130 Euro wird durch drei geteilt", None),
+        ("bei einer Arbeitszeit von 10 bis 20 Wochenstunden", (10, True, 20, True)),
+        (
+            "bei einer Arbeitszeit von mindestens 10 Wochenstunden",
+            (10, True, None, False),
+        ),
+        ("von 277 826 Euro an: 0,45 * x", (277826, True, None, False)),
+        ("von mehr als 10 Wochenstunden", (10, False, None, False)),
+        ("von 10 Euro bis 20 Euro", (10, True, 20, True)),
+        ("von 10 € bis 20 €", (10, True, 20, True)),
+        ("von 10 Personen bis 20 Personen", (10, True, 20, True)),
+        ("von 10 Personen an", (10, True, None, False)),
+        ("von 10 € an", (10, True, None, False)),
+        ("von 10 v. H. bis 20 v. H.", (10, True, 20, True)),
+        ("von 10 v. H. an", (10, True, None, False)),
+        ("von 10 Euro pro Monat bis 20 Euro pro Monat", (10, True, 20, True)),
+    ],
+)
+def test_german_fixed_quantities_do_not_become_formula_selector_intervals(
+    text, expected
+):
+    extractor = functools.partial(
+        extract_typed_numeric_occurrences_from_text, profile="de-DE"
+    )
+    interval = completeness_module._formula_interval_from_text(
+        text, extract_numeric_occurrences=extractor
+    )
+    if expected is None:
+        assert interval is None
+        assert extractor(text)  # Values remain available for actual numeric grounding.
+    else:
+        assert interval is not None
+        assert (
+            interval.lower.value if interval.lower else None,
+            interval.lower_inclusive,
+            interval.upper.value if interval.upper else None,
+            interval.upper_inclusive,
+        ) == expected
+
+
+def test_sgbiv8_captured_threshold_paragraph_has_no_numeric_selector():
+    # Exact corpus body SHA 03d0e9d5277f6ee048798a2ca4bf61c1a9b853da0177150576c2cc09edbd9939.
+    source = "(1a) 1 Die Geringfügigkeitsgrenze im Sinne des Sozialgesetzbuchs bezeichnet das monatliche Arbeitsentgelt, das bei einer Arbeitszeit von zehn Wochenstunden zum Mindestlohn nach § 1 Absatz 2 Satz 1 des Mindestlohngesetzes in Verbindung mit der auf der Grundlage des § 11 Absatz 1 Satz 1 des Mindestlohngesetzes jeweils erlassenen Verordnung erzielt wird. 2 Sie wird berechnet, indem der Mindestlohn mit 130 vervielfacht, durch drei geteilt und auf volle Euro aufgerundet wird. 3 Die Geringfügigkeitsgrenze wird jeweils vom Bundesministerium für Arbeit und Soziales im Bundesanzeiger bekannt gegeben."
+    cleaned = authoritative_numeric_recall_text(source)
+    assert [item.value for item in DE_NUMERIC_OCCURRENCE_EXTRACTOR(cleaned)] == [130.0]
+    extractor = functools.partial(
+        extract_typed_numeric_occurrences_from_text, profile="de-DE"
+    )
+    assert (
+        completeness_module._formula_interval_from_text(
+            cleaned, extract_numeric_occurrences=extractor
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("separator", [" ", "  ", "\t"])
+def test_numbered_german_formula_sentences_preserve_source_slices(separator):
+    source = (
+        f"(1a) 1{separator}Die Grundlage beträgt zehn Wochenstunden. "
+        f"2{separator}Sie wird mit 130 vervielfacht und durch drei geteilt. "
+        f"3{separator}Die Behörde veröffentlicht das Ergebnis."
+    )
+    clauses = list(completeness_module._source_clause_spans(source, branches=()))
+    assert len(clauses) == 4
+    assert clauses[2][2] == "Sie wird mit 130 vervielfacht und durch drei geteilt."
+    for start, end, text in clauses:
+        assert text == source[start:end]
+    extractor = functools.partial(
+        extract_typed_numeric_occurrences_from_text, profile="de-DE"
+    )
+    assert [item.value for item in extractor(clauses[2][2])] == [130, 3]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "(1) 1 Euro wird eingesetzt. 2 Euro werden abgezogen.",
+        "(1) 1 Die Grundlage gilt. 3 Sie wird mit 130 multipliziert.",
+        "(1) 2 Sie wird mit 130 multipliziert.",
+        "(1) 1 Die Grundlage gilt. 2 die Personen erhalten 130 Euro.",
+    ],
+)
+def test_unauthenticated_sentence_numbers_remain_in_clause_text(source):
+    clauses = list(completeness_module._source_clause_spans(source, branches=()))
+    joined = " ".join(text for _start, _end, text in clauses)
+    assert [item.value for item in DE_NUMERIC_OCCURRENCE_EXTRACTOR(joined)] == [
+        item.value for item in DE_NUMERIC_OCCURRENCE_EXTRACTOR(source)
+    ]
+
+
+def test_authenticated_first_sentence_label_is_excluded_from_formula_clause():
+    source = (
+        "(1) 1 Die Leistung wird mit 130 vervielfacht. 2 Sie wird monatlich gezahlt."
+    )
+    clauses = list(completeness_module._source_clause_spans(source, branches=()))
+    formula = next(text for _start, _end, text in clauses if "vervielfacht" in text)
+    assert formula == "Die Leistung wird mit 130 vervielfacht."
+    assert [item.value for item in DE_NUMERIC_OCCURRENCE_EXTRACTOR(formula)] == [130]
+    for start, end, text in clauses:
+        assert text == source[start:end]
+
+
+def _captured_sgbiv8_threshold_analysis(mutation=None):
+    import copy
+    import json
+
+    fixture = json.loads(
+        (
+            Path(__file__).parent / "fixtures/de_sgbiv8_rejected_threshold.json"
+        ).read_text()
+    )
+    assert (
+        hashlib.sha256(fixture["source_body"].encode()).hexdigest()
+        == fixture["provenance"]["corpus_body_sha256"]
+    )
+    content = fixture["candidate"]
+    cases = [copy.deepcopy(yaml.safe_load(fixture["tests"])[1])]
+    key = next(key for key in cases[0]["output"] if key.endswith("_unrounded"))
+    cases[0]["output"][key] = "555.53333333333333333333333333"
+    imports = [("hourly_minimum_wage", fixture["imported_parameter"])]
+    if mutation == "truncated":
+        cases[0]["output"][key] = 555.5333333333333
+    elif mutation == "wrong_period":
+        cases[0]["period"] = "2024-04"
+    elif mutation == "outside_period":
+        cases[0]["period"] = "2026-01"
+    elif mutation == "wrong_rounded":
+        cases[0]["output"][key.removesuffix("_unrounded")] = 555
+    elif mutation == "missing_intermediate":
+        del cases[0]["output"][key]
+    elif mutation == "unresolved_import":
+        imports = []
+    elif mutation == "ambiguous_import":
+        imports *= 2
+    elif mutation == "wrong_export":
+        imports = [("other_wage", fixture["imported_parameter"])]
+    elif mutation == "derived_import":
+        imports = [
+            (
+                "hourly_minimum_wage",
+                fixture["imported_parameter"].replace(
+                    "kind: parameter", "kind: derived"
+                ),
+            )
+        ]
+    elif mutation == "input_import":
+        imports = [
+            (
+                "hourly_minimum_wage",
+                "format: rulespec/v1\ninputs:\n- name: hourly_minimum_wage\n  dtype: Money\n",
+            )
+        ]
+    elif mutation == "shadowed_import":
+        doc = yaml.safe_load(content)
+        doc["inputs"] = [{"name": "hourly_minimum_wage", "dtype": "Money"}]
+        content = yaml.safe_dump(doc)
+    bindings = collect_artifact_numeric_bindings(
+        content,
+        extract_named_scalars=extract_named_scalar_occurrences,
+        imported_symbol_contents=imports,
+    )
+    return analyze_complete_source_unit(
+        content,
+        fixture["source_body"],
+        corpus_citation_path=fixture["citation_path"],
+        test_cases=cases,
+        extract_numeric_occurrences=DE_NUMERIC_OCCURRENCE_EXTRACTOR,
+        extract_numeric_grounding_occurrences=functools.partial(
+            extract_typed_numeric_occurrences_from_text, profile="de-DE"
+        ),
+        extract_named_scalars=extract_named_scalar_occurrences,
+        numeric_value_is_grounded=numeric_value_is_grounded,
+        artifact_numeric_bindings=bindings,
+        imported_symbol_contents=imports,
+    )
+
+
+def test_captured_threshold_uses_exact_resolved_temporal_parameter_for_rounding():
+    assert not _captured_sgbiv8_threshold_analysis().issues
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "truncated",
+        "wrong_period",
+        "outside_period",
+        "wrong_rounded",
+        "missing_intermediate",
+        "unresolved_import",
+        "ambiguous_import",
+        "wrong_export",
+        "derived_import",
+        "input_import",
+        "shadowed_import",
+    ],
+)
+def test_captured_threshold_rejects_uncorroborated_rounding_witness(mutation):
+    result = _captured_sgbiv8_threshold_analysis(mutation)
+    assert _has_issue(result, "complete-source-unit:tests")
+
+
+@pytest.mark.parametrize("dtype", ["Money", "Decimal", "Rate", "Count", "Integer"])
+def test_numeric_string_expectations_are_typed_without_losing_precision(dtype):
+    value = "555.53333333333333333333333333"
+    original = [{"input": {}, "output": {"de:test#value": value}}]
+    normalized = completeness_module._typed_numeric_expected_cases(
+        original, {"value": {"dtype": dtype}}
+    )
+    assert normalized[0]["output"]["de:test#value"] == Decimal(value)
+    assert original[0]["output"]["de:test#value"] == value
+
+
+@pytest.mark.parametrize(
+    "dtype,value",
+    [
+        ("String", "12.82"),
+        ("Bool", "1"),
+        ("Date", "2025-01-01"),
+        ("Money", "NaN"),
+        ("Money", "1e2"),
+        ("Money", "79228162514264337593543950336"),
+    ],
+)
+def test_numeric_expected_normalization_preserves_text_and_invalid_values(dtype, value):
+    cases = [{"output": {"de:test#value": value}}]
+    assert (
+        completeness_module._typed_numeric_expected_cases(
+            cases, {"value": {"dtype": dtype}}
+        )
+        == cases
+    )
+
+
+def test_imported_parameter_does_not_resolve_provider_names_in_consumer_scope():
+    consumer = {
+        "imports": ["de:provider#wage"],
+        "rules": [
+            {"name": "base", "kind": "parameter", "versions": [{"formula": "13"}]}
+        ],
+    }
+    provider = {
+        "format": "rulespec/v1",
+        "rules": [
+            {"name": "base", "kind": "parameter", "versions": [{"formula": "12.82"}]},
+            {"name": "wage", "kind": "parameter", "versions": [{"formula": "base"}]},
+        ],
+    }
+    assert (
+        completeness_module._resolved_imported_parameter_rules(
+            consumer, imported_symbol_contents=[("wage", yaml.safe_dump(provider))]
+        )
+        == {}
+    )
+
+
+@pytest.mark.parametrize(
+    "formula", ["1 / 2", "base", "float(base)", "True", "'12.82'", "[12.82]", None]
+)
+def test_imported_parameter_requires_literal_numeric_formula(formula):
+    assert not completeness_module._imported_parameter_formula_is_numeric_literal(
+        formula
+    )
+
+
+def test_pipeline_completeness_resolves_threshold_parameter_artifact(tmp_path):
+    import json
+
+    fixture = json.loads(
+        (
+            Path(__file__).parent / "fixtures/de_sgbiv8_rejected_threshold.json"
+        ).read_text()
+    )
+    root = tmp_path / "rulespec-de"
+    provider = root / "de/regulations/milov4/1.yaml"
+    provider.parent.mkdir(parents=True)
+    provider.write_text(fixture["imported_parameter"])
+    candidate = root / "de/statutes/sgb-4/fassung-2024-03-01/8/absatz-1a/inhalt.yaml"
+    candidate.parent.mkdir(parents=True)
+    candidate.write_text(fixture["candidate"])
+    case = yaml.safe_load(fixture["tests"])[1]
+    key = next(key for key in case["output"] if key.endswith("_unrounded"))
+    case["output"][key] = "555.53333333333333333333333333"
+    pipeline = ValidatorPipeline(
+        policy_repo_path=root / "de",
+        axiom_rules_path=tmp_path / "axiom-rules-engine",
+        local_corpus_release=None,
+        enable_oracles=False,
+        require_complete_source_unit=True,
+    )
+    assert not pipeline._complete_source_unit_issues(
+        fixture["candidate"],
+        validation_source_texts={fixture["citation_path"]: fixture["source_body"]},
+        test_cases=[case],
+        rules_file=candidate,
+    )
+    provider.unlink()
+    assert pipeline._complete_source_unit_issues(
+        fixture["candidate"],
+        validation_source_texts={fixture["citation_path"]: fixture["source_body"]},
+        test_cases=[case],
+        rules_file=candidate,
+    )
+
+
+@pytest.mark.parametrize(
+    "formula",
+    ["0.123456789012345675", "0.1234567890123456789", 0.123456789012345675, 12.82],
+)
+def test_imported_parameter_rejects_lossy_decimal_literals(formula):
+    # The first literal shortened to0.12345678901234568. Amplification by10**17
+    # changed a fractional operand from0.6 (ceil1) to1.1 (ceil2).
+    consumer = {"imports": ["de:provider#wage"], "rules": []}
+    provider = {
+        "format": "rulespec/v1",
+        "rules": [
+            {"name": "wage", "kind": "parameter", "versions": [{"formula": formula}]}
+        ],
+    }
+    assert (
+        completeness_module._resolved_imported_parameter_rules(
+            consumer, imported_symbol_contents=[("wage", yaml.safe_dump(provider))]
+        )
+        == {}
+    )
+
+
+@pytest.mark.parametrize("formula", ["12.41", "12.82", "-0.5", "130", 130])
+def test_imported_parameter_accepts_lossless_numeric_literals(formula):
+    assert completeness_module._imported_parameter_formula_is_numeric_literal(formula)

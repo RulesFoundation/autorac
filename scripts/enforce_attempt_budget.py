@@ -273,6 +273,33 @@ def _append_summary(lines: list[str]) -> None:
         fh.write("\n".join(lines) + "\n")
 
 
+def configured_citation_budget(
+    raw: str, *, citation: str, fallback: int, now: datetime
+) -> int:
+    """Resolve an expiring exact-citation limit without disabling enforcement."""
+    if not raw.strip():
+        return fallback
+    configuration = json.loads(raw)
+    if not isinstance(configuration, dict):
+        raise ValueError("citation budget configuration must be an object")
+    if citation not in configuration:
+        return fallback
+    entry = configuration[citation]
+    if not isinstance(entry, dict) or set(entry) != {"budget", "expires_at", "reason"}:
+        raise ValueError("citation budget requires budget, expires_at and reason")
+    budget = entry["budget"]
+    if type(budget) is not int or budget < 1:
+        raise ValueError("citation budget must be a positive integer")
+    if not isinstance(entry["reason"], str) or not entry["reason"].strip():
+        raise ValueError("citation budget requires a triage reason")
+    if not isinstance(entry["expires_at"], str):
+        raise ValueError("citation budget expiration must be an ISO datetime")
+    expiration = datetime.fromisoformat(entry["expires_at"])
+    if expiration.tzinfo is None or expiration.utcoffset() is None:
+        raise ValueError("citation budget expiration must include a timezone")
+    return budget if expiration > now else fallback
+
+
 def _render_summary(
     decision: Decision, *, citation: str, enforced: bool, blocked: bool
 ) -> list[str]:
@@ -291,8 +318,12 @@ def _render_summary(
             "- **Blocked before the signing environment and any model call.** "
             "Triage the failing gate first (see axiom-encode#1494 for why "
             "regeneration alone rarely fixes these). To proceed anyway, set "
-            "the repository variable `ATTEMPT_BUDGET_OVERRIDE` to `true` (or "
-            "raise `ATTEMPT_BUDGET`), re-dispatch, and unset it after triage."
+            "an expiring exact-citation limit in repository variable "
+            "`ATTEMPT_BUDGET_BY_CITATION_JSON` (see "
+            "`docs/targeted-reencode-attempt-budget.md`). This retains the "
+            "other citations' limits. The repository-wide alternatives are "
+            "`ATTEMPT_BUDGET_OVERRIDE=true` or raising `ATTEMPT_BUDGET`; "
+            "remove temporary settings after the reviewed retry."
         )
     elif not enforced:
         lines.append(
@@ -316,6 +347,19 @@ def main() -> int:
         budget = DEFAULT_BUDGET
     if budget < 1:
         budget = DEFAULT_BUDGET
+    try:
+        budget = configured_citation_budget(
+            os.environ.get("ATTEMPT_BUDGET_BY_CITATION_JSON", ""),
+            citation=citation,
+            fallback=budget,
+            now=datetime.now(timezone.utc),
+        )
+    except (ValueError, TypeError):
+        print(
+            "attempt-budget: invalid citation budget configuration; "
+            "retaining the repository-wide budget.",
+            file=sys.stderr,
+        )
     try:
         lookback_days = int(os.environ.get("LOOKBACK_DAYS", str(DEFAULT_LOOKBACK_DAYS)))
     except ValueError:

@@ -2103,7 +2103,7 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert concurrency_suffix("manual-user", "", "queue-generation", "run-3") == "run-3"
     assert concurrency_suffix("github-actions[bot]", "snap", "", "run-4") == "run-4"
     inputs = trigger["workflow_dispatch"]["inputs"]
-    assert len(inputs) == 25
+    assert len(inputs) <= 25  # GitHub rejects the entire workflow above this cap.
     assert "allowlisted reviewed SHA" in inputs["rulespec_ref"]["description"]
     assert "artifact-only" in inputs["rulespec_ref"]["description"]
     assert inputs["country"] == {
@@ -2122,6 +2122,8 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
         "required": False,
         "type": "string",
     }
+    assert "repair_run_lane" not in inputs
+    assert "repair_rulespec_path" not in inputs
     assert "repair_candidate_tests_only" not in inputs
     assert inputs["pr_base_branch"]["type"] == "string"
     assert inputs["pr_base_branch"]["default"] == "main"
@@ -2268,7 +2270,12 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     )
     repair_preflight = repair_step["run"].split('api_version="', 1)[0]
     assert "split-atomic-source-input" in repair_preflight
-    assert ".venv/bin/python" not in repair_preflight
+    normalized_preflight = " ".join(repair_preflight.replace("\\\n", " ").split())
+    assert (
+        "axiom-encode/.venv/bin/python "
+        "axiom-encode/scripts/prepare_signed_backfill.py "
+        'citation-rulespec-path "$DEPENDENT_CITATION"'
+    ) in normalized_preflight
     identity_step = next(
         step
         for step in steps
@@ -2326,9 +2333,14 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert repair_step["if"] == "${{ inputs.repair_run_id != '' }}"
     assert repair_step["env"]["GH_TOKEN"] == "${{ github.token }}"
     assert repair_step["env"]["REPAIR_RUN_ID"] == "${{ inputs.repair_run_id }}"
+    assert "REPAIR_RUN_LANE" not in repair_step["env"]
+    assert "REPAIR_RULESPEC_PATH" not in repair_step["env"]
     assert repair_step["env"]["RULESPEC_CHECKOUT"] == ("rulespec-${{ inputs.country }}")
     assert "REPAIR_TESTS_ONLY" not in repair_step["env"]
     repair_command = repair_step["run"]
+    install_step = next(step for step in steps if step.get("name") == "Install encoder")
+    assert steps.index(install_step) < steps.index(repair_step)
+    assert "axiom-encode/.venv/bin/python" in repair_command
     assert '.conclusion == "failure"' in repair_command
     assert '.event == "workflow_dispatch"' in repair_command
     assert '.head_branch == "main"' in repair_command
@@ -2346,6 +2358,7 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert "targeted-reencode-failure-${REPAIR_RUN_ID}-1" in repair_command
     assert "extract_repair_candidate.py" in repair_command
     assert '--atomic-source-json "$ATOMIC_SOURCE_JSON"' in repair_command
+    assert '--repair-lane "$REPAIR_RUN_LANE"' in repair_command
     for immutable_argument in (
         "--citation",
         "--country",
@@ -2354,6 +2367,8 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
         "--rules-engine-ref",
         "--rulespec-ref",
         "--replace-rulespec-path",
+        "--transaction-citation",
+        "--transaction-rulespec-path",
         "--workflow-run-id",
     ):
         assert immutable_argument in repair_command
@@ -2362,7 +2377,7 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert '--source-ref "$repair_source_rulespec_ref"' in repair_command
     assert '--current-ref "$RULESPEC_REF"' in repair_command
     assert '--candidate-path "$repair_candidate_path"' in repair_command
-    assert '--rulespec-path "$REPLACE_RULESPEC_PATH"' in repair_command
+    assert '--rulespec-path "$repair_rulespec_path"' in repair_command
     assert 'echo "runner=$(jq -r' in repair_command
     assert 'echo "source_rulespec_ref=$repair_source_rulespec_ref"' in repair_command
 
@@ -2372,6 +2387,7 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
         if step.get("name") == "Provision protected signing supervisor"
     )
     assert provision_step["id"] == "provision_signing_supervisor"
+    assert steps.index(repair_step) < steps.index(provision_step)
     assert "sudo chown 0:0 /opt" in provision_step["run"]
     assert "sudo chmod go-w /opt" in provision_step["run"]
     assert "--git /usr/bin/git" in provision_step["run"]
@@ -2423,7 +2439,9 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
         in cascade_step["run"]
     )
     assert 'cascade_args+=("${dependent_citations[@]}")' in cascade_step["run"]
-    assert '"${cascade_args[@]}"' in cascade_step["run"]
+    assert "--allow-proof-import-subset" in cascade_step["run"]
+    assert 'cascade_mode="$("${cascade_args[@]}")"' in cascade_step["run"]
+    assert "DEPENDENT_CASCADE_MODE=%s" in cascade_step["run"]
 
     signed_import_step = next(
         step for step in steps if step.get("name") == "Verify existing signed imports"
@@ -2483,6 +2501,9 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert '--repair-candidate-root "$candidate_root"' in command
     assert (
         'if [ -n "${REPAIR_CANDIDATE_ROOT:-}" ] && \\\n'
+        '     { [ "$output_lane" = "$REPAIR_RUN_LANE" ] || \\\n'
+        '       { [ "$REPAIR_RUN_LANE" = "target" ] && \\\n'
+        '         [[ "$output_lane" =~ ^target(-preflight)?$ ]]; }; } && \\\n'
         '     [ -n "$replacement_path" ]; then'
     ) in command
     assert '--repair-candidate-path "$candidate_path"' in command
@@ -2520,6 +2541,13 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert apply_step["env"]["REPAIR_TESTS_ONLY"] == (
         "${{ steps.repair_candidate.outputs.tests_only }}"
     )
+    assert (
+        apply_step["env"]["REPAIR_RUN_LANE"]
+        == "${{ steps.repair_candidate.outputs.lane }}"
+    )
+    assert apply_step["env"]["REPAIR_RULESPEC_PATH"] == (
+        "${{ steps.repair_candidate.outputs.rulespec_path }}"
+    )
     assert ': "${REPAIR_TESTS_ONLY:=false}"' in command
     assert "REPAIR_TESTS_ONLY=false" not in command
     assert "REPAIR_TESTS_ONLY=true" not in command
@@ -2539,7 +2567,10 @@ def test_targeted_signed_reencode_workflow_is_main_dispatch_only() -> None:
     assert '--output "$RUNNER_TEMP/generated/$output_lane"' in command
     assert '"$SECOND_DEPENDENT_CITATION"' in command
     assert '"$SECOND_DEPENDENT_REVIEW_FINDING" false dependent-2 "" "" false' in command
-    assert '"$CITATION" "$REVIEW_FINDING" true target \\\n' in command
+    assert '"$CITATION" "$REVIEW_FINDING" "$primary_target_only" target \\\n' in command
+    assert 'local scheduled_dependent_paths_json="${11:-[]}"' in command
+    assert "--scheduled-dependent-rulespec-path" in command
+    assert 'DEPENDENT_CASCADE_MODE:-}" = "proof-import-subset"' in command
     assert '"$DEPENDENT_CITATION" "$DEPENDENT_REVIEW_FINDING" \\\n' in command
     assert '"$REPLACE_RULESPEC_PATH" "$REPLACE_LEGACY_RULESPEC_PATH"' in command
     assert '"$CITATION" "$REVIEW_FINDING" false \\\n' in command
@@ -3000,7 +3031,7 @@ def test_targeted_reencode_extracts_false_complete_source_scope() -> None:
         ),
     ],
 )
-def test_repair_preflight_splits_atomic_source_before_encoder_install(
+def test_repair_preflight_splits_atomic_source(
     tmp_path: Path,
     atomic_source_json: str,
     expected_tests_only: str,
@@ -3013,10 +3044,13 @@ def test_repair_preflight_splits_atomic_source_before_encoder_install(
         for step in workflow["jobs"]["encode"]["steps"]
         if step.get("name") == "Resolve trusted prior-run repair candidate"
     ).split('api_version="', 1)[0]
+    command = command.replace("axiom-encode/.venv/bin/python", sys.executable)
     command = command.replace(
         "axiom-encode/scripts/prepare_signed_backfill.py",
         str(ROOT / "scripts/prepare_signed_backfill.py"),
     )
+
+    command += '\nprintf "%s\\n" "$REPAIR_RUN_LANE" "$repair_rulespec_path"\n'
 
     completed = subprocess.run(
         ["bash", "-c", command],
@@ -3026,6 +3060,7 @@ def test_repair_preflight_splits_atomic_source_before_encoder_install(
         env={
             **os.environ,
             "ATOMIC_SOURCE_JSON": atomic_source_json,
+            "CITATION": "us-ri/statute/44-30-2.6",
             "DEPENDENT_CITATION": "",
             "EXISTING_SIGNED_IMPORTS_JSON": "[]",
             "GITHUB_OUTPUT": str(tmp_path / "github-output"),
@@ -3034,6 +3069,7 @@ def test_repair_preflight_splits_atomic_source_before_encoder_install(
             "LEGACY_RETAINED_SUCCESSOR_RULESPEC_PATHS_JSON": "[]",
             "QUEUE_ID": "",
             "REPAIR_RUN_ID": "100",
+            "REPAIR_RULESPEC_PATH": "",
             "REPLACE_LEGACY_RULESPEC_PATH": "",
             "REPLACE_RULESPEC_PATH": "us-ri/statutes/44-30-2.6.yaml",
             "SECOND_DEPENDENT_CITATION": "",
@@ -3042,8 +3078,59 @@ def test_repair_preflight_splits_atomic_source_before_encoder_install(
     )
 
     assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == "target\nus-ri/statutes/44-30-2.6.yaml\n"
     assert (tmp_path / "github-output").read_text(encoding="utf-8") == (
         f"tests_only={expected_tests_only}\n"
+    )
+
+
+def test_repair_preflight_accepts_one_bound_dependent_lane(tmp_path: Path) -> None:
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/targeted-signed-reencode.yml").read_text()
+    )
+    command = next(
+        step["run"]
+        for step in workflow["jobs"]["encode"]["steps"]
+        if step.get("name") == "Resolve trusted prior-run repair candidate"
+    ).split('api_version="', 1)[0]
+    command = command.replace("axiom-encode/.venv/bin/python", sys.executable)
+    command = command.replace(
+        "axiom-encode/scripts/prepare_signed_backfill.py",
+        str(ROOT / "scripts/prepare_signed_backfill.py"),
+    )
+
+    command += '\nprintf "%s\\n" "$REPAIR_RUN_LANE" "$repair_rulespec_path"\n'
+
+    completed = subprocess.run(
+        ["bash", "-c", command],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "ATOMIC_SOURCE_JSON": "[]",
+            "CITATION": "us/guidance/primary/source",
+            "DEPENDENT_CITATION": "us/statute/42/1437c-1",
+            "EXISTING_SIGNED_IMPORTS_JSON": "[]",
+            "GITHUB_OUTPUT": str(tmp_path / "github-output"),
+            "GITHUB_RUN_ID": "200",
+            "LEGACY_EXACT_DEPENDENT_RULESPEC_PATH": "",
+            "LEGACY_RETAINED_SUCCESSOR_RULESPEC_PATHS_JSON": "[]",
+            "QUEUE_ID": "",
+            "REPAIR_RUN_ID": "100",
+            "REPAIR_RUN_LANE": "target",  # Ambient values must not select the lane.
+            "REPAIR_RULESPEC_PATH": "us/statutes/42/unrelated.yaml",
+            "REPLACE_LEGACY_RULESPEC_PATH": "",
+            "REPLACE_RULESPEC_PATH": "us/guidance/primary/source.yaml",
+            "SECOND_DEPENDENT_CITATION": "",
+            "SECOND_LEGACY_EXACT_DEPENDENT_RULESPEC_PATH": "",
+        },
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == "dependent\nus/statutes/42/1437c-1.yaml\n"
+    assert (tmp_path / "github-output").read_text(encoding="utf-8") == (
+        "tests_only=false\n"
     )
 
 
@@ -4493,10 +4580,21 @@ if mutation_path and len(calls_path.read_text(encoding="utf-8").splitlines()) ==
     ]
 
 
-@pytest.mark.parametrize("dependent_count", [0, 1, 2])
+@pytest.mark.parametrize(
+    ("dependent_count", "cascade_mode", "repair_lane"),
+    [
+        (0, "", ""),
+        (1, "", ""),
+        (1, "proof-import-subset", ""),
+        (1, "", "dependent"),
+        (2, "", ""),
+    ],
+)
 def test_targeted_signed_reencode_orders_target_and_dependents(
     tmp_path: Path,
     dependent_count: int,
+    cascade_mode: str,
+    repair_lane: str,
 ) -> None:
     workflow = yaml.safe_load(
         (ROOT / ".github/workflows/targeted-signed-reencode.yml").read_text()
@@ -4537,6 +4635,7 @@ with Path(os.environ["CALLS_PATH"]).open("a", encoding="utf-8") as stream:
         "CITATION": "us/regulation/42/435/555",
         "DEPENDENT_CITATION": "",
         "DEPENDENT_REVIEW_FINDING": "",
+        "DEPENDENT_CASCADE_MODE": cascade_mode,
         "GITHUB_WORKSPACE": str(tmp_path),
         "REVIEW_FINDING": "Preserve the target source.",
         "RULESPEC_CHECKOUT": str(tmp_path / "rulespec-us"),
@@ -4552,6 +4651,17 @@ with Path(os.environ["CALLS_PATH"]).open("a", encoding="utf-8") as stream:
             {
                 "DEPENDENT_CITATION": "us/regulation/42/435/559",
                 "DEPENDENT_REVIEW_FINDING": "Preserve the dependent source.",
+            }
+        )
+    if repair_lane == "dependent":
+        environment.update(
+            {
+                "REPAIR_CANDIDATE_PATH": "regulations/42-cfr/435/559.yaml",
+                "REPAIR_CANDIDATE_ROOT": str(tmp_path / "repair-candidate"),
+                "REPAIR_CANDIDATE_RULESPEC_SHA256": "b" * 64,
+                "REPAIR_CANDIDATE_TESTS_SHA256": "c" * 64,
+                "REPAIR_RUN_LANE": "dependent",
+                "REPAIR_RULESPEC_PATH": "us/regulations/42-cfr/435/559.yaml",
             }
         )
     if dependent_count == 2:
@@ -4579,7 +4689,18 @@ with Path(os.environ["CALLS_PATH"]).open("a", encoding="utf-8") as stream:
         args.count("--require-complete-source-unit") == 1 for args in encode_args
     )
     assert encode_args[0][-1] == "us/regulation/42/435/555"
-    assert ("--apply-target-only" in encode_args[0]) is (dependent_count > 0)
+    assert ("--repair-candidate-root" in encode_args[0]) is False
+    assert ("--apply-target-only" in encode_args[0]) is (
+        dependent_count > 0 and cascade_mode != "proof-import-subset"
+    )
+    scheduled_option = "--scheduled-dependent-rulespec-path"
+    assert (scheduled_option in encode_args[0]) is (
+        cascade_mode == "proof-import-subset"
+    )
+    if cascade_mode == "proof-import-subset":
+        assert encode_args[0][encode_args[0].index(scheduled_option) + 1] == (
+            "us/regulations/42-cfr/435/559.yaml"
+        )
     assert (
         Path(encode_args[0][encode_args[0].index("--review-findings") + 1])
         .read_text(encoding="utf-8")
@@ -4588,6 +4709,18 @@ with Path(os.environ["CALLS_PATH"]).open("a", encoding="utf-8") as stream:
     )
     if dependent_count >= 1:
         assert encode_args[1][-1] == "us/regulation/42/435/559"
+        assert ("--repair-candidate-root" in encode_args[1]) is (
+            repair_lane == "dependent"
+        )
+        if repair_lane == "dependent":
+            replacement_index = encode_args[1].index("--replace-rulespec-path")
+            assert encode_args[1][replacement_index + 1] == (
+                "us/regulations/42-cfr/435/559.yaml"
+            )
+            assert encode_args[1].count("--repair-candidate-root") == 1
+            assert encode_args[1].count("--repair-candidate-path") == 1
+            assert encode_args[1].count("--repair-candidate-rulespec-sha256") == 1
+            assert encode_args[1].count("--repair-candidate-tests-sha256") == 1
         assert ("--apply-target-only" in encode_args[1]) is (dependent_count == 2)
         assert (
             Path(encode_args[1][encode_args[1].index("--review-findings") + 1])
