@@ -1144,6 +1144,22 @@ class _RequiredTestCaseContract(NamedTuple):
     period: dict[str, str]
     input: dict[str, object]
     required_output: dict[str, object]
+    lifetime: dict[str, object] | None = None
+    description: str | None = None
+
+    def as_mapping(self) -> dict[str, object]:
+        result = {
+            "name": self.name,
+            "period": self.period,
+            "required_output": self.required_output,
+        }
+        if self.lifetime is None:
+            result["input"] = self.input
+        else:
+            result["lifetime"] = self.lifetime
+            if self.description is not None:
+                result["description"] = self.description
+        return copy.deepcopy(result)
 
 
 class _DeferredOutputReviewContract(NamedTuple):
@@ -1292,7 +1308,19 @@ def _parse_deferred_output_review_contract_json(
         seen_test_names: set[str] = set()
         for index, item in enumerate(payload_test_cases):
             label = f"review contract test case #{index + 1}"
-            if not isinstance(item, dict) or set(item) != {
+            is_lifetime = isinstance(item, dict) and "lifetime" in item
+            if is_lifetime:
+                from .harness.lifetime_fixture_contracts import (
+                    validate_lifetime_test_contract,
+                )
+
+                try:
+                    validate_lifetime_test_contract(item)
+                except (KeyError, TypeError, ValueError, RecursionError) as exc:
+                    raise argparse.ArgumentTypeError(
+                        f"{label} invalid lifetime contract: {exc}"
+                    ) from exc
+            elif not isinstance(item, dict) or set(item) != {
                 "name",
                 "period",
                 "input",
@@ -1357,6 +1385,19 @@ def _parse_deferred_output_review_contract_json(
                 raise argparse.ArgumentTypeError(
                     f"{label} period start must not follow end"
                 )
+
+            if is_lifetime:
+                required_test_cases.append(
+                    _RequiredTestCaseContract(
+                        name=name,
+                        period=dict(period),
+                        input={},
+                        required_output=copy.deepcopy(item["required_output"]),
+                        lifetime=copy.deepcopy(item["lifetime"]),
+                        description=item.get("description"),
+                    )
+                )
+                continue
 
             normalized_fields: dict[str, dict[str, object]] = {}
             for field in ("input", "required_output"):
@@ -1493,8 +1534,9 @@ def _required_deferred_output_contract_issues(
             "required test-case contract expected a companion YAML case array",
         ]
 
-    def values_equal(actual: object, expected: object) -> bool:
-        return type(actual) is type(expected) and actual == expected
+    from .harness.lifetime_fixture_contracts import exact_fixture_value_equal
+
+    values_equal = exact_fixture_value_equal
 
     for required in contract.required_test_cases:
         matches = [
@@ -1511,7 +1553,12 @@ def _required_deferred_output_contract_issues(
         candidate = matches[0]
         unsigned_runtime_fields = sorted(
             field
-            for field in ("tables", "inputs", "oracle_inputs")
+            for field in (
+                "tables",
+                "inputs",
+                "oracle_inputs",
+                "lifetime" if required.lifetime is None else "input",
+            )
             if field in candidate
         )
         if unsigned_runtime_fields:
@@ -1520,11 +1567,37 @@ def _required_deferred_output_contract_issues(
                 f"{required.name!r} contains unsigned runtime input field(s): "
                 + ", ".join(unsigned_runtime_fields)
             )
-        if candidate.get("period") != required.period:
+        if not values_equal(candidate.get("period"), required.period):
             issues.append(
                 "[required-test-case-contract] companion case "
                 f"{required.name!r} period does not exactly match the signed contract"
             )
+        if required.lifetime is not None:
+            from .harness.lifetime_fixture_contracts import (
+                validate_lifetime_test_contract,
+            )
+
+            candidate_contract = {
+                key: value for key, value in candidate.items() if key != "output"
+            }
+            candidate_contract["required_output"] = candidate.get("output")
+            try:
+                validate_lifetime_test_contract(candidate_contract)
+            except (KeyError, TypeError, ValueError, RecursionError) as exc:
+                issues.append(
+                    "[required-test-case-contract] companion case "
+                    f"{required.name!r} invalid lifetime contract: {exc}"
+                )
+            if not values_equal(candidate.get("lifetime"), required.lifetime):
+                issues.append(
+                    "[required-test-case-contract] companion case "
+                    f"{required.name!r} lifetime does not exactly match the signed contract"
+                )
+            if not values_equal(candidate.get("description"), required.description):
+                issues.append(
+                    "[required-test-case-contract] companion case "
+                    f"{required.name!r} description does not exactly match the signed contract"
+                )
         candidate_input = candidate.get("input")
         candidate_input_keys = (
             set(candidate_input) if isinstance(candidate_input, dict) else set()
@@ -1538,7 +1611,7 @@ def _required_deferred_output_contract_issues(
             and key in candidate_input
             and not values_equal(candidate_input[key], expected)
         )
-        if (
+        if required.lifetime is None and (
             not isinstance(candidate_input, dict)
             or missing_inputs
             or unexpected_inputs
@@ -29795,12 +29868,7 @@ def _run_encode_attempt(
         ),
         required_test_case_contracts=(
             tuple(
-                {
-                    "name": contract.name,
-                    "period": contract.period,
-                    "input": contract.input,
-                    "required_output": contract.required_output,
-                }
+                contract.as_mapping()
                 for contract in deferred_output_review_contract.required_test_cases
             )
             if deferred_output_review_contract is not None
@@ -29834,12 +29902,7 @@ def _run_encode_attempt(
             result,
             _REQUIRED_TEST_CASE_CONTRACTS_ATTR,
             tuple(
-                {
-                    "name": contract.name,
-                    "period": contract.period,
-                    "input": contract.input,
-                    "required_output": contract.required_output,
-                }
+                contract.as_mapping()
                 for contract in deferred_output_review_contract.required_test_cases
             ),
         )
