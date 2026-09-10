@@ -6860,6 +6860,20 @@ def _hebrew_operand_is_denominated(text: str, start: int, end: int) -> bool:
     return word is not None and word.group(0) in _HEBREW_CURRENCY_WORDS
 
 
+def _hebrew_counted_fraction_word_value(
+    text: str, start: int, end: int
+) -> float | None:
+    """The fraction word's value where ``text[start:end]`` ends in one, else None.
+
+    "3 עשיריות", "אלף עשיריות" and "2 וחצי עשיריות" end in a counted
+    fraction word; "3", "אלף" and "2 וחצי" do not.
+    """
+    words = text[start:end].split()
+    if not words:
+        return None
+    return _HEBREW_COUNTED_FRACTION_VALUES.get(words[-1])
+
+
 def _hebrew_number_run_ending_at(
     text: str,
     end: int,
@@ -6957,6 +6971,15 @@ def _iter_hebrew_percent_range_lower_matches(
             upper_scaled = _hebrew_spelled_span_carries_a_scale(
                 text, upper_start, noun.start()
             )
+        # A counted fraction's fraction word is shared by a bare endpoint
+        # before it ("בין שתיים לשלוש עשיריות האחוז" runs from two tenths of
+        # a percent), and a scale word inside its count ("אלף עשיריות") is
+        # the count's alone, not a scale the lower endpoint shares.
+        upper_fraction = _hebrew_counted_fraction_word_value(
+            text, upper_start, noun.start()
+        )
+        if upper_fraction is not None:
+            upper_scaled = False
         # A unary sign on the upper endpoint ("−שלושה או −חצי אחוז") is the
         # endpoint's; the join stands before the sign.
         if _hebrew_unary_sign_at(text, upper_start - 1):
@@ -7013,8 +7036,16 @@ def _iter_hebrew_percent_range_lower_matches(
             lower_amount is not None
             or (
                 spelled_lower is not None
-                and _hebrew_spelled_span_carries_a_scale(
-                    text, spelled_lower[0], lower_flush
+                and (
+                    _hebrew_spelled_span_carries_a_scale(
+                        text, spelled_lower[0], lower_flush
+                    )
+                    # "500 עשיריות", "שתי עשיריות": a counted fraction is
+                    # complete on its own.
+                    or _hebrew_counted_fraction_word_value(
+                        text, spelled_lower[0], lower_flush
+                    )
+                    is not None
                 )
             )
             or (
@@ -7062,6 +7093,12 @@ def _iter_hebrew_percent_range_lower_matches(
                 # read before it.
                 lower_value = -lower_value
                 lower_span = (lower_span[0] - 1, lower_flush)
+        if (
+            upper_fraction is not None
+            and _hebrew_counted_fraction_word_value(text, lower_span[0], lower_span[1])
+            is None
+        ):
+            lower_value *= upper_fraction
         if _hebrew_operand_is_denominated(text, lower_span[0], lower_span[1]):
             # "$500 או 2% מהמחזור": a denominated amount shares no unit.
             continue
@@ -7197,6 +7234,14 @@ def _iter_hebrew_percent_range_lower_matches(
                 if _hebrew_unary_sign_at(text, earlier_span[0] - 1):
                     earlier_value = -earlier_value
                     earlier_span = (earlier_span[0] - 1, earlier_span[1])
+            if (
+                upper_fraction is not None
+                and _hebrew_counted_fraction_word_value(
+                    text, earlier_span[0], earlier_span[1]
+                )
+                is None
+            ):
+                earlier_value *= upper_fraction
             if (
                 _span_overlaps(earlier_span, structural_spans)
                 or _search_before(
