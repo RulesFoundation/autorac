@@ -22272,6 +22272,64 @@ def test_a_rate_word_governs_a_descending_range_whatever_the_size():
         ), (text, issue)
 
 
+def test_a_bounded_range_joins_with_ubein_and_a_leading_decimal_counts():
+    # Review round 183 on #1585: "בין … ובין …" is a bounded range join like
+    # "בין … לבין …", ascending or descending under a rate word, printed or
+    # spelled; and a printed number may begin at its decimal point (".5")
+    # in every Hebrew reader -- the percent phrase, the sign with a
+    # fractional tail, the counted fraction, a range endpoint, a printed
+    # multiplier -- and in the direct percentage reader.
+    import math
+
+    for text, expected in (
+        ("שיעור המס יהיה בין 2 ובין 3 אחוזים", [0.02, 0.03]),
+        ("שיעור המס יהיה בין שניים ובין שלושה אחוזים", [0.02, 0.03]),
+        ("שיעור הזיכוי יהיה בין 150 ובין 125 אחוזים", [1.25, 1.5]),
+        ("שיעור המס יהיה בין 2 ובין 3 עשיריות האחוז", [0.002, 0.003]),
+        ("הקנס יהיה בין 500 ובין 3 אחוזים", [0.03, 500.0]),
+        ("השיעור הוא .5 אחוזים", [0.005]),
+        ("השיעור הוא .5% וחצי", [0.01]),
+        ("השיעור הוא .5%", [0.005]),
+        ("השיעור הוא -.5%", [-0.005]),
+        ("השיעור הוא 0.5%", [0.005]),
+        ("השיעור הוא 3.5%", [0.035]),
+        ("השיעור הוא 3.5% וחצי", [0.04]),
+        ("השיעור הוא .5 עשיריות האחוז", [0.0005]),
+        ("שיעור המס יהיה בין .5 ל־3 אחוזים", [0.005, 0.03]),
+        ("שיעור המס יהיה בין 2 ל־.5 אחוזים", [0.005, 0.02]),
+        ("סכום של .5 מיליון שקלים", [500000.0]),
+    ):
+        values = sorted(_hebrew_recall(text))
+        assert len(values) == len(expected) and all(
+            math.isclose(value, want, rel_tol=1e-9)
+            for value, want in zip(values, expected, strict=True)
+        ), (text, values)
+        found = extract_numbers_from_text(text)
+        assert all(
+            any(math.isclose(value, want, rel_tol=1e-9) for value in found)
+            for want in expected
+        ), (text, found)
+    for text, grounded, ungrounded in (
+        ("שיעור המס יהיה בין 2 ובין 3 אחוזים", "0.02", "0.2"),
+        ("שיעור הזיכוי יהיה בין 150 ובין 125 אחוזים", "1.5", "150"),
+        ("השיעור הוא .5 אחוזים", "0.005", "0.5"),
+        ("השיעור הוא .5% וחצי", "0.01", "0.05"),
+        ("השיעור הוא .5%", "0.005", "0.05"),
+        ("שיעור המס יהיה בין .5 ל־3 אחוזים", "0.005", "0.5"),
+    ):
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

@@ -1943,6 +1943,9 @@ _PARAGRAPH_GAP_FRAGMENT = (
 )
 _PARAGRAPH_GAP_PATTERN = re.compile(_PARAGRAPH_GAP_FRAGMENT)
 _HORIZONTAL_SPACE_FRAGMENT = "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]"
+# A printed number in the Hebrew readers: grouped or plain digits with an
+# optional decimal part, or a decimal part alone (".5 אחוזים" is half a
+# percent); the readers' lookbehinds keep ".5" out of "3.5".
 # Whitespace a number may run across: spaces of any width and a single line
 # wrap, never a blank line or a paragraph separator ("10 וחצי מיליון" and
 # "10\nוחצי מיליון" are one amount; "10\n\nוחצי מיליון" is ten, then half a
@@ -2817,7 +2820,7 @@ _HEBREW_MONEY_POSSESSOR_CONNECTORS = (
 # A printed multiplier may stand between the noun and the scale word the
 # caller asks about ("קנס של 3 מיליון", asked at "מיליון").
 _HEBREW_MONEY_PRINTED_TAIL = (
-    "(?:\\s*(?<![\\d.,])[-\u2212]?(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?"
+    "(?:\\s*(?<![\\d.,])[-\u2212]?(?:(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?|\\.\\d+)"
     "(?:\\s+\\d+\\s*[/\u2044]\\s*\\d+)?)?\\s*$"
 )
 # Two grammars lead from an amount noun to the number it governs.
@@ -3120,7 +3123,7 @@ _HEBREW_FRACTION_COUNT_VALUES = {
 _HEBREW_DIGIT_PERCENT_PATTERN = re.compile(
     "(?<![\\d.,\u2044/])(?:(?<![\u05d0-\u05ea])(?P<sign>[-\u2212]))?"
     "(?:(?P<whole>(?:\\d{1,3}(?:,\\d{3})+|\\d+))[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]+(?=\\d+\\s*/))?"
-    "(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
+    "(?P<number>(?:(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?|\\.\\d+))"
     "(?:\\s*/\\s*(?P<denominator>\\d+))?"
     # The percent noun; the sign after a fraction ("1/2%", "3 1 / 2%"); or
     # the sign before a Hebrew fractional tail ("3% וחצי" is three and a
@@ -3546,7 +3549,7 @@ def _iter_hebrew_fraction_word_matches(
 # its words.
 _HEBREW_PERCENT_PHRASE_PATTERN = re.compile(
     "(?<![\u0590-\u05ff\\d.,])"
-    "(?:(?P<digits>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
+    "(?:(?P<digits>(?:(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?|\\.\\d+))"
     + _WRAP_SPACE_FRAGMENT
     + "+"
     "|(?:(?P<glyph_whole>(?:\\d{1,3}(?:,\\d{3})+|\\d+))[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*)?(?P<glyph>[\u00bc-\u00be\u2150-\u215e])"
@@ -4046,7 +4049,7 @@ _HEBREW_PRINTED_SCALE_PATTERN = re.compile(
     # A printed fraction, mixed ("2 1⁄2") or bare ("1⁄2", "1⁄ 2"), or a
     # decimal; each is a complete multiplier.
     "(?:(?:(?P<whole>(?:\\d{1,3}(?:,\\d{3})+|\\d+))[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]+)?(?P<numerator>\\d+)\\s*[/\u2044]\\s*(?P<denominator>\\d+)"
-    "|(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
+    "|(?P<number>(?:(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?|\\.\\d+))"
     "|(?:(?P<glyph_whole>(?:\\d{1,3}(?:,\\d{3})+|\\d+))[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*)?(?P<glyph>[\u00bc-\u00be\u2150-\u215e]))"
     # A vav-bound fractional tail before the scale word: one fraction word
     # ("3 וחצי מיליון") or a counted fraction ("3 ושלושה רבעים מיליון").
@@ -4149,7 +4152,7 @@ _HEBREW_PRINTED_PLAIN_REMAINDER_PATTERN = re.compile(
     + _WRAP_SPACE_FRAGMENT
     + "+\u05d5[\u05be-]?"
     + _WRAP_SPACE_FRAGMENT
-    + "*(?>(?:(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
+    + "*(?>(?:(?P<number>(?:(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?|\\.\\d+))"
     "(?:\\s*[/\u2044]\\s*(?P<bare_denominator>\\d+))?"
     # A glyph after the number ("ו־2½ שקלים") is the remainder's fraction,
     # and a bare glyph ("ו־½ שקלים") is the remainder.
@@ -5234,7 +5237,7 @@ _HEBREW_PERCENT_NOUN_ANYWHERE_PATTERN = re.compile(
 _HEBREW_DIGITS_BEFORE_PATTERN = re.compile(
     "(?<![\\d.,/\u2044])(?:(?<![\u05d0-\u05ea])(?P<sign>[-\u2212]))?"
     "(?:(?:(?P<whole>(?:\\d{1,3}(?:,\\d{3})+|\\d+))[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]+)?(?P<numerator>\\d+)\\s*[/\u2044]\\s*(?P<denominator>\\d+)"
-    "|(?P<number>(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)"
+    "|(?P<number>(?:(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?|\\.\\d+))"
     # A vulgar-fraction glyph, alone or after a whole ("½", "2½", "2 ½").
     "|(?:(?P<glyph_whole>(?:\\d{1,3}(?:,\\d{3})+|\\d+))[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*)?"
     "(?P<glyph>[\u00bc-\u00be\u2150-\u215e]))\\s*$"
@@ -5277,7 +5280,7 @@ def _hebrew_printed_endpoint_value(match: "re.Match[str]") -> float | None:
 # which nothing in the text tells apart. "או" alternatives and bounded ranges
 # remain.
 _HEBREW_RANGE_JOIN_BEFORE_PATTERN = re.compile(
-    "(?:(?<![\u0590-\u05ff])(?P<free>עד|ועד|לבין|או)\\s+"
+    "(?:(?<![\u0590-\u05ff])(?P<free>עד|ועד|לבין|ובין|או)\\s+"
     "|(?<![\u0590-\u05ff])(?P<bound>[\u05dc\u05d5])(?:\u05be|[-\u2013]|\\s)\\s*"
     # A comma joins within a headed list only ("השיעורים הם 10, 20 ו־30
     # אחוזים").
@@ -7337,7 +7340,7 @@ _RANGE_ENDPOINT_RAW_NUMBER = (
 _PERCENTAGE_RAW_NUMBER = (
     r"-?(?:\d{1,3}(?:[.\u00a0\u202f ]\d{3})+|\d+)"
     r"(?:\s*[,.]\d{1,4})?"
-    r"|-?\d+\.\d+"
+    r"|-?\d+\.\d+|(?<!\d)-?\.\d+"
 )
 _BELGIAN_NUMERIC_RANGE_PATTERN = re.compile(
     rf"\b(?P<start>{_RANGE_ENDPOINT_RAW_NUMBER})\s*(?:à|tot|t/m)\s*"
@@ -7351,9 +7354,7 @@ _EUROPEAN_MONEY_AMOUNT_PATTERN = re.compile(
 )
 # A hyphen after a Hebrew letter joins a prefix to the number ("ל-3%") and
 # is no sign; a sign no letter precedes still negates ("-3%").
-_PERCENTAGE_RAW_NUMBER_UNSIGNED = (
-    r"(?:\d{1,3}(?:[.\u00a0\u202f ]\d{3})+|\d+)(?:\s*[,.]\d{1,4})?|\d+\.\d+"
-)
+_PERCENTAGE_RAW_NUMBER_UNSIGNED = r"(?:\d{1,3}(?:[.\u00a0\u202f ]\d{3})+|\d+)(?:\s*[,.]\d{1,4})?|\d+\.\d+|(?<!\d)\.\d+"
 _DIRECT_PERCENTAGE_PATTERN = re.compile(
     rf"(?P<number>(?:(?<![\u05d0-\u05ea])-)?(?:{_PERCENTAGE_RAW_NUMBER_UNSIGNED}))"
     r"\s*(?:%|\bp\.?\s*c\.?\b)",
