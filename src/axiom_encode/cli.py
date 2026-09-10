@@ -59481,6 +59481,29 @@ def _sum_attempt_cost(attempts: Sequence[Any], cost_field: str) -> float | None:
     return total if attempts else None
 
 
+def _iteration_usage_fields(attempt: Any) -> dict[str, Any]:
+    """Per-attempt model, token counters, and cost for the run's iteration record.
+
+    Counters are recorded only when the backend reported usage; a missing
+    figure stays ``None`` (unmeasured), never ``0``.
+    """
+    fields: dict[str, Any] = {}
+    model = getattr(attempt, "model", None)
+    if isinstance(model, str) and model:
+        fields["model"] = model
+    if _attempt_recorded_usage(attempt):
+        for name in TOKEN_USAGE_FIELDS:
+            fields[name] = int(getattr(attempt, name, 0) or 0)
+    cost = getattr(attempt, "estimated_cost_usd", None)
+    if (
+        isinstance(cost, (int, float))
+        and not isinstance(cost, bool)
+        and math.isfinite(cost)
+    ):
+        fields["estimated_cost_usd"] = float(cost)
+    return fields
+
+
 def _aggregate_attempt_usage(attempts: Sequence[Any]) -> TokenUsage:
     """Sum token usage across every generation attempt of an encode."""
     return TokenUsage(
@@ -59517,6 +59540,7 @@ def _log_eval_result(
                     )
                 ],
                 success=False,
+                **_iteration_usage_fields(failed_attempt.result),
             )
         )
     if final_attempt_success is None:
@@ -59539,6 +59563,7 @@ def _log_eval_result(
             duration_ms=int(getattr(result, "duration_ms", 0) or 0),
             errors=final_errors,
             success=resolved_final_success,
+            **_iteration_usage_fields(result),
         )
     )
     attempt_results = [
