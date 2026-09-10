@@ -553,6 +553,11 @@ def _validate_source_proof_atom(
 _MAQAF_SPACE_PATTERN = re.compile("\u05be\\s+")
 
 
+def bind_maqaf_space(text: str) -> str:
+    """Drop the whitespace a source sets after a maqaf, so "ל־ 1⁄2" reads "ל־1⁄2"."""
+    return _MAQAF_SPACE_PATTERN.sub("\u05be", text)
+
+
 def _source_contains_proof_evidence(
     *,
     source_text: str,
@@ -561,7 +566,7 @@ def _source_contains_proof_evidence(
     normalized_evidence = re.sub(r"\s+", " ", evidence_text).strip()
     if not normalized_evidence:
         return False
-    maqaf_evidence = _MAQAF_SPACE_PATTERN.sub("\u05be", normalized_evidence)
+    maqaf_evidence = bind_maqaf_space(normalized_evidence)
     for segment in split_proof_evidence_text(source_text):
         if _bounded_source_evidence_match(evidence_text, segment):
             return True
@@ -569,7 +574,7 @@ def _source_contains_proof_evidence(
         if _bounded_source_evidence_match(normalized_evidence, normalized_segment):
             return True
         if "\u05be" in normalized_segment and _bounded_source_evidence_match(
-            maqaf_evidence, _MAQAF_SPACE_PATTERN.sub("\u05be", normalized_segment)
+            maqaf_evidence, bind_maqaf_space(normalized_segment)
         ):
             return True
     return False

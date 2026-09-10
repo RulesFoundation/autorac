@@ -22681,6 +22681,63 @@ def test_a_proof_excerpt_matches_across_a_space_after_a_maqaf():
         ), (evidence, result.issues)
 
 
+def test_numeric_evidence_binds_across_a_space_after_a_maqaf():
+    # Gate round 1 on #1615: the proof check reads "ל־ 1⁄2" and "ל־1⁄2" as one
+    # text, and so does scoped numeric grounding: an excerpt that binds the
+    # fraction to its prefix still carries the half from a proof source that
+    # sets a space after the maqaf, where the module's own source has no
+    # such value.
+    from axiom_encode.harness.validator_pipeline import (
+        _source_evidence_fragment_is_body_bound,
+    )
+
+    source = (
+        "(4) האשה תהא זכאית ל־ 1⁄2 נקודת זיכוי לפי סעיף 36א, ובנוסף וכנגד המס "
+        "החל על הכנסתה מיגיעה אישית – לנקודות זיכוי בעד ילדיה כלהלן:"
+    )
+    assert _source_evidence_fragment_is_body_bound("זכאית ל־1⁄2 נקודת זיכוי", source)
+    assert _source_evidence_fragment_is_body_bound("זכאית ל־ 1⁄2 נקודת זיכוי", source)
+    assert not _source_evidence_fragment_is_body_bound("זכאית ל־1⁄2 נקודת זיכו", source)
+    for excerpt in (
+        "האשה תהא זכאית ל־1⁄2 נקודת זיכוי",
+        "האשה תהא זכאית ל־ 1⁄2 נקודת זיכוי",
+    ):
+        content = textwrap.dedent(
+            f"""
+            format: rulespec/v1
+            rules:
+              - name: woman_separate_calculation_additional_points
+                kind: parameter
+                dtype: Decimal
+                metadata:
+                  proof:
+                    atoms:
+                      - path: versions[0].formula
+                        kind: amount
+                        source:
+                          corpus_citation_path: il/statute/income-tax-ordinance/section-66
+                          excerpt: {excerpt}
+                versions:
+                  - effective_from: '2026-01-01'
+                    formula: 0.5
+            """
+        ).strip()
+        assert (
+            find_ungrounded_numeric_issues_scoped(
+                content,
+                module_source_text="",
+                proof_source_texts={
+                    "il/statute/income-tax-ordinance/section-66": source
+                },
+            )
+            == []
+        ), excerpt
+        assert validate_rulespec_proofs(
+            content,
+            source_texts={"il/statute/income-tax-ordinance/section-66": source},
+        ).passed, excerpt
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 

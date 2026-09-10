@@ -123,6 +123,7 @@ from .policyengine_runtime import (
 )
 from .proof_validator import (
     _bounded_source_evidence_match,
+    bind_maqaf_space,
     find_plural_corpus_citation_path_issues,
     find_rulespec_proof_issues,
     validate_rulespec_proofs,
@@ -9862,9 +9863,14 @@ def _source_evidence_fragment_is_body_bound(
 ) -> bool:
     normalized_evidence = _collapse_source_sentence_text(evidence_text).casefold()
     normalized_source = _collapse_source_sentence_text(source_text).casefold()
-    return bool(
-        normalized_evidence
-        and _bounded_source_evidence_match(normalized_evidence, normalized_source)
+    if not normalized_evidence:
+        return False
+    if _bounded_source_evidence_match(normalized_evidence, normalized_source):
+        return True
+    # The proof check reads "ל־ 1⁄2" and "ל־1⁄2" as one text; numeric evidence
+    # is bound the same way.
+    return "\u05be" in normalized_source and _bounded_source_evidence_match(
+        bind_maqaf_space(normalized_evidence), bind_maqaf_space(normalized_source)
     )
 
 
@@ -9899,6 +9905,7 @@ def _rule_verified_source_excerpt_pairs_by_path(
         if not resolved_text:
             continue
         normalized_source = _collapse_source_sentence_text(resolved_text).lower()
+        maqaf_source = bind_maqaf_space(normalized_source)
         selected_excerpts = [excerpt for excerpt in excerpts if excerpt]
         if not selected_excerpts:
             table = source.get("table")
@@ -9911,7 +9918,10 @@ def _rule_verified_source_excerpt_pairs_by_path(
             continue
         for excerpt in selected_excerpts:
             normalized_excerpt = _collapse_source_sentence_text(excerpt).lower()
-            if normalized_excerpt and normalized_excerpt in normalized_source:
+            if normalized_excerpt and (
+                normalized_excerpt in normalized_source
+                or bind_maqaf_space(normalized_excerpt) in maqaf_source
+            ):
                 by_path.setdefault(path, []).append((excerpt, resolved_text))
     return {path: tuple(pairs) for path, pairs in by_path.items()}
 
