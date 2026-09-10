@@ -122,6 +122,7 @@ from .policyengine_runtime import (
     policyengine_subprocess_environment,
 )
 from .proof_validator import (
+    BIDI_MARKS_FRAGMENT,
     HEBREW_MAQAF_WRAP_SPACE_PATTERN,
     HORIZONTAL_SPACE_FRAGMENT,
     LINE_END_FRAGMENT,
@@ -7376,7 +7377,7 @@ _EUROPEAN_MONEY_AMOUNT_PATTERN = re.compile(
 # is no sign; a sign no letter precedes still negates ("-3%").
 # A bidirectional formatting mark inside a numeric token ("−\u200f.5%",
 # "3\u200f%") is nothing to the reader.
-_BIDI_MARKS_FRAGMENT = r"[\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c]"
+_BIDI_MARKS_FRAGMENT = BIDI_MARKS_FRAGMENT
 # A comma-grouped number keeps its groups and its decimal part ("1,234.5",
 # "1,234,567"), read whole before the plainer shapes, so no suffix of it
 # is a number of its own.

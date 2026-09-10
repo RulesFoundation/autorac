@@ -558,6 +558,9 @@ LINE_END_FRAGMENT = "(?:\\r\\n|\\r(?!\\n)|\\n)"
 # reader's \s, are horizontal space -- so the collapse below and the bindings
 # partition whitespace alike, and no character is a space to one and a
 # boundary to the other.
+# A bidirectional formatting mark inside a token ("−\u200f.5%", "3\u200f%") is
+# nothing to the readers; the one class serves them and the binding below.
+BIDI_MARKS_FRAGMENT = r"[\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c]"
 HORIZONTAL_SPACE_FRAGMENT = (
     "[ \\t\\x1c-\\x1f\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]"
 )
@@ -581,12 +584,16 @@ WRAP_SPACE_FRAGMENT = (
 # same text. A blank line or a paragraph separator after the maqaf is a
 # boundary the binding does not cross. The word begins at a word boundary,
 # so a maqaf inside an identifier ("121א־2", section 121a-2) or after a
-# digit binds nothing. This one pattern is the binding evidence matching
-# applies and the
+# digit binds nothing; a unary sign before the word ("−שלושה־עשר", with any
+# formatting marks after it) belongs to the word and moves with it, and a
+# hyphen a letter precedes ("מאה-שלושה") is no boundary the word begins at.
+# This one pattern is the binding evidence matching applies and the
 # binding the numeric cleaner applies, so the two never accept different
 # texts: group 1 is the word, 2 the maqaf, 3 the wrap space.
 HEBREW_MAQAF_WRAP_SPACE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff\\w])([\u05d0-\u05ea]+(?:\u05be[\u05d0-\u05ea]+)*)(\u05be)("
+    "(?<![\u0590-\u05ff\\w\\-\u2212])((?:[\\-\u2212]"
+    + BIDI_MARKS_FRAGMENT
+    + "*)?[\u05d0-\u05ea]+(?:\u05be[\u05d0-\u05ea]+)*)(\u05be)("
     + WRAP_SPACE_FRAGMENT
     + "+)(?=[\u0590-\u05ff\\d.\u00bc-\u00be\u2150-\u215e])"
 )
