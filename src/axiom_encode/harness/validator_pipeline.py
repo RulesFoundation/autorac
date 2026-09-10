@@ -15698,11 +15698,27 @@ def _tokenize_numeric_occurrences_from_text(
         if hebrew_text
         else []
     )
+    # A printed figure a counted fraction word follows is that word's count
+    # ("3½ עשיריות", "3 1/2 עשיריות", "3 1⁄2 עשיריות"): the fraction reader
+    # reads them together, and no pass before it reads the figure or its
+    # pieces on its own.
+    counted_figure_spans: list[tuple[int, int]] = []
+    if hebrew_text:
+        for pattern in (
+            _HEBREW_GLYPH_NUMBER_PATTERN,
+            _HEBREW_ASCII_MIXED_FRACTION_PATTERN,
+            _FRACTION_SLASH_PATTERN,
+        ):
+            for match in pattern.finditer(cleaned):
+                if _HEBREW_COUNTED_FRACTION_AFTER_PATTERN.match(cleaned, match.end()):
+                    counted_figure_spans.append(match.span())
     if hebrew_text:
         for match in _HEBREW_GLYPH_NUMBER_PATTERN.finditer(cleaned):
             if _span_overlaps(match.span(), inventory_spans) or _span_overlaps(
                 match.span(), grounding_spans
             ):
+                continue
+            if _span_overlaps(match.span(), counted_figure_spans):
                 continue
             value = unicodedata.numeric(match.group("glyph")) + float(
                 (match.group("whole") or "0").replace(",", "")
@@ -15737,6 +15753,8 @@ def _tokenize_numeric_occurrences_from_text(
             grounding_spans.append(span)
             inventory_spans.append(span)
     for match in (*hebrew_ascii_mixed, *_FRACTION_SLASH_PATTERN.finditer(cleaned)):
+        if _span_overlaps(match.span(), counted_figure_spans):
+            continue
         with contextlib.suppress(ValueError, ZeroDivisionError):
             whole = float((match.group("whole") or "0").replace(",", ""))
             numerator = float(match.group("numerator"))
@@ -15858,6 +15876,8 @@ def _tokenize_numeric_occurrences_from_text(
         re.IGNORECASE,
     )
     for span, value in special_matches:
+        if _span_overlaps(span, counted_figure_spans):
+            continue
         raw = cleaned[span[0] : span[1]]
         is_rate = bool(rate_marker_pattern.search(raw))
         kwargs = {

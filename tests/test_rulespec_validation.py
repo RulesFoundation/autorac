@@ -21861,6 +21861,58 @@ def test_the_plural_fraction_words_agree_and_a_printed_mixed_count_counts():
         ), (text, issue)
 
 
+def test_a_glyph_or_slash_count_yields_to_the_fraction_word_it_counts():
+    # Review round 175 on #1585: a printed count written with a vulgar-
+    # fraction glyph or a slash fraction counts the fraction word after
+    # it, so the glyph, ASCII-mixed and slash-fraction passes yield the
+    # figure (and its pieces) to the fraction reader; a figure with no
+    # fraction word after it reads as before.
+    import math
+
+    for text, expected in (
+        ("העובד זכאי ל־3½ עשיריות מהשכר", 0.35),
+        ("העובד זכאי ל־3 1/2 עשיריות מהשכר", 0.35),
+        ("העובד זכאי ל־3 1⁄2 עשיריות מהשכר", 0.35),
+        ("העובד זכאי ל־½ עשיריות מהשכר", 0.05),
+        ("העובד זכאי ל־1/2 עשיריות מהשכר", 0.05),
+        ("העובד זכאי ל־1⁄2 עשיריות מהשכר", 0.05),
+        ("העובד זכאי ל־3½ רבעי השכר", 0.875),
+        ("השיעור הוא 3½ עשיריות האחוז", 0.0035),
+        ("השיעור הוא 3 1/2 עשיריות האחוז", 0.0035),
+        ("השיעור הוא 3 1⁄2 עשיריות האחוז", 0.0035),
+        ("השיעור הוא 3½ עשיריות של האחוז", 0.0035),
+        ("3½ שקלים", 3.5),
+        ("השיעור הוא 2½%", 0.025),
+        ("השיעור הוא 16 1⁄2%", 0.165),
+        ("השיעור הוא 2 1/2 אחוזים", 0.025),
+    ):
+        (value,) = _hebrew_recall(text)
+        assert math.isclose(value, expected, rel_tol=1e-9), text
+        assert any(
+            math.isclose(found, expected, rel_tol=1e-9)
+            for found in extract_numbers_from_text(text)
+        ), text
+    for text, expected, grounded, ungrounded in (
+        ("העובד זכאי ל־3½ עשיריות מהשכר", 0.35, "0.35", "3.5"),
+        ("העובד זכאי ל־3 1/2 עשיריות מהשכר", 0.35, "0.35", "3.5"),
+        ("העובד זכאי ל־3 1⁄2 עשיריות מהשכר", 0.35, "0.35", "3.5"),
+        ("השיעור הוא 3 1/2 עשיריות האחוז", 0.0035, "0.0035", "0.001"),
+    ):
+        (value,) = _hebrew_recall(text)
+        assert math.isclose(value, expected, rel_tol=1e-9), text
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
