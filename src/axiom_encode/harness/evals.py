@@ -1582,6 +1582,7 @@ def run_model_eval(
     replacement_overlay_scope: bool = False,
     validation_retry_candidate: ValidationRetryCandidate | None = None,
     repair_candidate_tests_only: bool = False,
+    accept_valid_retry_candidate: bool = False,
 ) -> list[EvalResult]:
     """Run a deterministic comparison over one or more citations."""
     _validate_eval_oracle_runtime(oracle, policyengine_runtime, policy_path)
@@ -1597,6 +1598,22 @@ def run_model_eval(
         raise ValueError("Tests-only repair requires a validation retry candidate")
     if repair_candidate_tests_only and validation_retry_candidate.tests is None:
         raise ValueError("Tests-only repair requires preserved companion tests")
+    if accept_valid_retry_candidate and validation_retry_candidate is None:
+        raise ValueError(
+            "Retained-candidate preflight requires a validation retry candidate"
+        )
+    if (
+        accept_valid_retry_candidate
+        and validation_retry_candidate is not None
+        and validation_retry_candidate.tests is None
+    ):
+        raise ValueError(
+            "Retained-candidate preflight requires preserved companion tests"
+        )
+    if accept_valid_retry_candidate and repair_candidate_tests_only:
+        raise ValueError(
+            "Retained-candidate preflight is incompatible with tests-only repair"
+        )
     include_tests = (
         include_tests or require_complete_source_unit or repair_candidate_tests_only
     )
@@ -1640,6 +1657,7 @@ def run_model_eval(
                         required_test_case_contracts=required_test_case_contracts,
                         validation_retry_candidate=validation_retry_candidate,
                         repair_candidate_tests_only=repair_candidate_tests_only,
+                        accept_valid_retry_candidate=accept_valid_retry_candidate,
                         required_import_targets=required_import_targets,
                         legacy_replacement=legacy_replacement,
                         replacement_overlay_scope=replacement_overlay_scope,
@@ -8795,6 +8813,7 @@ def _run_single_eval(
     replacement_overlay_scope: bool = False,
     validation_retry_candidate: ValidationRetryCandidate | None = None,
     repair_candidate_tests_only: bool = False,
+    accept_valid_retry_candidate: bool = False,
 ) -> EvalResult:
     include_tests = include_tests or require_complete_source_unit
     if source_unit is None:
@@ -8874,28 +8893,113 @@ def _run_single_eval(
     output_file = _contained_eval_output_file(output_root, runner.name, relative_output)
     artifact_root = Path(output_root).resolve()
     _clear_eval_target_artifacts(output_file, artifact_root)
-    response, wrote_artifact, retry_count, materialized_paths = (
-        _run_prompt_eval_with_empty_artifact_retry(
-            runner=runner,
-            workspace=workspace,
-            prompt=prompt,
-            output_file=output_file,
-            source_text=source_text,
-            target_file_name=relative_output.name,
-            include_tests=include_tests,
-            policyengine_rule_hint=policyengine_rule_hint,
-            artifact_root=artifact_root,
-            repair_candidate=(
-                validation_retry_candidate if repair_candidate_tests_only else None
-            ),
-            required_test_case_contracts=required_test_case_contracts,
+    retained_candidate_metrics: EvalArtifactMetrics | None = None
+    retained_candidate_accepted = False
+    if accept_valid_retry_candidate:
+        assert validation_retry_candidate is not None
+        assert validation_retry_candidate.tests is not None
+        preflight_started = time.monotonic()
+        _write_eval_artifact_text(
+            output_file,
+            validation_retry_candidate.rulespec,
+            artifact_root,
         )
-    )
+        materialized_paths = {output_file}
+        test_file = _rulespec_test_path(output_file)
+        _write_eval_artifact_text(
+            test_file,
+            validation_retry_candidate.tests,
+            artifact_root,
+        )
+        materialized_paths.add(test_file)
+        protected_paths = [relative_output]
+        if _rulespec_test_path(output_file) in materialized_paths:
+            protected_paths.append(_rulespec_test_path(relative_output))
+        _hydrate_eval_root(
+            Path(output_root) / runner.name,
+            workspace,
+            protected_paths=protected_paths,
+        )
+        retained_candidate_metrics = _evaluate_generated_artifact_with_repairs(
+            rulespec_file=output_file,
+            policy_repo_root=policy_path,
+            axiom_rules_path=runtime_axiom_rules_path,
+            source_text=source_text,
+            oracle=oracle,
+            policyengine_runtime=policyengine_runtime,
+            policyengine_rule_hint=policyengine_rule_hint,
+            skip_reviewers=skip_reviewers,
+            reviewers_require_deterministic_pass=reviewers_require_deterministic_pass,
+            source_metadata=source_metadata_payload,
+            local_corpus_release=corpus_release,
+            source_citation_path=_source_metadata_citation_path(
+                source_metadata_payload
+            ),
+            rulespec_dependency_roots=rulespec_dependency_roots,
+            require_complete_source_unit=require_complete_source_unit,
+            amendment_documents=workspace.amendment_documents,
+            protected_review_excerpts=_workspace_quoted_review_finding_excerpts(
+                workspace
+            ),
+            legacy_replacement=legacy_replacement,
+            replacement_overlay_scope=replacement_overlay_scope,
+            allow_artifact_repairs=False,
+        )
+        retained_candidate_accepted = (
+            retained_candidate_metrics is not None
+            and _eval_artifact_validation_error(
+                retained_candidate_metrics,
+                require_policyengine=oracle == "policyengine",
+            )
+            is None
+        )
+        if retained_candidate_accepted:
+            duration_ms = max(
+                int((time.monotonic() - preflight_started) * 1000),
+                0,
+            )
+            response = EvalPromptResponse(
+                text=validation_retry_candidate.rulespec,
+                duration_ms=duration_ms,
+                trace={
+                    "schema": "axiom-encode/retained-candidate-preflight/v1",
+                    "accepted": True,
+                    "rulespec_sha256": validation_retry_candidate.rulespec_sha256,
+                    "tests_sha256": validation_retry_candidate.tests_sha256,
+                },
+            )
+            wrote_artifact = True
+            retry_count = 0
+            materialized_paths = frozenset(materialized_paths)
+            print("  retained_candidate_preflight=accepted")
+        else:
+            print("  retained_candidate_preflight=rejected")
+            _clear_eval_target_artifacts(output_file, artifact_root)
+
+    if not retained_candidate_accepted:
+        response, wrote_artifact, retry_count, materialized_paths = (
+            _run_prompt_eval_with_empty_artifact_retry(
+                runner=runner,
+                workspace=workspace,
+                prompt=prompt,
+                output_file=output_file,
+                source_text=source_text,
+                target_file_name=relative_output.name,
+                include_tests=include_tests,
+                policyengine_rule_hint=policyengine_rule_hint,
+                artifact_root=artifact_root,
+                repair_candidate=(
+                    validation_retry_candidate if repair_candidate_tests_only else None
+                ),
+                required_test_case_contracts=required_test_case_contracts,
+            )
+        )
     overlay_validation_issue: str | None = None
     if (
         wrote_artifact
         and validation_retry_candidate is not None
         and not repair_candidate_tests_only
+        and not retained_candidate_accepted
     ):
         try:
             overlay_repairs = _overlay_validation_retry_candidate(
@@ -8972,8 +9076,8 @@ def _run_single_eval(
         json.dumps(response.trace or {}, indent=2, sort_keys=True).encode("utf-8"),
     )
 
-    metrics = None
-    if wrote_artifact:
+    metrics = retained_candidate_metrics if retained_candidate_accepted else None
+    if wrote_artifact and not retained_candidate_accepted:
         metrics = _evaluate_generated_artifact_with_repairs(
             rulespec_file=output_file,
             policy_repo_root=policy_path,

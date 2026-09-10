@@ -14809,6 +14809,7 @@ rules:
         assert "preserved-rule" in candidate.rulespec
         assert candidate.tests is not None
         assert "preserved-companion" in candidate.tests
+        assert mock_run.call_args.kwargs["accept_valid_retry_candidate"] is True
 
     def test_encode_passes_cross_run_candidate_issues_to_first_attempt_feedback(
         self, tmp_path
@@ -15199,6 +15200,10 @@ rules:
         assert "preserved-cross-run-rule" in retry_candidates[0].rulespec
         assert "rejected-attempt-1" in retry_candidates[1].rulespec
         assert "preserved-cross-run-rule" not in retry_candidates[1].rulespec
+        assert mock_run.call_args_list[0].kwargs["accept_valid_retry_candidate"] is True
+        assert (
+            mock_run.call_args_list[1].kwargs["accept_valid_retry_candidate"] is False
+        )
         assert mock_run.call_args_list[1].kwargs["validation_retry_feedback"] == (
             "first candidate regressed",
         )
