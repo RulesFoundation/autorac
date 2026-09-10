@@ -143,7 +143,9 @@ from .engine_binding import (
     ENGINE_PIN_FIELD,
     EngineBindingError,
     EnginePin,
+    bind_clean_engine_checkout,
     engine_binding_receipt_path,
+    engine_ref_arguments,
     load_declared_engine_pin,
     require_engine_ref_sha,
     resolve_pinned_engine_binary,
@@ -2839,6 +2841,16 @@ def main():
         type=Path,
         required=True,
         help="Exact axiom-rules-engine checkout (no sibling discovery)",
+    )
+    encode_parser.add_argument(
+        "--axiom-rules-engine-ref",
+        type=lambda value: require_engine_ref_sha(
+            value, description="--axiom-rules-engine-ref"
+        ),
+        help=(
+            "Exact engine commit for every generation and apply validation; "
+            "requires a clean engine checkout at that commit"
+        ),
     )
     encode_parser.add_argument(
         "--policy-repo-path",
@@ -16711,6 +16723,7 @@ def _rulespec_companion_test_failures(
     root: Path,
     axiom_rules_path: Path,
     rulespec_dependency_roots: Sequence[Path] = (),
+    axiom_rules_engine_ref: str | None = None,
 ) -> list[dict[str, str | None]]:
     pipeline = ValidatorPipeline(
         policy_repo_path=root,
@@ -16718,6 +16731,7 @@ def _rulespec_companion_test_failures(
         local_corpus_release=None,
         enable_oracles=False,
         rulespec_dependency_roots=rulespec_dependency_roots,
+        **engine_ref_arguments(axiom_rules_engine_ref),
     )
     binary = pipeline._axiom_rules_binary()
     rulespec_env = pipeline._rulespec_engine_env()
@@ -29715,6 +29729,9 @@ def _run_encode_attempt(
         args.axiom_rules_path,
         label="Axiom rules engine",
     )
+    axiom_rules_engine_ref = getattr(args, "axiom_rules_engine_ref", None)
+    if axiom_rules_engine_ref is not None:
+        bind_clean_engine_checkout(axiom_rules_path, axiom_rules_engine_ref)
     policy_checkout_path = resolved_policy_checkout_path
     if policy_checkout_path is None:
         policy_checkout_path = _resolve_explicit_existing_directory(
@@ -29807,6 +29824,7 @@ def _run_encode_attempt(
             ),
             deferred_output_review_contract=deferred_output_review_contract,
             amendment_source_texts=amendment_source_texts,
+            **engine_ref_arguments(axiom_rules_engine_ref),
         )
 
     skip_reviewers = bool(getattr(args, "skip_reviewers", False))
@@ -29881,6 +29899,7 @@ def _run_encode_attempt(
             else None
         ),
         replacement_overlay_scope=replacement_target is not None,
+        **engine_ref_arguments(axiom_rules_engine_ref),
     )
 
     result = results[0]
@@ -31943,6 +31962,7 @@ def _run_encode_attempt(
                             policy_repo_path=policy_repo_path,
                             axiom_rules_path=axiom_rules_path,
                             issues=apply_issues,
+                            **engine_ref_arguments(axiom_rules_engine_ref),
                         )
                     )
                     if not repaired_test_cases:
@@ -32496,6 +32516,7 @@ def _run_encode_attempt(
                             policy_repo_path=policy_repo_path,
                             axiom_rules_path=axiom_rules_path,
                             issues=apply_issues,
+                            **engine_ref_arguments(axiom_rules_engine_ref),
                         )
                     )
                     if not repaired_test_cases:
@@ -46408,6 +46429,7 @@ def _try_repair_generated_judgment_positive_tests_for_apply(
     policy_repo_path: Path,
     axiom_rules_path: Path,
     issues: list[str],
+    axiom_rules_engine_ref: str | None = None,
 ) -> list[str]:
     """Append deterministic positive companion tests for Judgment outputs."""
     if not _judgment_positive_output_targets_from_issues(issues):
@@ -46429,6 +46451,7 @@ def _try_repair_generated_judgment_positive_tests_for_apply(
         axiom_rules_path=axiom_rules_path,
         relative_output=relative_output,
         issues=issues,
+        **engine_ref_arguments(axiom_rules_engine_ref),
     )
 
 
@@ -46441,6 +46464,7 @@ def _append_generated_judgment_positive_tests_in_overlay(
     relative_output: Path,
     issues: list[str],
     rulespec_dependency_roots: Sequence[Path] = (),
+    axiom_rules_engine_ref: str | None = None,
 ) -> list[str]:
     """Validate generated Judgment tests in a canonical temporary checkout."""
     if not _judgment_positive_output_targets_from_issues(issues):
@@ -46482,6 +46506,7 @@ def _append_generated_judgment_positive_tests_in_overlay(
             root=overlay_content_root,
             axiom_rules_path=axiom_rules_path,
             rulespec_dependency_roots=staged_dependency_roots,
+            **engine_ref_arguments(axiom_rules_engine_ref),
         )
 
         def check_generated_test(
@@ -46502,6 +46527,7 @@ def _append_generated_judgment_positive_tests_in_overlay(
                     root=overlay_content_root,
                     axiom_rules_path=axiom_rules_path,
                     rulespec_dependency_roots=staged_dependency_roots,
+                    **engine_ref_arguments(axiom_rules_engine_ref),
                 ),
             )
 
@@ -51314,6 +51340,7 @@ def _apply_validation_execution_identity(
     policy_repo_path: Path,
     relative_output: Path,
     rulespec_dependency_roots: Sequence[Path],
+    axiom_rules_engine_ref: str | None = None,
 ) -> dict[str, object]:
     """Hash the engine and complete RuleSpec closure used by overlay validation."""
 
@@ -51321,7 +51348,7 @@ def _apply_validation_execution_identity(
     content_root = _rulespec_apply_content_root(policy_repo_path, relative_output)
     dependencies = _normalize_rulespec_dependency_roots(rulespec_dependency_roots)
     encoder = _apply_encoder_execution_identity()
-    return {
+    identity: dict[str, object] = {
         "axiom_encode_identity": encoder,
         "axiom_rules_path": str(engine),
         "axiom_rules_identity": _git_checkout_execution_identity(engine),
@@ -51332,6 +51359,41 @@ def _apply_validation_execution_identity(
             _apply_dependency_checkout_identity(path) for path in dependencies
         ],
     }
+    if axiom_rules_engine_ref is not None:
+        binding = bind_clean_engine_checkout(
+            engine, axiom_rules_engine_ref, allow_build=False
+        )
+        source_identity = identity["axiom_rules_identity"]
+        if (
+            not isinstance(source_identity, dict)
+            or source_identity.get("kind") != "git"
+            or source_identity.get("commit") != binding["engine_ref"]
+            or source_identity.get("dirty") is not False
+        ):
+            raise RuntimeError(
+                "Engine source identity changed while binding validation"
+            )
+        identity["axiom_rules_engine_binding"] = binding
+    return identity
+
+
+def _apply_validation_engine_ref(execution: Mapping[str, object]) -> str | None:
+    """Recover the optional job pin without downgrading a malformed snapshot."""
+    if "axiom_rules_engine_binding" not in execution:
+        return None
+    binding = execution["axiom_rules_engine_binding"]
+    if (
+        not isinstance(binding, dict)
+        or set(binding) != {"engine_ref", "binary", "binary_sha256"}
+        or not isinstance(binding.get("binary"), str)
+        or not Path(binding["binary"]).is_absolute()
+        or not isinstance(binding.get("binary_sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", binding["binary_sha256"]) is None
+    ):
+        raise RuntimeError("Apply validation snapshot has malformed engine binding")
+    return require_engine_ref_sha(
+        binding.get("engine_ref"), description="Apply validation engine ref"
+    )
 
 
 def _runtime_attestation_path() -> Path:
@@ -52129,9 +52191,23 @@ def _record_successful_apply_validation(
     local_corpus_release: LocalCorpusRelease,
     axiom_rules_path: Path,
     rulespec_dependency_roots: Sequence[Path] = (),
+    axiom_rules_engine_ref: str | None = None,
+    validated_engine_binding: Mapping[str, str] | None = None,
 ) -> None:
     """Persist the exact successful overlay boundary on the in-memory result."""
 
+    execution = _apply_validation_execution_identity(
+        axiom_rules_path=axiom_rules_path,
+        policy_repo_path=policy_repo_path,
+        relative_output=relative_output,
+        rulespec_dependency_roots=rulespec_dependency_roots,
+        **engine_ref_arguments(axiom_rules_engine_ref),
+    )
+    if axiom_rules_engine_ref is not None and (
+        validated_engine_binding is None
+        or execution.get("axiom_rules_engine_binding") != validated_engine_binding
+    ):
+        raise RuntimeError("Engine binding changed during overlay validation")
     setattr(
         result,
         _APPLY_VALIDATION_SNAPSHOT_ATTR,
@@ -52142,12 +52218,7 @@ def _record_successful_apply_validation(
             relative_output=relative_output,
             supplemental_files=supplemental_files,
             local_corpus_release=local_corpus_release,
-            validation_execution_identity=_apply_validation_execution_identity(
-                axiom_rules_path=axiom_rules_path,
-                policy_repo_path=policy_repo_path,
-                relative_output=relative_output,
-                rulespec_dependency_roots=rulespec_dependency_roots,
-            ),
+            validation_execution_identity=execution,
         ),
     )
 
@@ -52192,6 +52263,7 @@ def _require_unchanged_successful_apply_validation(
             policy_repo_path=policy_repo_path,
             relative_output=relative_output,
             rulespec_dependency_roots=tuple(Path(path) for path in dependency_roots),
+            **engine_ref_arguments(_apply_validation_engine_ref(validation_execution)),
         ),
     )
     if actual != expected:
@@ -54013,11 +54085,13 @@ def _require_apply_post_install_closure(
         policy_repo_path=content_root,
         relative_output=relative_output,
         rulespec_dependency_roots=tuple(Path(path) for path in dependency_roots),
+        **engine_ref_arguments(_apply_validation_engine_ref(expected_execution)),
     )
     for field in (
         "axiom_encode_identity",
         "axiom_rules_path",
         "axiom_rules_identity",
+        "axiom_rules_engine_binding",
         "rulespec_dependency_roots",
         "rulespec_dependency_identities",
     ):
@@ -55145,9 +55219,17 @@ def _validate_generated_encoding_in_policy_overlay_with_release(
     require_complete_source_unit: bool = False,
     deferred_output_review_contract: _DeferredOutputReviewContract | None = None,
     amendment_source_texts: Mapping[str, str] | None = None,
+    axiom_rules_engine_ref: str | None = None,
 ) -> tuple[bool, list[str], dict[Path, str]]:
     """Validate generated artifacts in a temporary policy-repo overlay."""
     setattr(result, _APPLY_VALIDATION_SNAPSHOT_ATTR, None)
+    validated_engine_binding = (
+        bind_clean_engine_checkout(
+            axiom_rules_path, axiom_rules_engine_ref, allow_build=False
+        )
+        if axiom_rules_engine_ref is not None
+        else None
+    )
     legacy_replacement = _result_legacy_replacement_contract(result)
     replacement_overlay_scope = _result_replacement_overlay_scope(result)
     if legacy_replacement is not None and not isinstance(
@@ -55456,6 +55538,7 @@ def _validate_generated_encoding_in_policy_overlay_with_release(
             amendment_source_texts=amendment_source_texts,
             require_complete_source_unit=require_complete_source_unit,
             existing_target_oracle_contract=existing_target_oracle_contract,
+            **engine_ref_arguments(axiom_rules_engine_ref),
         )
         dependents = (
             _find_rulespec_dependents(overlay_content_root, relative_output)
@@ -55484,6 +55567,7 @@ def _validate_generated_encoding_in_policy_overlay_with_release(
                     enforce_repository_layout=False,
                     local_corpus_release=local_corpus_release,
                     rulespec_dependency_roots=staged_dependency_roots,
+                    **engine_ref_arguments(axiom_rules_engine_ref),
                 ),
                 baseline_pipeline=ValidatorPipeline(
                     policy_repo_path=policy_content_root,
@@ -55492,6 +55576,7 @@ def _validate_generated_encoding_in_policy_overlay_with_release(
                     enforce_repository_layout=False,
                     local_corpus_release=local_corpus_release,
                     rulespec_dependency_roots=rulespec_dependency_roots,
+                    **engine_ref_arguments(axiom_rules_engine_ref),
                 ),
                 overlay_root=overlay_content_root,
                 baseline_root=policy_content_root,
@@ -55625,6 +55710,12 @@ def _validate_generated_encoding_in_policy_overlay_with_release(
                         local_corpus_release=local_corpus_release,
                         axiom_rules_path=axiom_rules_path,
                         rulespec_dependency_roots=rulespec_dependency_roots,
+                        **engine_ref_arguments(axiom_rules_engine_ref),
+                        **(
+                            {"validated_engine_binding": validated_engine_binding}
+                            if axiom_rules_engine_ref is not None
+                            else {}
+                        ),
                     )
                     return True, [], supplemental_files
             target_validation = next(
@@ -56046,6 +56137,7 @@ def _run_generated_encoding_overlay_validation(
     require_complete_source_unit: bool = False,
     deferred_output_review_contract: _DeferredOutputReviewContract | None = None,
     amendment_source_texts: Mapping[str, str] | None = None,
+    axiom_rules_engine_ref: str | None = None,
 ) -> tuple[bool, list[str], dict[Path, str]]:
     """Dispatch a release-bound overlay run through the patchable test seam."""
 
@@ -56061,6 +56153,7 @@ def _run_generated_encoding_overlay_validation(
         require_complete_source_unit=require_complete_source_unit,
         deferred_output_review_contract=deferred_output_review_contract,
         amendment_source_texts=amendment_source_texts,
+        **engine_ref_arguments(axiom_rules_engine_ref),
     )
 
 

@@ -45,6 +45,10 @@ from axiom_encode.constants import (
     RULESPEC_FILE_SUFFIX,
     RULESPEC_TEST_FILE_SUFFIX,
 )
+from axiom_encode.engine_binding import (
+    bind_clean_engine_checkout,
+    engine_ref_arguments,
+)
 from axiom_encode.legacy_replacement import LegacyReplacementContract
 from axiom_encode.legacy_replacement_overlay import (
     LegacyReplacementOverlayError,
@@ -1590,8 +1594,11 @@ def run_model_eval(
     validation_retry_candidate: ValidationRetryCandidate | None = None,
     repair_candidate_tests_only: bool = False,
     accept_valid_retry_candidate: bool = False,
+    axiom_rules_engine_ref: str | None = None,
 ) -> list[EvalResult]:
     """Run a deterministic comparison over one or more citations."""
+    if axiom_rules_engine_ref is not None:
+        bind_clean_engine_checkout(runtime_axiom_rules_path, axiom_rules_engine_ref)
     _validate_eval_oracle_runtime(oracle, policyengine_runtime, policy_path)
     if target_relative_output is not None and len(citations) != 1:
         raise ValueError(
@@ -1668,6 +1675,7 @@ def run_model_eval(
                         required_import_targets=required_import_targets,
                         legacy_replacement=legacy_replacement,
                         replacement_overlay_scope=replacement_overlay_scope,
+                        **engine_ref_arguments(axiom_rules_engine_ref),
                     )
                 )
 
@@ -7290,6 +7298,7 @@ def evaluate_artifact(
     amendment_documents: Sequence[CorpusAmendmentDocument] = (),
     legacy_replacement: LegacyReplacementContract | None = None,
     replacement_overlay_scope: bool = False,
+    axiom_rules_engine_ref: str | None = None,
 ) -> EvalArtifactMetrics:
     """Evaluate an artifact inside one exact named corpus release."""
 
@@ -7324,6 +7333,7 @@ def evaluate_artifact(
             amendment_documents=amendment_documents,
             legacy_replacement=legacy_replacement,
             replacement_overlay_scope=replacement_overlay_scope,
+            **engine_ref_arguments(axiom_rules_engine_ref),
         )
 
 
@@ -7468,6 +7478,7 @@ def _evaluate_artifact_in_scope(
     amendment_documents: Sequence[CorpusAmendmentDocument] = (),
     legacy_replacement: LegacyReplacementContract | None = None,
     replacement_overlay_scope: bool = False,
+    axiom_rules_engine_ref: str | None = None,
 ) -> EvalArtifactMetrics:
     """Evaluate one RuleSpec artifact with deterministic checks plus optional oracles."""
     existing_target_oracle_contract: ExistingTargetOracleContract | None = None
@@ -7520,6 +7531,7 @@ def _evaluate_artifact_in_scope(
                 for document in amendment_documents
             },
             existing_target_oracle_contract=existing_target_oracle_contract,
+            **engine_ref_arguments(axiom_rules_engine_ref),
         )
         compile_result = pipeline._run_compile_check(validation_file)
         _add_attached_amendment_import_retry_guidance(
@@ -7875,6 +7887,7 @@ def _evaluate_generated_artifact_with_repairs(
     legacy_replacement: LegacyReplacementContract | None = None,
     replacement_overlay_scope: bool = False,
     allow_artifact_repairs: bool = True,
+    axiom_rules_engine_ref: str | None = None,
 ) -> EvalArtifactMetrics | None:
     evaluated_states: set[tuple[bytes | None, bytes | None]] = set()
     for _repair_round in range(_GENERATED_EVAL_REPAIR_LIMIT + 1):
@@ -7901,6 +7914,7 @@ def _evaluate_generated_artifact_with_repairs(
             amendment_documents=amendment_documents,
             legacy_replacement=legacy_replacement,
             replacement_overlay_scope=replacement_overlay_scope,
+            **engine_ref_arguments(axiom_rules_engine_ref),
         )
         if metrics is None:
             return None
@@ -7919,6 +7933,7 @@ def _evaluate_generated_artifact_with_repairs(
             local_corpus_release=local_corpus_release,
             protected_review_excerpts=protected_review_excerpts,
             rulespec_dependency_roots=rulespec_dependency_roots,
+            **engine_ref_arguments(axiom_rules_engine_ref),
         )
         if not repairs:
             return metrics
@@ -8046,6 +8061,7 @@ def _apply_generated_eval_repairs(
     local_corpus_release: _corpus_resolver.LocalCorpusRelease,
     protected_review_excerpts: frozenset[str] = frozenset(),
     rulespec_dependency_roots: Sequence[Path] = (),
+    axiom_rules_engine_ref: str | None = None,
 ) -> list[str]:
     """Apply deterministic generated-artifact repairs before final eval scoring."""
     repairs: list[str] = []
@@ -8168,6 +8184,7 @@ def _apply_generated_eval_repairs(
             relative_output=relative_output,
             issues=companion_issues,
             rulespec_dependency_roots=rulespec_dependency_roots,
+            **engine_ref_arguments(axiom_rules_engine_ref),
         )
     )
     repairs.extend(
@@ -8921,7 +8938,13 @@ def _run_single_eval(
     validation_retry_candidate: ValidationRetryCandidate | None = None,
     repair_candidate_tests_only: bool = False,
     accept_valid_retry_candidate: bool = False,
+    axiom_rules_engine_ref: str | None = None,
 ) -> EvalResult:
+    engine_binding = (
+        bind_clean_engine_checkout(runtime_axiom_rules_path, axiom_rules_engine_ref)
+        if axiom_rules_engine_ref is not None
+        else None
+    )
     include_tests = include_tests or require_complete_source_unit
     if source_unit is None:
         source_unit = resolve_corpus_source_unit(citation, corpus_release)
@@ -9051,6 +9074,7 @@ def _run_single_eval(
             legacy_replacement=legacy_replacement,
             replacement_overlay_scope=replacement_overlay_scope,
             allow_artifact_repairs=False,
+            **engine_ref_arguments(axiom_rules_engine_ref),
         )
         rebound_hashes = _rebind_retained_candidate_proof_import_hashes(
             rulespec_file=output_file,
@@ -9087,6 +9111,7 @@ def _run_single_eval(
                 legacy_replacement=legacy_replacement,
                 replacement_overlay_scope=replacement_overlay_scope,
                 allow_artifact_repairs=False,
+                **engine_ref_arguments(axiom_rules_engine_ref),
             )
         retained_candidate_accepted = (
             retained_candidate_metrics is not None
@@ -9256,6 +9281,7 @@ def _run_single_eval(
             legacy_replacement=legacy_replacement,
             replacement_overlay_scope=replacement_overlay_scope,
             allow_artifact_repairs=not repair_candidate_tests_only,
+            **engine_ref_arguments(axiom_rules_engine_ref),
         )
     if overlay_validation_issue is not None and metrics is not None:
         metrics.ci_pass = False
@@ -9329,6 +9355,12 @@ def _run_single_eval(
         source_attestation=_source_metadata_attestation(source_metadata_payload),
         require_complete_source_unit=require_complete_source_unit,
     )
+    if axiom_rules_engine_ref is not None and result.success:
+        current_binding = bind_clean_engine_checkout(
+            runtime_axiom_rules_path, axiom_rules_engine_ref, allow_build=False
+        )
+        if current_binding != engine_binding:
+            raise RuntimeError("Engine binding changed during generation or evaluation")
     emit_eval_result(result, response.trace)
     return result
 

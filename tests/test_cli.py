@@ -13160,6 +13160,7 @@ class TestCmdEncode:
         args.corpus_path = corpus_path
         args.corpus_release = corpus_release
         args.axiom_rules_path = overrides.get("axiom_rules_path", axiom_rules_path)
+        args.axiom_rules_engine_ref = overrides.get("axiom_rules_engine_ref", None)
         args.policy_repo_path = policy_repo_path
         args.mode = overrides.get("mode", "repo-augmented")
         args.allow_context = overrides.get("allow_context", [])
@@ -13525,6 +13526,36 @@ class TestCmdEncode:
             mock_run.call_args.kwargs["runtime_axiom_rules_path"]
             == args.axiom_rules_path
         )
+        assert "axiom_rules_engine_ref" not in mock_run.call_args.kwargs
+
+    def test_encode_explicit_engine_ref_reaches_generation_and_overlay_retries(
+        self, tmp_path
+    ):
+        from tests.test_encode_engine_ref import _bound_engine
+
+        checkout, ref, _ = _bound_engine(tmp_path)
+        args = self._make_args(
+            tmp_path,
+            axiom_rules_path=checkout,
+            axiom_rules_engine_ref=ref,
+            model=None,
+            apply=True,
+            sync=False,
+            escalation_enabled=True,
+        )
+        code, generated, validated, run, validate, apply = (
+            self._run_validator_escalation_case(args, [False, False, False, True])
+        )
+        assert code == 0
+        assert len(generated) == len(validated) == 4
+        assert all(
+            call.kwargs["axiom_rules_engine_ref"] == ref for call in run.call_args_list
+        )
+        assert all(
+            call.kwargs["axiom_rules_engine_ref"] == ref
+            for call in validate.call_args_list
+        )
+        apply.assert_called_once()
 
     @pytest.mark.parametrize("reference_in_companion", [False, True])
     def test_encode_apply_resolves_authenticated_legacy_pending_dependent(
