@@ -925,6 +925,40 @@ _NAMING_PROTOCOL = """- Do not create standalone small-number parameters just to
   `implements`.
 """
 
+LIFETIME_FIXTURE_PROTOCOL = """Lifetime formula and companion-test protocol:
+- `sum_over_periods(value)`, `max_over_periods(value)`,
+  `count_over_periods(value)`, and `sum_top_n_over_periods(value, count)`
+  are engine builtins over one entity's supplied period history. Never invent
+  `#input.<builtin_name>` facts or feed a computed reduction back as an input.
+- A companion case that asserts a lifetime reduction uses top-level `name`,
+  optional `description`, `period`, `output`, and `lifetime`. The `lifetime`
+  mapping contains `entity`, optional `arithmetic: decimal`, `periods`, and
+  `batches`. Do not add scalar `input`, `tables`, or `oracle_inputs` to this case.
+- Supply 1 to 512 explicit period mappings in strictly ascending order, each
+  with `period_kind`, quoted ISO `start` and `end`, and `name` when custom.
+  The top-level output `period` must equal the final supplied lifetime period.
+  Do not append a period, sort observations, or invent zero years to repair a
+  case. Represent a legally required zero year explicitly with its own facts.
+- Supply one batch per period. Each batch has `row_count`, `entity_ids` (unique
+  nonempty strings), and `inputs`. Preserve the same IDs and their exact order
+  in every batch. Each input key is the actual canonical `#input.<fact>` legal
+  reference, and its column is `{kind: decimal, values: ["123.45"]}` or the
+  corresponding integer, bool, text, or date column. Quote decimal and date
+  values; each column must contain exactly one value per entity row.
+- Each `output` uses a canonical executable output reference and asserts every
+  row, using a scalar for one row or a row-ordered list. Quote expected decimal
+  values. The engine executes all formulas; fixture inputs are facts, never
+  externally precomputed substitutes for those formulas.
+- Lifetime outputs must transitively contain an over-periods reduction. Assert
+  ordinary per-period helpers in separate scalar cases. An outside-reduction
+  input (including a person's computation-year count) must be invariant across
+  the supplied periods; reference-period parameters use the final period.
+- These lifetime cases are executed through the actual engine's `run-lifetime`
+  command. The scalar PolicyEngine oracle adapter cannot represent them and
+  reports unsupported coverage; do not flatten histories into scalar scenarios.
+"""
+
+
 _TESTS_PROTOCOL = """- Emit only RuleSpec YAML; use `.test.yaml` companions when tests are requested.
 - Top-level `imports:` entries must be scalar strings, never map entries like
   `- target:` plus `symbols:`. Import a copied export as one exact string such
@@ -1628,6 +1662,7 @@ _PROMPT_BLOCKS = (
     _COMPOSITION_AND_DEFERRAL,
     _NAMING_PROTOCOL,
     _TESTS_PROTOCOL,
+    LIFETIME_FIXTURE_PROTOCOL,
     _FORMULA_PROTOCOL,
     US_TAX_PACK,
     _NUMERIC_GROUNDING,

@@ -52,7 +52,10 @@ from axiom_encode.legacy_replacement_overlay import (
     scope_canonical_replacement_overlay,
     stage_legacy_replacement_overlay,
 )
-from axiom_encode.prompts.encoder import SOURCE_SCOPE_PROTOCOL
+from axiom_encode.prompts.encoder import (
+    LIFETIME_FIXTURE_PROTOCOL,
+    SOURCE_SCOPE_PROTOCOL,
+)
 from axiom_encode.repair_candidate_contract import (
     VALIDATION_RETRY_CANDIDATE_MAX_FILE_BYTES,
     VALIDATION_RETRY_CANDIDATE_MAX_TOTAL_BYTES,
@@ -106,6 +109,10 @@ from .eval_prompt_surface import (
     render_date_silent_scaffold_guidance,
     render_single_amount_row_guidance,
     render_uk_legislation_guidance,
+)
+from .lifetime_fixture_contracts import (
+    exact_fixture_value_equal,
+    validate_lifetime_test_contract,
 )
 from .observability import emit_eval_result, extract_reasoning_output_tokens
 from .policyengine_runtime import (
@@ -10012,9 +10019,8 @@ def _format_required_test_case_contracts(
     if not contracts:
         return ""
     rendered: list[str] = []
-    expected_fields = {"name", "period", "input", "required_output"}
     for index, contract in enumerate(contracts):
-        if not isinstance(contract, Mapping) or set(contract) != expected_fields:
+        if not _valid_required_test_case_contract(contract):
             raise ValueError(f"Required test case contract #{index + 1} is invalid")
         rendered.append(
             json.dumps(
@@ -10028,9 +10034,10 @@ def _format_required_test_case_contracts(
 Structured companion-test apply-admission contract:
 - The following JSON objects are trusted workflow requirements, not legal
   authority. Each `name` must appear exactly once in the companion test file.
-- For each named case, `period` and the complete `input` map must equal the JSON
-  object exactly after YAML decoding. Do not add, remove, rename, or change an
-  input. Every key/value in `required_output` must appear in that case's
+- For each named case, `period` and the complete `input` map or `lifetime` map must
+  equal the JSON object exactly after YAML decoding. Preserve any contracted
+  description. Do not add, remove, rename, or change an input, observation,
+  entity ID, column type, or period. Every key/value in `required_output` must appear in that case's
   `output`; additional reached helper assertions are allowed.
 - These requirements are checked again on the final repaired overlay before
   apply. Preserve JSON scalar types as well as values.
@@ -10857,6 +10864,7 @@ Primary legal authority:
 {source_metadata_section}{provision_metadata_section}{amendment_section}{context_section}{missing_cited_source_section}{mandatory_review_findings_section}{required_deferred_output_contract_section}{required_test_case_contract_section}{required_import_section}
 {backend_section}
 {canonical_concept_section}{complete_source_unit_section}
+{LIFETIME_FIXTURE_PROTOCOL}
 RuleSpec requirements:
 - The RuleSpec file must begin with `format: rulespec/v1`.
 - Include `module.summary: |-` with a concise exact audit excerpt, not the full source text when the source is more than a short paragraph. Corpus-backed validation reads the authoritative source from `corpus.provisions`; use the summary only to orient reviewers to the encoded provisions.
@@ -13851,15 +13859,19 @@ _CONTEXT_TEMPORAL_VALUE_FACT_YEAR_PATTERN = re.compile(r"(?:^|_)(?:19|20)\d{2}(?
 _CONTEXT_FORMULA_BUILTINS = {
     "and",
     "ceil",
+    "count_over_periods",
     "else",
     "false",
     "floor",
     "if",
     "match",
     "max",
+    "max_over_periods",
     "min",
     "not",
     "or",
+    "sum_over_periods",
+    "sum_top_n_over_periods",
     "true",
 }
 
@@ -16106,7 +16118,12 @@ def _normalize_single_amount_row_test_content(
     try:
         payload = yaml.safe_load(normalized)
     except yaml.YAMLError:
-        return normalized
+        return content
+
+    try:
+        cases = _test_cases_preserving_lifetime_values(content, payload)
+    except _LifetimeFixtureNormalizationError:
+        return content
 
     if payload is None:
         return normalized
@@ -16135,6 +16152,8 @@ def _normalize_single_amount_row_test_content(
             return case
         if _is_exact_repair_removal_marker(case):
             return case
+        if "lifetime" in case:
+            return case
         normalized_case = dict(case)
         if annual_period and effective_date is not None:
             normalized_case["period"] = _normalize_annual_test_period_value(
@@ -16159,7 +16178,6 @@ def _normalize_single_amount_row_test_content(
                 normalized_case["output"] = numeric_output
         return normalized_case
 
-    cases = _coerce_test_payload_to_case_list(payload)
     if cases is not None:
         filtered = [
             normalize_case(case)
@@ -16167,6 +16185,7 @@ def _normalize_single_amount_row_test_content(
             if (
                 not isinstance(case, dict)
                 or _is_exact_repair_removal_marker(case)
+                or "lifetime" in case
                 or should_keep(case.get("name"))
             )
         ]
@@ -16382,6 +16401,9 @@ def _coerce_test_payload_to_case_list(payload: object) -> list[object] | None:
     tests_payload = payload.get("tests")
     if isinstance(tests_payload, list):
         return tests_payload
+    cases_payload = payload.get("cases")
+    if isinstance(cases_payload, list):
+        return cases_payload
 
     case_like_keys = {"name", "period", "input", "inputs", "output", "expect"}
     if case_like_keys & set(payload):
@@ -16397,6 +16419,50 @@ def _coerce_test_payload_to_case_list(payload: object) -> list[object] | None:
             case["name"] = key
         cases.append(case)
     return cases
+
+
+class _LifetimeFixtureNormalizationError(ValueError):
+    """A scalar repair could not retain the original lifetime case facts."""
+
+
+def _test_cases_preserving_lifetime_values(
+    original_content: str, normalized_payload: object
+) -> list[object] | None:
+    """Retain exact typed histories before scalar numeric/period repairs.
+
+    Decimal strings and opaque IDs must not pass through the scalar fixture
+    thousands-separator or value-coercion repairs, even in a mixed case list.
+    """
+    cases = _coerce_test_payload_to_case_list(normalized_payload)
+
+    def has_lifetime(items: list[object] | None) -> bool:
+        return any(
+            isinstance(item, dict) and "lifetime" in item for item in items or []
+        )
+
+    try:
+        original_cases = _coerce_test_payload_to_case_list(
+            yaml.safe_load(original_content)
+        )
+    except yaml.YAMLError as exc:
+        if has_lifetime(cases):
+            raise _LifetimeFixtureNormalizationError from exc
+        return cases
+    if cases is None or original_cases is None or len(cases) != len(original_cases):
+        if has_lifetime(cases) or has_lifetime(original_cases):
+            raise _LifetimeFixtureNormalizationError
+        return cases
+    if any(
+        isinstance(case, dict)
+        and "lifetime" in case
+        and not (isinstance(original, dict) and "lifetime" in original)
+        for original, case in zip(original_cases, cases, strict=True)
+    ):
+        raise _LifetimeFixtureNormalizationError
+    return [
+        original if isinstance(original, dict) and "lifetime" in original else case
+        for original, case in zip(original_cases, cases, strict=True)
+    ]
 
 
 def _normalize_test_case_value(value: object) -> object:
@@ -16557,12 +16623,16 @@ def _normalize_test_periods_to_effective_dates(
     try:
         payload = yaml.safe_load(normalized)
     except yaml.YAMLError:
-        return normalized
+        return content
+
+    try:
+        cases = _test_cases_preserving_lifetime_values(content, payload)
+    except _LifetimeFixtureNormalizationError:
+        return content
 
     if payload is None:
         return normalized
 
-    cases = _coerce_test_payload_to_case_list(payload)
     positive_output_keys: set[str] = set()
     if cases is not None:
         for case in cases:
@@ -16587,6 +16657,8 @@ def _normalize_test_periods_to_effective_dates(
         if not isinstance(case, dict):
             return case
         if _is_exact_repair_removal_marker(case):
+            return case
+        if "lifetime" in case:
             return case
         normalized_case = _repair_misindented_period_mapping_fields(case)
         if granularity == "Year" and effective_date is not None:
@@ -16635,6 +16707,7 @@ def _normalize_test_periods_to_effective_dates(
                 granularity == "Month"
                 and effective_date is not None
                 and isinstance(case, dict)
+                and "lifetime" not in case
                 and "pre_effective" in str(case.get("name", "")).lower()
                 and _period_precedes_effective_month(case.get("period"), effective_date)
                 and _case_outputs_only_zero_values(case)
@@ -17490,6 +17563,19 @@ def _overlay_validation_retry_candidate(
     return tuple(repairs)
 
 
+def _valid_required_test_case_contract(contract: object) -> bool:
+    """Check scalar or explicit lifetime repair contracts without executing them."""
+    if not isinstance(contract, Mapping):
+        return False
+    if "lifetime" not in contract:
+        return set(contract) == {"name", "period", "input", "required_output"}
+    try:
+        validate_lifetime_test_contract(contract)
+    except (KeyError, TypeError, ValueError, RecursionError):
+        return False
+    return True
+
+
 def _preserves_companion_test_cases(
     original_content: str,
     proposed_content: str,
@@ -17536,6 +17622,11 @@ def _preserves_companion_test_cases(
     proposed_by_name = by_name(proposed_cases)
     if original_by_name is None or proposed_by_name is None:
         return False
+    if any(
+        not _valid_required_test_case_contract(contract)
+        for contract in required_test_case_contracts
+    ):
+        return False
     contracts_by_name = {
         contract.get("name"): contract for contract in required_test_case_contracts
     }
@@ -17546,19 +17637,7 @@ def _preserves_companion_test_cases(
     ):
         return False
 
-    def values_equal(left: object, right: object) -> bool:
-        if type(left) is not type(right):
-            return False
-        if isinstance(left, dict):
-            return set(left) == set(right) and all(
-                values_equal(left[key], right[key]) for key in left
-            )
-        if isinstance(left, list):
-            return len(left) == len(right) and all(
-                values_equal(left_item, right_item)
-                for left_item, right_item in zip(left, right, strict=True)
-            )
-        return left == right
+    values_equal = exact_fixture_value_equal
 
     try:
         if not set(proposed_by_name).issubset(
@@ -17608,13 +17687,19 @@ def _preserves_companion_test_cases(
         for name in set(proposed_by_name) - set(original_by_name):
             case = proposed_by_name[name]
             contract = contracts_by_name[name]
-            if set(case) != {"name", "period", "input", "output"}:
+            input_field = "lifetime" if "lifetime" in contract else "input"
+            expected_fields = {"name", "period", input_field, "output"}
+            if "description" in contract:
+                expected_fields.add("description")
+            if set(case) != expected_fields:
                 return False
             if not values_equal(case.get("name"), name):
                 return False
             if not values_equal(case.get("period"), contract.get("period")):
                 return False
-            if not values_equal(case.get("input"), contract.get("input")):
+            if not values_equal(case.get(input_field), contract.get(input_field)):
+                return False
+            if not values_equal(case.get("description"), contract.get("description")):
                 return False
             output = case.get("output")
             required_output = contract.get("required_output")

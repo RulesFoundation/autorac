@@ -1,0 +1,74 @@
+# Lifetime companion fixtures
+
+The encoder can execute a multi-period companion case through an actual Axiom
+Rust CLI implementing `run-lifetime --artifact`. This is an opt-in fixture shape;
+ordinary scalar cases keep their existing behavior. The engine must support
+`axiom-rules-engine/lifetime-request/v1`, response v1 and compiled artifact v2.
+An older CLI fails validation rather than falling back to scalar evaluation.
+Production generation must still use the reviewed, pinned engine and protected
+encoder workflow. This feature does not update a repository's toolchain pins.
+
+Each lifetime case has only `name`, optional `description`, `period`, `output`,
+and `lifetime`. The lifetime mapping contains `entity`, optional
+`arithmetic: decimal`, `periods`, and one `batches` entry per period. Quote dates,
+decimal input values, decimal expectations, and numeric-looking entity IDs.
+
+```yaml
+- name: two observation periods
+  period: {period_kind: tax_year, start: '2021-01-01', end: '2021-12-31'}
+  lifetime:
+    entity: Person
+    periods:
+      - {period_kind: tax_year, start: '2020-01-01', end: '2020-12-31'}
+      - {period_kind: tax_year, start: '2021-01-01', end: '2021-12-31'}
+    batches:
+      - row_count: 1
+        entity_ids: ['001']
+        inputs:
+          'us:statutes/99/1#input.amount': {kind: decimal, values: ['0.1']}
+      - row_count: 1
+        entity_ids: ['001']
+        inputs:
+          'us:statutes/99/1#input.amount': {kind: decimal, values: ['0.2']}
+  output:
+    'us:statutes/99/1#total': '0.3'
+```
+
+This is a synthetic transport example for a compiled `sum_over_periods(amount)`
+rule, not an encoded legal provision. The other lifetime builtins are
+`max_over_periods`, `count_over_periods` and `sum_top_n_over_periods`. These names
+are functions, never input slots. Facts must use the compiled program's public
+input references; supplying a computed result as a fact fails.
+
+The adapter requires 1–512 explicit periods and 1–100,000 rows per batch, with
+the same unique entity IDs in the same order in every batch. It asserts every
+row, using a scalar expectation for one row or a list for multiple rows. Decimal
+expectations use ASCII decimal strings without exponent notation and are compared
+exactly. Booleans, integers, dates, text and judgments preserve their types.
+Inputs and results are validated by the real Rust runtime and the typed response
+contract. No Python policy calculation or floating-point tolerance is involved.
+
+The output period must equal the last supplied observation period. This interface
+does not add a separate legal determination date, insert missing years, infer
+relations or reorder entities. The current engine refuses unsupported plans and
+periods before the compiled rules' commencement. Ordinary helpers without a
+lifetime reduction belong in scalar cases. Inputs used outside a reduction must
+remain invariant across periods, as required by the engine.
+
+The scalar PolicyEngine oracle adapter cannot evaluate lifetime fixtures. It
+records unsupported coverage without projecting the history into a scalar case.
+Where other scalar cases are comparable, their existing oracle score covers only
+those comparable outputs. It does not establish oracle parity for the lifetime
+outputs. Other source-coverage requirements remain in force.
+
+Run the synthetic integration tests against an explicitly selected real build:
+
+```sh
+AXIOM_LIFETIME_TEST_ENGINE=/absolute/path/to/axiom-rules-engine \
+  uv run pytest --no-cov tests/test_lifetime_engine_integration.py
+```
+
+These tests compile fresh synthetic modules and execute all four reductions,
+verify a decimal discrepancy below floating-point resolution, and reject a
+computed output supplied as a historical fact. They skip if the binary is not
+explicitly configured; default Python CI alone does not prove engine integration.
