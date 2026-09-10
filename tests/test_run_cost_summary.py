@@ -158,10 +158,18 @@ class TestPricingParity:
         # The pin is the formula, not the rate: uncached input and output only,
         # priced at whatever the current table says. Rates move; this must not.
         assert terra_cost == pytest.approx(
-            (60_793 * terra_rates.input_per_million + 1_431 * terra_rates.output_per_million) / 1e6
+            (
+                60_793 * terra_rates.input_per_million
+                + 1_431 * terra_rates.output_per_million
+            )
+            / 1e6
         )
         assert sol_cost == pytest.approx(
-            (78_035 * sol_rates.input_per_million + 6_126 * sol_rates.output_per_million) / 1e6
+            (
+                78_035 * sol_rates.input_per_million
+                + 6_126 * sol_rates.output_per_million
+            )
+            / 1e6
         )
 
 
