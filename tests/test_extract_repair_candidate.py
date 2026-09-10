@@ -265,9 +265,7 @@ def test_extracts_candidate_with_exact_artifact_bound_signed_imports(tmp_path):
 
 def test_rejects_candidate_when_signed_imports_change_between_runs(tmp_path):
     archive, metadata = _archive(tmp_path)
-    metadata["existing_signed_imports_input"] = (
-        '["us/statutes/7/2015/f.yaml"]'
-    )
+    metadata["existing_signed_imports_input"] = '["us/statutes/7/2015/f.yaml"]'
     replacement = _rewrite_metadata(
         archive,
         tmp_path / "changed-signed-imports.tar",
@@ -282,9 +280,7 @@ def test_rejects_candidate_when_signed_imports_change_between_runs(tmp_path):
             _args(
                 tmp_path,
                 replacement,
-                existing_signed_imports_json=(
-                    '["us/statutes/7/2015/different.yaml"]'
-                ),
+                existing_signed_imports_json=('["us/statutes/7/2015/different.yaml"]'),
             )
         )
 
@@ -641,9 +637,7 @@ def test_extracts_partial_source_repair_after_successful_target_preflight(tmp_pa
             source_candidate
         ),
         f"source-01/openai-gpt-5.6-sol/"
-        f"{source_path.removeprefix('us/').removesuffix('.yaml')}.test.yaml": (
-            b"[]\n"
-        ),
+        f"{source_path.removeprefix('us/').removesuffix('.yaml')}.test.yaml": (b"[]\n"),
     }
     metadata["files"] = [
         {
