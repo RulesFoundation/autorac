@@ -9095,13 +9095,23 @@ def _run_single_eval(
                 0,
             )
             response = EvalPromptResponse(
-                text=output_file.read_text(),
+                text=output_file.read_bytes().decode("utf-8"),
                 duration_ms=duration_ms,
                 trace={
                     "schema": "axiom-encode/retained-candidate-preflight/v1",
                     "accepted": True,
-                    "rulespec_sha256": _sha256_text(output_file.read_text()),
-                    "tests_sha256": _sha256_text(test_file.read_text()),
+                    "rulespec_sha256": _eval_artifact_sha256(
+                        output_file,
+                        output_root=output_root,
+                        label="retained candidate RuleSpec",
+                        max_bytes=32 * 1024 * 1024,
+                    ),
+                    "tests_sha256": _eval_artifact_sha256(
+                        test_file,
+                        output_root=output_root,
+                        label="retained candidate companion tests",
+                        max_bytes=32 * 1024 * 1024,
+                    ),
                     "rebound_proof_import_hashes": rebound_hashes,
                 },
             )
