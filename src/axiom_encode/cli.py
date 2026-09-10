@@ -50158,7 +50158,11 @@ def _enforce_canonical_concept_registry(
         policy_repo_path=policy_repo_path,
     )
     files = [f for f in candidate_files if f and f.exists()]
-    repaired = auto_repair_test_yaml_canonical_violations(files, registry)
+    repaired = auto_repair_test_yaml_canonical_violations(
+        files,
+        registry,
+        apply_anchor=apply_anchor,
+    )
     if repaired:
         print(
             "  apply=auto_repaired_test_yaml_canonical_refs:"

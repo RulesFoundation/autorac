@@ -30823,7 +30823,7 @@ rules:
         assert run.outcome["overlay_validation_success"] is True
         assert run.outcome["status"] == "apply_applied"
 
-    def test_encode_apply_reruns_invalid_input_repair_after_canonical_repair(
+    def test_encode_apply_preserves_valid_external_legacy_input_during_canonical_repair(
         self, capsys, tmp_path
     ):
         policy_checkout = tmp_path / "rulespec-us"
@@ -30862,7 +30862,6 @@ rules:
 """
         )
         stale_ref = "us:statutes/7/2014/e/6/A#input.snap_monthly_household_income"
-        invalid_ref = "us:statutes/7/2014/e/6/A#input.snap_total_gross_income"
         test_file = output_file.with_name("4.205.32.test.yaml")
         test_file.write_text(
             f"""- name: eligible_household_in_second_period_gets_retroactive_prorated_benefits
@@ -30881,22 +30880,7 @@ rules:
             patch("axiom_encode.cli.run_model_eval", return_value=[result]),
             patch(
                 "axiom_encode.cli._validate_generated_encoding_in_policy_overlay",
-                side_effect=[
-                    (True, [], {}),
-                    (
-                        False,
-                        [
-                            "regulations/10-ccr-2506-1/4.205.32.yaml: ci: "
-                            "Test case "
-                            "`eligible_household_in_second_period_gets_retroactive_prorated_benefits` "
-                            "input invalid: input "
-                            f"`{invalid_ref}` does not resolve to an input slot in "
-                            "statutes/7/2014/e/6/A.yaml."
-                        ],
-                        {},
-                    ),
-                    (True, [], {}),
-                ],
+                return_value=(True, [], {}),
             ) as mock_overlay,
             patch(
                 "axiom_encode.cli._apply_generated_encoding_result",
@@ -30909,15 +30893,14 @@ rules:
 
         assert exc_info.value.code == 0
         output = capsys.readouterr().out
-        assert "apply=auto_repaired_test_yaml_canonical_refs:" in output
-        assert f"apply=auto_repaired_invalid_test_inputs:{invalid_ref}" in output
-        assert mock_overlay.call_count == 3
+        assert "apply=auto_repaired_test_yaml_canonical_refs:" not in output
+        assert "apply=auto_repaired_invalid_test_inputs:" not in output
+        assert mock_overlay.call_count == 1
         mock_apply.assert_called_once()
         test_content = test_file.read_text()
-        assert stale_ref not in test_content
-        assert invalid_ref not in test_content
+        assert stale_ref in test_content
         run = EncodingDB(args.db).get_recent_runs(limit=1)[0]
-        assert run.outcome["auto_repaired_invalid_test_inputs"] == [invalid_ref]
+        assert "auto_repaired_invalid_test_inputs" not in run.outcome
         assert run.outcome["overlay_validation_success"] is True
         assert run.outcome["status"] == "apply_applied"
 
