@@ -6497,7 +6497,7 @@ def test_packaged_dc_2026_registry_text_hash_runtime_and_precedence_are_exact():
     assert (
         (root / "src/axiom_encode/__init__.py")
         .read_text()
-        .startswith('__version__ = "0.2.1953"')
+        .startswith('__version__ = "0.2.1964"')
     )
 
 
@@ -6729,13 +6729,13 @@ def test_packaged_ca_2026_bhst_text_hash_runtime_and_precedence_are_exact():
     encoder_package = next(
         package for package in lock["package"] if package["name"] == "axiom-encode"
     )
-    assert encoder_package["version"] == "0.2.1953"
+    assert encoder_package["version"] == "0.2.1964"
     project = tomllib.loads((root / "pyproject.toml").read_text())
-    assert project["project"]["version"] == "0.2.1953"
+    assert project["project"]["version"] == "0.2.1964"
     assert (
         (root / "src/axiom_encode/__init__.py")
         .read_text()
-        .startswith('__version__ = "0.2.1953"')
+        .startswith('__version__ = "0.2.1964"')
     )
 
 
@@ -6997,13 +6997,13 @@ def test_packaged_ny_2026_text_hash_runtime_pin_and_precedence_are_exact():
     encoder_package = next(
         package for package in lock["package"] if package["name"] == "axiom-encode"
     )
-    assert encoder_package["version"] == "0.2.1953"
+    assert encoder_package["version"] == "0.2.1964"
     project = tomllib.loads((root / "pyproject.toml").read_text())
-    assert project["project"]["version"] == "0.2.1953"
+    assert project["project"]["version"] == "0.2.1964"
     assert (
         (root / "src/axiom_encode/__init__.py")
         .read_text()
-        .startswith('__version__ = "0.2.1953"')
+        .startswith('__version__ = "0.2.1964"')
     )
 
 
@@ -22650,6 +22650,853 @@ def test_a_mark_is_dropped_before_it_is_spaced_and_a_grouped_whole_is_read_whole
         "½\u200f%",
         "1,234,567",
     ]
+
+
+def test_a_proof_excerpt_matches_across_a_space_after_a_maqaf():
+    # Income Tax Ordinance §66(ג)(4) as the corpus prints it sets a space
+    # after the maqaf ("ל־ 1⁄2 נקודת זיכוי"); the encoder's excerpt binds the
+    # fraction to the prefix ("ל־1⁄2"). Both quote the same text, so the
+    # excerpt is found. A dropped letter is still not.
+    source = (
+        "(4) האשה תהא זכאית ל־ 1⁄2 נקודת זיכוי לפי סעיף 36א, ובנוסף וכנגד המס "
+        "החל על הכנסתה מיגיעה אישית – לנקודות זיכוי בעד ילדיה כלהלן:"
+    )
+    for evidence, found in (
+        ("האשה תהא זכאית ל־1⁄2 נקודת זיכוי לפי סעיף 36א", True),
+        ("האשה תהא זכאית ל־ 1⁄2 נקודת זיכוי לפי סעיף 36א", True),
+        ("האשה תהא זכאית ל־1⁄2 נקודת זיכו לפי סעיף 36א", False),
+    ):
+        content = (
+            _corpus_checked_proof_content()
+            .replace("The official amount is $298.", repr(evidence))
+            .replace("$298", repr(evidence))
+            .replace("formula: '298'", "formula: '0.5'")
+        )
+        result = validate_rulespec_proofs(
+            content, source_texts={"us/guidance/example/page-1": source}
+        )
+        assert (
+            any("Proof source evidence not found" in issue for issue in result.issues)
+            is not found
+        ), (evidence, result.issues)
+
+
+def test_numeric_evidence_binds_across_a_space_after_a_maqaf():
+    # Gate round 1 on #1615: the proof check reads "ל־ 1⁄2" and "ל־1⁄2" as one
+    # text, and so does scoped numeric grounding: an excerpt that binds the
+    # fraction to its prefix still carries the half from a proof source that
+    # sets a space after the maqaf, where the module's own source has no
+    # such value.
+    from axiom_encode.harness.validator_pipeline import (
+        _source_evidence_fragment_is_body_bound,
+    )
+
+    source = (
+        "(4) האשה תהא זכאית ל־ 1⁄2 נקודת זיכוי לפי סעיף 36א, ובנוסף וכנגד המס "
+        "החל על הכנסתה מיגיעה אישית – לנקודות זיכוי בעד ילדיה כלהלן:"
+    )
+    assert _source_evidence_fragment_is_body_bound("זכאית ל־1⁄2 נקודת זיכוי", source)
+    assert _source_evidence_fragment_is_body_bound("זכאית ל־ 1⁄2 נקודת זיכוי", source)
+    assert not _source_evidence_fragment_is_body_bound("זכאית ל־1⁄2 נקודת זיכו", source)
+    for excerpt in (
+        "האשה תהא זכאית ל־1⁄2 נקודת זיכוי",
+        "האשה תהא זכאית ל־ 1⁄2 נקודת זיכוי",
+    ):
+        content = textwrap.dedent(
+            f"""
+            format: rulespec/v1
+            rules:
+              - name: woman_separate_calculation_additional_points
+                kind: parameter
+                dtype: Decimal
+                metadata:
+                  proof:
+                    atoms:
+                      - path: versions[0].formula
+                        kind: amount
+                        source:
+                          corpus_citation_path: il/statute/income-tax-ordinance/section-66
+                          excerpt: {excerpt}
+                versions:
+                  - effective_from: '2026-01-01'
+                    formula: 0.5
+            """
+        ).strip()
+        assert (
+            find_ungrounded_numeric_issues_scoped(
+                content,
+                module_source_text="",
+                proof_source_texts={
+                    "il/statute/income-tax-ordinance/section-66": source
+                },
+            )
+            == []
+        ), excerpt
+        assert validate_rulespec_proofs(
+            content,
+            source_texts={"il/statute/income-tax-ordinance/section-66": source},
+        ).passed, excerpt
+
+
+def test_a_space_after_a_prefix_maqaf_is_not_a_boundary_to_numeric_extraction():
+    # Gate round 2 on #1615: a source or an excerpt that sets a space after a
+    # prefix's maqaf ("עשרים ו־ שלושה אחוזים") spells the bound compound
+    # ("עשרים ו־שלושה"): twenty-three percent, never twenty and three. Both
+    # spellings ground 0.23 and reject 0.03, whichever side carries the
+    # space, and the occurrence keeps its source span.
+    import math
+
+    for text in (
+        "השיעור הוא עשרים ו־שלושה אחוזים.",
+        "השיעור הוא עשרים ו־ שלושה אחוזים.",
+    ):
+        (value,) = extract_numbers_from_text(text)
+        assert math.isclose(value, 0.23, rel_tol=1e-9), text
+        (value,) = _hebrew_recall(text)
+        assert math.isclose(value, 0.23, rel_tol=1e-9), text
+    for text, expected in (
+        ("העובד זכאי ל־ 1⁄2 נקודת זיכוי", 0.5),
+        ("סכום של מ־ 301,201 שקלים", 301201.0),
+    ):
+        (value,) = _hebrew_recall(text)
+        assert math.isclose(value, expected, rel_tol=1e-9), text
+    text = "השיעור הוא עשרים ו־ שלושה אחוזים."
+    (occurrence,) = extract_typed_numeric_inventory_occurrences_from_text(text)
+    assert text[occurrence.start : occurrence.end] == "עשרים ו־ שלושה אחוזים"
+    for source, excerpt in (
+        ("השיעור הוא עשרים ו־שלושה אחוזים.", "השיעור הוא עשרים ו־ שלושה אחוזים."),
+        ("השיעור הוא עשרים ו־ שלושה אחוזים.", "השיעור הוא עשרים ו־שלושה אחוזים."),
+    ):
+        for formula, issues in (("0.23", 0), ("0.03", 1)):
+            content = textwrap.dedent(
+                f"""
+                format: rulespec/v1
+                rules:
+                  - name: rate
+                    kind: parameter
+                    dtype: Decimal
+                    metadata:
+                      proof:
+                        atoms:
+                          - path: versions[0].formula
+                            kind: parameter
+                            source:
+                              corpus_citation_path: il/statute/example/rate
+                              excerpt: {excerpt}
+                    versions:
+                      - effective_from: '2026-01-01'
+                        formula: {formula}
+                """
+            ).strip()
+            found = find_ungrounded_numeric_issues_scoped(
+                content,
+                module_source_text="",
+                proof_source_texts={"il/statute/example/rate": source},
+            )
+            assert len(found) == issues, (source, excerpt, formula, found)
+
+
+def test_a_maqaf_binds_across_a_line_wrap_but_not_a_paragraph_gap_and_a_spaced_tail():
+    # Gate round 3 on #1615: the binding across a maqaf takes wrap space --
+    # spaces or one line wrap -- in proof matching and in numeric extraction
+    # alike, and never a blank line; and the raw-text direct percentage
+    # reader takes the fractional tail after "ו־ " as after "ו־".
+    import json
+    import math
+
+    def scoped(source, excerpt, formula):
+        # A double-quoted YAML scalar keeps the excerpt's line wrap as "\\n".
+        quoted = json.dumps(excerpt, ensure_ascii=False)
+        content = textwrap.dedent(
+            f"""
+            format: rulespec/v1
+            rules:
+              - name: rate
+                kind: parameter
+                dtype: Decimal
+                metadata:
+                  proof:
+                    atoms:
+                      - path: versions[0].formula
+                        kind: parameter
+                        source:
+                          corpus_citation_path: il/statute/example/rate
+                          excerpt: {quoted}
+                versions:
+                  - effective_from: '2026-01-01'
+                    formula: {formula}
+            """
+        ).strip()
+        return find_ungrounded_numeric_issues_scoped(
+            content,
+            module_source_text="",
+            proof_source_texts={"il/statute/example/rate": source},
+        ), validate_rulespec_proofs(
+            content, source_texts={"il/statute/example/rate": source}
+        ).passed
+
+    bound = "השיעור הוא עשרים ו־שלושה אחוזים."
+    wrapped = "השיעור הוא עשרים ו־\nשלושה אחוזים."
+    for text in (bound, wrapped):
+        (value,) = _hebrew_recall(text)
+        assert math.isclose(value, 0.23, rel_tol=1e-9), text
+    for source, excerpt in ((bound, wrapped), (wrapped, bound)):
+        assert scoped(source, excerpt, "0.23") == ([], True), (source, excerpt)
+        issues, passed = scoped(source, excerpt, "0.03")
+        assert passed and len(issues) == 1, (source, excerpt, issues)
+    gap = "השיעור הוא עשרים ו־\n\nשלושה אחוזים."
+    assert sorted(_hebrew_recall(gap)) == [0.03, 20.0]
+    _issues, passed = scoped(gap, bound, "0.23")
+    assert passed is False
+    tail_bound = "השיעור הוא 2.5% ו־חצי."
+    tail_spaced = "השיעור הוא 2.5% ו־ חצי."
+    for text in (tail_bound, tail_spaced):
+        (value,) = extract_numbers_from_text(text)
+        assert math.isclose(value, 0.03, rel_tol=1e-9), text
+    for source, excerpt in ((tail_bound, tail_spaced), (tail_spaced, tail_bound)):
+        assert scoped(source, excerpt, "0.03") == ([], True), (source, excerpt)
+        issues, passed = scoped(source, excerpt, "0.025")
+        assert passed and len(issues) == 1, (source, excerpt, issues)
+
+
+def test_an_excerpt_quotes_a_paragraph_gap_as_a_paragraph_gap():
+    # Gate round 4 on #1615: whitespace collapses for evidence matching with
+    # every paragraph gap kept, in proof matching and numeric evidence
+    # alike, so a spaced, a bound or a single-wrapped excerpt never quotes
+    # a source that sets a blank line or a paragraph separator after the
+    # maqaf (whose twenty and three are two numbers), while an excerpt that
+    # keeps the gap does, and grounds what the source states.
+    import json
+    import textwrap as tw
+
+    from axiom_encode.harness.proof_validator import collapse_evidence_whitespace
+
+    assert collapse_evidence_whitespace("A  B\nC") == "A B C"
+    assert collapse_evidence_whitespace("A \n\n C") == "A\n\nC"
+    assert collapse_evidence_whitespace("A\u2029C") == "A\n\nC"
+    # Gate round 5: a line ends in "\r\n", "\r" or "\n", as the cleaner reads
+    # it, so a bare carriage return wraps and two line ends in a row -- in
+    # any mix -- are a blank line, in the collapse and in the maqaf binding.
+    from axiom_encode.harness.proof_validator import bind_maqaf_space
+
+    assert collapse_evidence_whitespace("A\rB\r\nC") == "A B C"
+    for gap in ("\r\r", "\n\r", "\r\n\r", "\r\r\n", "\r\n\r\n", "\n\x1c\n"):
+        assert collapse_evidence_whitespace(f"A{gap}C") == "A\n\nC", repr(gap)
+        assert bind_maqaf_space(f"ו־{gap}שלושה") == f"ו־{gap}שלושה", repr(gap)
+    assert bind_maqaf_space("ו־\rשלושה") == "ו־שלושה"
+    assert bind_maqaf_space("ו־ \r\n שלושה") == "ו־שלושה"
+
+    def scoped(source, excerpt, formula):
+        content = tw.dedent(
+            f"""
+            format: rulespec/v1
+            rules:
+              - name: rate
+                kind: parameter
+                dtype: Decimal
+                metadata:
+                  proof:
+                    atoms:
+                      - path: versions[0].formula
+                        kind: parameter
+                        source:
+                          corpus_citation_path: il/statute/example/rate
+                          excerpt: {json.dumps(excerpt, ensure_ascii=False)}
+                versions:
+                  - effective_from: '2026-01-01'
+                    formula: {formula}
+            """
+        ).strip()
+        return find_ungrounded_numeric_issues_scoped(
+            content,
+            module_source_text="",
+            proof_source_texts={"il/statute/example/rate": source},
+        ), validate_rulespec_proofs(
+            content, source_texts={"il/statute/example/rate": source}
+        ).passed
+
+    for gap in (
+        "\n\n",
+        "\n \n",
+        "\u2029",
+        "\r\r",
+        "\n\r",
+        "\r\n\r",
+        "\r\r\n",
+        "\r\n\r\n",
+    ):
+        source = f"השיעור הוא עשרים ו־{gap}שלושה אחוזים."
+        assert sorted(_hebrew_recall(source)) == [0.03, 20.0], repr(gap)
+        for excerpt in (
+            "השיעור הוא עשרים ו־ שלושה אחוזים.",
+            "השיעור הוא עשרים ו־שלושה אחוזים.",
+            "השיעור הוא עשרים ו־\nשלושה אחוזים.",
+        ):
+            issues, passed = scoped(source, excerpt, "0.23")
+            assert passed is False and issues, (repr(gap), excerpt, issues)
+        issues, passed = scoped(source, source, "0.03")
+        assert (issues, passed) == ([], True), (repr(gap), issues)
+        issues, passed = scoped(source, source, "0.23")
+        assert passed and len(issues) == 1, (repr(gap), issues)
+    # A bare carriage return after the maqaf is one line wrap: the source
+    # reads twenty-three, and the spaced and the bound excerpts quote it.
+    for wrap in ("\r", "\r\n", " \r "):
+        source = f"השיעור הוא עשרים ו־{wrap}שלושה אחוזים."
+        assert sorted(_hebrew_recall(source)) == [0.23], repr(wrap)
+        for excerpt in (
+            "השיעור הוא עשרים ו־ שלושה אחוזים.",
+            "השיעור הוא עשרים ו־שלושה אחוזים.",
+        ):
+            issues, passed = scoped(source, excerpt, "0.23")
+            assert (issues, passed) == ([], True), (repr(wrap), excerpt, issues)
+
+
+def test_evidence_whitespace_collapses_in_linear_time():
+    # Gate round 5 on #1615: the paragraph-gap pattern scanned and backtracked
+    # from every position of a whitespace run that no paragraph gap followed
+    # (16,000 internal spaces took 1.6 s; 32,000 took 6.2 s). Each run is
+    # read once: a long run, a run that one line wrap opens, and a maqaf
+    # before a long run all collapse in a linear pass.
+    import time
+
+    from axiom_encode.harness.proof_validator import (
+        bind_maqaf_space,
+        collapse_evidence_whitespace,
+    )
+
+    for width in (16_000, 64_000):
+        for text, expected in (
+            ("A" + " " * width + "B", "A B"),
+            ("A\n" + " " * width + "B", "A B"),
+            ("A" + " \n" * width + "B", "A\n\nB"),
+            ("A" + (" " * 100 + "\n") * (width // 100) + "B", "A\n\nB"),
+        ):
+            started = time.perf_counter()
+            assert collapse_evidence_whitespace(text) == expected
+            assert time.perf_counter() - started < 0.5, (width, len(text))
+        started = time.perf_counter()
+        assert bind_maqaf_space("ו־" + " " * width + "\n\nשלושה") == (
+            "ו־" + " " * width + "\n\nשלושה"
+        )
+        assert bind_maqaf_space("ו־" + " " * width + "\nשלושה") == "ו־שלושה"
+        assert time.perf_counter() - started < 0.5, width
+
+
+def test_raw_percent_readers_read_wrap_space_after_a_maqaf_as_the_bound_readers_do():
+    # Gate round 6 on #1615: the direct-percentage reader runs on the raw
+    # text, where a bare carriage return was no wrap space to the fractional
+    # tail after a rate ("2.5% ו־\rחצי" read 2.5 and 3 percent) and a fixed
+    # six-character look-back missed the conjunction before a printed
+    # remainder set eight spaces after its maqaf ("3 אלפים ו־        250%"
+    # read 2.5 percent as a rate of its own). Every wrap-space spelling the
+    # evidence binding accepts after a maqaf reads as the bound text does,
+    # in grounding and inventory alike, so an accepted excerpt states no
+    # number its source does not.
+    import json
+    import textwrap as tw
+
+    from axiom_encode.harness.proof_validator import _source_contains_proof_evidence
+    from axiom_encode.harness.validator_pipeline import (
+        _source_evidence_fragment_is_body_bound,
+    )
+
+    def scoped(source, excerpt, formula):
+        content = tw.dedent(
+            f"""
+            format: rulespec/v1
+            rules:
+              - name: rate
+                kind: parameter
+                dtype: Decimal
+                metadata:
+                  proof:
+                    atoms:
+                      - path: versions[0].formula
+                        kind: parameter
+                        source:
+                          corpus_citation_path: il/statute/example/rate
+                          excerpt: {json.dumps(excerpt, ensure_ascii=False)}
+                versions:
+                  - effective_from: '2026-01-01'
+                    formula: {formula}
+            """
+        ).strip()
+        return find_ungrounded_numeric_issues_scoped(
+            content,
+            module_source_text="",
+            proof_source_texts={"il/statute/example/rate": source},
+        ), validate_rulespec_proofs(
+            content, source_texts={"il/statute/example/rate": source}
+        ).passed
+
+    from axiom_encode.harness.validator_pipeline import _PARAGRAPH_GAP_PATTERN
+
+    # A CRLF is one line end to a pattern that backtracks, never a CR and
+    # an LF that make a blank line; two line ends in any mix are one.
+    assert _PARAGRAPH_GAP_PATTERN.search("\r\n") is None
+    assert _PARAGRAPH_GAP_PATTERN.search("\r") is None
+    for gap in ("\r\r", "\n\r", "\r\n\r", "\r\r\n", "\r\n\r\n", "\n\n"):
+        assert _PARAGRAPH_GAP_PATTERN.search(gap) is not None, repr(gap)
+
+    sources = {
+        "השיעור הוא 2.5% ו־חצי.": ([0.03], "0.03", "0.025"),
+        "השיעור הוא 3 אלפים ו־250%.": ([32.5], "32.5", "2.5"),
+        "השיעור הוא עשרים ו־שלושה אחוזים.": ([0.23], "0.23", "0.03"),
+    }
+    spacings = (
+        " ",
+        "  ",
+        " " * 8,
+        " " * 20,
+        "\t",
+        "\u00a0",
+        "\r",
+        "\r\n",
+        "\n",
+        " \n ",
+        " \r ",
+    )
+    for source, (values, stated, unstated) in sources.items():
+        assert sorted(extract_numbers_from_text(source)) == values, source
+        assert sorted(_hebrew_recall(source)) == values, source
+        for spacing in spacings:
+            excerpt = source.replace("\u05be", "\u05be" + spacing)
+            label = (source, repr(spacing))
+            assert _source_contains_proof_evidence(
+                source_text=source, evidence_text=excerpt
+            ), label
+            assert _source_evidence_fragment_is_body_bound(excerpt, source), label
+            assert sorted(extract_numbers_from_text(excerpt)) == values, (
+                *label,
+                sorted(extract_numbers_from_text(excerpt)),
+            )
+            assert sorted(_hebrew_recall(excerpt)) == values, (
+                *label,
+                sorted(_hebrew_recall(excerpt)),
+            )
+            issues, passed = scoped(source, excerpt, stated)
+            assert (issues, passed) == ([], True), (*label, issues)
+            issues, passed = scoped(source, excerpt, unstated)
+            assert passed and len(issues) == 1, (*label, issues)
+    # The readers that run on the raw text see the bound form too: a
+    # schedule ordinal after a spaced maqaf stays a name and a reference
+    # count stays a reference in the recall inventory, and grounding is
+    # the source's for every spelling.
+    for source, recall in (
+        ("לפי התוספת ה־שנייה ישולם סכום של 100 שקלים", [100.0]),
+        ("לפי התוספות ה-שנייה, ה־שלישית וה-רביעית ישולם סכום של 100 שקלים", [100.0]),
+        ("תוספת 2 עד כ־3 שקלים", [2.0, 3.0]),
+    ):
+        assert sorted(_hebrew_recall(source)) == recall, source
+        grounding = sorted(extract_numbers_from_text(source))
+        for spacing in spacings:
+            excerpt = source.replace("\u05be", "\u05be" + spacing)
+            assert sorted(_hebrew_recall(excerpt)) == recall, (
+                source,
+                repr(spacing),
+                sorted(_hebrew_recall(excerpt)),
+            )
+            assert sorted(extract_numbers_from_text(excerpt)) == grounding, (
+                source,
+                repr(spacing),
+            )
+
+
+def test_evidence_matching_and_the_numeric_cleaner_bind_the_same_maqafs():
+    # Gate round 7 on #1615: evidence matching bound the space after any
+    # maqaf while the cleaner bound only a prefix stack's, so "שלושה־ רבעים"
+    # quoted "שלושה־רבעים" (which the readers leave unread) and read a
+    # quarter of its own. One pattern now binds for both -- the Hebrew word
+    # before the maqaf, a prefix stack or a word of a compound -- so an
+    # accepted spelling reads as its source does, whatever the source reads,
+    # and a maqaf after a digit binds nothing in either.
+    import json
+    import textwrap as tw
+
+    from axiom_encode.harness.proof_validator import (
+        HEBREW_MAQAF_WRAP_SPACE_PATTERN,
+        _source_contains_proof_evidence,
+        bind_maqaf_space,
+    )
+    from axiom_encode.harness.validator_pipeline import (
+        _HEBREW_MAQAF_WRAP_SPACE_PATTERN,
+        _bind_hebrew_source_text,
+        _source_evidence_fragment_is_body_bound,
+    )
+
+    assert _HEBREW_MAQAF_WRAP_SPACE_PATTERN is HEBREW_MAQAF_WRAP_SPACE_PATTERN
+    assert bind_maqaf_space("שלושה־ רבעים") == "שלושה־רבעים"
+    assert _bind_hebrew_source_text("שלושה־ רבעים") == " שלושה־רבעים"
+    assert bind_maqaf_space("בית־ספר־ חדש") == "בית־ספר־חדש"
+    assert _bind_hebrew_source_text("בית־ספר־ חדש") == " בית־ספר־חדש"
+    assert bind_maqaf_space("3־ 5") == "3־ 5"
+    assert _bind_hebrew_source_text("3־ 5") == "3־ 5"
+    assert bind_maqaf_space("ו־\n\nשלושה") == "ו־\n\nשלושה"
+
+    def scoped(source, excerpt, formula):
+        content = tw.dedent(
+            f"""
+            format: rulespec/v1
+            rules:
+              - name: rate
+                kind: parameter
+                dtype: Decimal
+                metadata:
+                  proof:
+                    atoms:
+                      - path: versions[0].formula
+                        kind: parameter
+                        source:
+                          corpus_citation_path: il/statute/example/rate
+                          excerpt: {json.dumps(excerpt, ensure_ascii=False)}
+                versions:
+                  - effective_from: '2026-01-01'
+                    formula: {formula}
+            """
+        ).strip()
+        return find_ungrounded_numeric_issues_scoped(
+            content,
+            module_source_text="",
+            proof_source_texts={"il/statute/example/rate": source},
+        ), validate_rulespec_proofs(
+            content, source_texts={"il/statute/example/rate": source}
+        ).passed
+
+    spacings = (" ", "  ", " " * 8, "\t", "\u00a0", "\r", "\r\n", "\n", " \n ")
+    assert sorted(extract_numbers_from_text("העובד זכאי לשנים־עשר חודשים.")) == [12.0]
+    for source, unstated in (
+        ("העובד זכאי לשלושה־רבעים מהסכום.", "0.25"),
+        ("העובד זכאי לשני־שלישים מהסכום.", "0.3333333"),
+        ("העובד זכאי לשנים־עשר חודשים.", "10"),
+    ):
+        grounding = sorted(round(v, 9) for v in extract_numbers_from_text(source))
+        recall = sorted(round(v, 9) for v in _hebrew_recall(source))
+        for spacing in spacings:
+            excerpt = source.replace("\u05be", "\u05be" + spacing)
+            label = (source, repr(spacing))
+            assert _source_contains_proof_evidence(
+                source_text=source, evidence_text=excerpt
+            ), label
+            assert _source_evidence_fragment_is_body_bound(excerpt, source), label
+            assert (
+                sorted(round(v, 9) for v in extract_numbers_from_text(excerpt))
+                == grounding
+            ), (*label, sorted(extract_numbers_from_text(excerpt)))
+            assert sorted(round(v, 9) for v in _hebrew_recall(excerpt)) == recall, (
+                *label,
+                sorted(_hebrew_recall(excerpt)),
+            )
+            issues, passed = scoped(source, excerpt, unstated)
+            assert passed and len(issues) == 1, (*label, issues)
+
+
+def test_a_maqaf_binds_at_a_word_start_only_and_every_whitespace_character_is_placed():
+    # Gate round 8 on #1615: the binding's left boundary excluded Hebrew
+    # letters only, so it began inside "121א־2" (section 121a-2) and the
+    # cleaner moved the space before the א, exposing 121 as a value of its
+    # own; and the information separators U+001C-U+001F were whitespace to
+    # the evidence collapse and to the readers' \s but to no binding, so
+    # "ו־\x1cשלושה" quoted "ו־ שלושה" and read twenty and three where the
+    # excerpt reads twenty-three. The word before the maqaf now begins at a
+    # word boundary, and every whitespace character is horizontal space, a
+    # line end or a paragraph separator, to the collapse and the bindings
+    # alike.
+    import json
+    import re
+    import textwrap as tw
+
+    from axiom_encode.harness.proof_validator import (
+        HORIZONTAL_SPACE_FRAGMENT,
+        LINE_END_FRAGMENT,
+        _source_contains_proof_evidence,
+        bind_maqaf_space,
+        collapse_evidence_whitespace,
+    )
+    from axiom_encode.harness.validator_pipeline import (
+        _bind_hebrew_source_text,
+        _source_evidence_fragment_is_body_bound,
+    )
+
+    def scoped(source, excerpt, formula):
+        content = tw.dedent(
+            f"""
+            format: rulespec/v1
+            rules:
+              - name: rate
+                kind: parameter
+                dtype: Decimal
+                metadata:
+                  proof:
+                    atoms:
+                      - path: versions[0].formula
+                        kind: parameter
+                        source:
+                          corpus_citation_path: il/statute/example/rate
+                          excerpt: {json.dumps(excerpt, ensure_ascii=False)}
+                versions:
+                  - effective_from: '2026-01-01'
+                    formula: {formula}
+            """
+        ).strip()
+        return find_ungrounded_numeric_issues_scoped(
+            content,
+            module_source_text="",
+            proof_source_texts={"il/statute/example/rate": source},
+        ), validate_rulespec_proofs(
+            content, source_texts={"il/statute/example/rate": source}
+        ).passed
+
+    # An identifier's maqaf binds nothing, so no space moves before its letter.
+    source = "סעיף 121א־2 קובע סכום של 100 שקלים."
+    excerpt = "סעיף 121א־ 2 קובע סכום של 100 שקלים."
+    assert bind_maqaf_space(excerpt) == excerpt
+    assert _bind_hebrew_source_text(excerpt) == excerpt
+    assert not _source_contains_proof_evidence(
+        source_text=source, evidence_text=excerpt
+    )
+    assert not _source_evidence_fragment_is_body_bound(excerpt, source)
+    issues, passed = scoped(source, excerpt, "121")
+    assert passed is False
+    issues, passed = scoped(source, source, "121")
+    assert passed and len(issues) == 1, issues
+    issues, passed = scoped(source, source, "100")
+    assert (issues, passed) == ([], True), issues
+    # A prefix at a word start still binds, after a digit-free boundary.
+    assert bind_maqaf_space("סעיף 121, ל־ 2 ילדים") == "סעיף 121, ל־2 ילדים"
+
+    # Every whitespace character has a place.
+    horizontal = re.compile(HORIZONTAL_SPACE_FRAGMENT)
+    line_end = re.compile(LINE_END_FRAGMENT)
+    paragraph = re.compile("[\u2028\u2029\x0b\x0c\x85]")
+    whitespace = [chr(code) for code in range(0x3001) if re.fullmatch(r"\s", chr(code))]
+    assert len(whitespace) >= 25
+    for character in whitespace:
+        assert (
+            horizontal.fullmatch(character)
+            or line_end.fullmatch(character)
+            or paragraph.fullmatch(character)
+        ), hex(ord(character))
+    for separator in "\x1c\x1d\x1e\x1f":
+        assert collapse_evidence_whitespace(f"A{separator}B") == "A B"
+        assert bind_maqaf_space(f"ו־{separator}שלושה") == "ו־שלושה"
+        source = f"השיעור הוא עשרים ו־{separator}שלושה אחוזים."
+        excerpt = source.replace(separator, " ")
+        assert sorted(extract_numbers_from_text(source)) == [0.23], hex(ord(separator))
+        assert sorted(_hebrew_recall(source)) == [0.23], hex(ord(separator))
+        assert sorted(extract_numbers_from_text(excerpt)) == [0.23]
+        assert _source_contains_proof_evidence(
+            source_text=source, evidence_text=excerpt
+        )
+        assert _source_evidence_fragment_is_body_bound(excerpt, source)
+        issues, passed = scoped(source, excerpt, "0.23")
+        assert (issues, passed) == ([], True), (hex(ord(separator)), issues)
+        issues, passed = scoped(source, excerpt, "0.03")
+        assert passed and len(issues) == 1, (hex(ord(separator)), issues)
+
+
+def test_a_sign_before_a_compound_moves_with_its_word():
+    # Gate round 9 on #1615: the cleaner moved the wrap space after a maqaf
+    # ahead of the word before it, and so between a unary minus and that
+    # word: "−שלושה־ עשר" read thirteen percent where "−שלושה־עשר" reads
+    # minus thirteen, and the accepted excerpt grounded 0.13. A sign before
+    # the word, with any formatting marks after it, is part of the word the
+    # binding moves, in evidence matching and the cleaner alike; a hyphen a
+    # letter precedes is no boundary the word begins at, so "מאה-שלושה־ עשר"
+    # binds nothing and quotes no source without the space.
+    import json
+    import textwrap as tw
+
+    from axiom_encode.harness.proof_validator import (
+        _source_contains_proof_evidence,
+        bind_maqaf_space,
+    )
+    from axiom_encode.harness.validator_pipeline import (
+        _bind_hebrew_source_text,
+        _source_evidence_fragment_is_body_bound,
+    )
+
+    assert bind_maqaf_space("−שלושה־ עשר") == "−שלושה־עשר"
+    assert _bind_hebrew_source_text("−שלושה־ עשר") == " −שלושה־עשר"
+    assert bind_maqaf_space("-שלושה־ עשר") == "-שלושה־עשר"
+    assert _bind_hebrew_source_text("-שלושה־ עשר") == " -שלושה־עשר"
+    assert bind_maqaf_space("−\u200fשלושה־ עשר") == "−\u200fשלושה־עשר"
+    assert _bind_hebrew_source_text("−\u200fשלושה־ עשר") == " −\u200fשלושה־עשר"
+    assert bind_maqaf_space("מאה-שלושה־ עשר") == "מאה-שלושה־ עשר"
+    assert _bind_hebrew_source_text("מאה-שלושה־ עשר") == "מאה-שלושה־ עשר"
+    assert bind_maqaf_space("(שלושה־ עשר)") == "(שלושה־עשר)"
+
+    def scoped(source, excerpt, formula):
+        content = tw.dedent(
+            f"""
+            format: rulespec/v1
+            rules:
+              - name: rate
+                kind: parameter
+                dtype: Decimal
+                metadata:
+                  proof:
+                    atoms:
+                      - path: versions[0].formula
+                        kind: parameter
+                        source:
+                          corpus_citation_path: il/statute/example/rate
+                          excerpt: {json.dumps(excerpt, ensure_ascii=False)}
+                versions:
+                  - effective_from: '2026-01-01'
+                    formula: {formula}
+            """
+        ).strip()
+        return find_ungrounded_numeric_issues_scoped(
+            content,
+            module_source_text="",
+            proof_source_texts={"il/statute/example/rate": source},
+        ), validate_rulespec_proofs(
+            content, source_texts={"il/statute/example/rate": source}
+        ).passed
+
+    spacings = (" ", "  ", " " * 8, "\t", "\u00a0", "\r", "\r\n", "\n", " \n ")
+    for source, values, stated, unstated in (
+        ("השיעור הוא −שלושה־עשר אחוזים.", [-0.13], "-0.13", "0.13"),
+        ("השיעור הוא -שלושה־עשר אחוזים.", [-0.13], "-0.13", "0.13"),
+        ("השיעור הוא (שלושה־עשר) אחוזים.", [13.0], "13", "30"),
+    ):
+        assert sorted(extract_numbers_from_text(source)) == values, source
+        recall = sorted(_hebrew_recall(source))
+        for spacing in spacings:
+            excerpt = source.replace("\u05be", "\u05be" + spacing)
+            label = (source, repr(spacing))
+            assert _source_contains_proof_evidence(
+                source_text=source, evidence_text=excerpt
+            ), label
+            assert _source_evidence_fragment_is_body_bound(excerpt, source), label
+            assert sorted(extract_numbers_from_text(excerpt)) == values, (
+                *label,
+                sorted(extract_numbers_from_text(excerpt)),
+            )
+            assert sorted(_hebrew_recall(excerpt)) == recall, label
+            issues, passed = scoped(source, excerpt, stated)
+            assert (issues, passed) == ([], True), (*label, issues)
+            issues, passed = scoped(source, excerpt, unstated)
+            assert passed and len(issues) == 1, (*label, issues)
+
+
+def test_a_chain_of_spaced_maqafs_binds_as_one():
+    # Gate round 10 on #1615: the binding moved the wrap space after each
+    # maqaf ahead of its own word, one match at a time, so in a chain the
+    # space moved ahead of one word landed after the maqaf before it:
+    # "מאה־ ו־ כ־ שלושה" closed to "מאה־ ו־ כ־שלושה" and read three percent
+    # where the bound text reads none, and "ה־ שלוש־ עשרה" left the
+    # schedule number in the recall inventory. A chain of maqaf-joined
+    # words with wrap space after any of its maqafs is one cluster to the
+    # matcher and the cleaner alike, moved as one; a paragraph gap inside
+    # it ends it.
+    import json
+    import textwrap as tw
+
+    from axiom_encode.harness.proof_validator import (
+        _source_contains_proof_evidence,
+        bind_maqaf_space,
+    )
+    from axiom_encode.harness.validator_pipeline import (
+        _bind_hebrew_source_text,
+        _source_evidence_fragment_is_body_bound,
+    )
+
+    for spelled, bound, closed in (
+        ("מאה־ ו־ כ־ שלושה", "מאה־ו־כ־שלושה", "   מאה־ו־כ־שלושה"),
+        ("מאה־ ו־כ־ שלושה", "מאה־ו־כ־שלושה", "  מאה־ו־כ־שלושה"),
+        ("מאה־ו־ כ־שלושה", "מאה־ו־כ־שלושה", " מאה־ו־כ־שלושה"),
+        ("מאה־ ו־כ־שלושה", "מאה־ו־כ־שלושה", " מאה־ו־כ־שלושה"),
+        ("−מאה־ ו־ שלושה", "−מאה־ו־שלושה", "  −מאה־ו־שלושה"),
+        ("ה־\nשלוש־ עשרה", "ה־שלוש־עשרה", "  ה־שלוש־עשרה"),
+        ("ה־\n\nשלוש־ עשרה", "ה־\n\nשלוש־עשרה", "ה־\n\n שלוש־עשרה"),
+    ):
+        assert bind_maqaf_space(spelled) == bound, spelled
+        assert _bind_hebrew_source_text(spelled) == closed, spelled
+    # A chained prefix's hyphen is a maqaf too, rewritten before the close as
+    # in the cleaner, so the hyphen twin of a spaced chain closes to the same
+    # text and the twins read alike.
+    assert _bind_hebrew_source_text("מאה־ ו־ כ-שלושה") == "  מאה־ו־כ־שלושה"
+    assert sorted(extract_numbers_from_text("מאה־ו־כ-שלושה")) == sorted(
+        extract_numbers_from_text("מאה־ו־כ־שלושה")
+    )
+    assert sorted(_hebrew_recall("מאה־ו־כ-שלושה")) == sorted(
+        _hebrew_recall("מאה־ו־כ־שלושה")
+    )
+
+    def scoped(source, excerpt, formula):
+        content = tw.dedent(
+            f"""
+            format: rulespec/v1
+            rules:
+              - name: rate
+                kind: parameter
+                dtype: Decimal
+                metadata:
+                  proof:
+                    atoms:
+                      - path: versions[0].formula
+                        kind: parameter
+                        source:
+                          corpus_citation_path: il/statute/example/rate
+                          excerpt: {json.dumps(excerpt, ensure_ascii=False)}
+                versions:
+                  - effective_from: '2026-01-01'
+                    formula: {formula}
+            """
+        ).strip()
+        return find_ungrounded_numeric_issues_scoped(
+            content,
+            module_source_text="",
+            proof_source_texts={"il/statute/example/rate": source},
+        ), validate_rulespec_proofs(
+            content, source_texts={"il/statute/example/rate": source}
+        ).passed
+
+    def spaced(source, spacing, which):
+        positions = [index for index, char in enumerate(source) if char == "\u05be"]
+        chosen = {
+            "all": positions,
+            "first": positions[:1],
+            "last": positions[-1:],
+            "inner": positions[1:-1],
+        }[which]
+        out = source
+        for index in reversed(chosen):
+            out = out[: index + 1] + spacing + out[index + 1 :]
+        return out
+
+    spacings = (" ", " " * 8, "\t", "\u00a0", "\r", "\r\n", "\n", " \n ")
+    for source, unstated in (
+        ("השיעור הוא מאה־ו־כ־שלושה%.", "0.03"),
+        ("לפי התוספת ה־שלוש־עשרה ישולם סכום של 100 שקלים.", "30"),
+        ("השיעור הוא עשרים ו־שלושה־ו־חצי אחוזים.", "0.03"),
+    ):
+        grounding = sorted(round(v, 9) for v in extract_numbers_from_text(source))
+        recall = sorted(round(v, 9) for v in _hebrew_recall(source))
+        for spacing in spacings:
+            for which in ("all", "first", "last", "inner"):
+                excerpt = spaced(source, spacing, which)
+                if excerpt == source:
+                    continue
+                label = (source, repr(spacing), which)
+                assert _source_contains_proof_evidence(
+                    source_text=source, evidence_text=excerpt
+                ), label
+                assert _source_evidence_fragment_is_body_bound(excerpt, source), label
+                assert (
+                    sorted(round(v, 9) for v in extract_numbers_from_text(excerpt))
+                    == grounding
+                ), (*label, sorted(extract_numbers_from_text(excerpt)))
+                assert sorted(round(v, 9) for v in _hebrew_recall(excerpt)) == recall, (
+                    *label,
+                    sorted(_hebrew_recall(excerpt)),
+                )
+                issues, passed = scoped(source, excerpt, unstated)
+                assert passed and len(issues) == 1, (*label, issues)
+    assert sorted(
+        _hebrew_recall("לפי התוספת ה־שלוש־עשרה ישולם סכום של 100 שקלים.")
+    ) == [100.0]
 
 
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():

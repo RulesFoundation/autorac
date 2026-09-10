@@ -122,7 +122,14 @@ from .policyengine_runtime import (
     policyengine_subprocess_environment,
 )
 from .proof_validator import (
+    BIDI_MARKS_FRAGMENT,
+    HEBREW_MAQAF_WRAP_SPACE_PATTERN,
+    HORIZONTAL_SPACE_FRAGMENT,
+    LINE_END_FRAGMENT,
+    WRAP_SPACE_FRAGMENT,
     _bounded_source_evidence_match,
+    bind_maqaf_space,
+    collapse_evidence_whitespace,
     find_plural_corpus_citation_path_issues,
     find_rulespec_proof_issues,
     validate_rulespec_proofs,
@@ -1939,11 +1946,21 @@ _HEBREW_TEEN_TENS_WORDS = ("עשר", "עשרה")
 # A blank line, a form feed or a Unicode line or paragraph separator ends a
 # paragraph; number words never compose across one ("שלושה\n\nעשר" is
 # three, then ten), while a single line wrap joins them.
+# A line ends in "\r\n", "\r" or "\n" (a Windows, a classic Mac or a Unix
+# source, or one that mixes them), so a bare carriage return is a line end
+# to the readers that run before the cleaner normalizes it. A bare carriage
+# return is one only when no newline follows, so a CRLF is one line end to
+# a pattern that backtracks, never a CR and an LF that make a blank line.
+_LINE_END_FRAGMENT = LINE_END_FRAGMENT
 _PARAGRAPH_GAP_FRAGMENT = (
-    "(?:[\\u2028\\u2029\\x0b\\x0c\\x85]|\\r?\\n[^\\S\\r\\n]*\\r?\\n)"
+    "(?:[\\u2028\\u2029\\x0b\\x0c\\x85]|"
+    + _LINE_END_FRAGMENT
+    + "[^\\S\\r\\n]*"
+    + _LINE_END_FRAGMENT
+    + ")"
 )
 _PARAGRAPH_GAP_PATTERN = re.compile(_PARAGRAPH_GAP_FRAGMENT)
-_HORIZONTAL_SPACE_FRAGMENT = "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]"
+_HORIZONTAL_SPACE_FRAGMENT = HORIZONTAL_SPACE_FRAGMENT
 # A printed number in the Hebrew readers: grouped or plain digits with an
 # optional decimal part, or a decimal part alone (".5 אחוזים" is half a
 # percent); the readers' lookbehinds keep ".5" out of "3.5".
@@ -1951,13 +1968,7 @@ _HORIZONTAL_SPACE_FRAGMENT = "[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\
 # wrap, never a blank line or a paragraph separator ("10 וחצי מיליון" and
 # "10\nוחצי מיליון" are one amount; "10\n\nוחצי מיליון" is ten, then half a
 # million).
-_WRAP_SPACE_FRAGMENT = (
-    "(?:"
-    + _HORIZONTAL_SPACE_FRAGMENT
-    + "|\\r?\\n(?!"
-    + _HORIZONTAL_SPACE_FRAGMENT
-    + "*\\r?\\n))"
-)
+_WRAP_SPACE_FRAGMENT = WRAP_SPACE_FRAGMENT
 _HEBREW_TEEN_SEPARATOR_PATTERN = (
     "(?:(?!\\s*" + _PARAGRAPH_GAP_FRAGMENT + ")\\s+|\\s*[-\\u05be]\\s*)"
 )
@@ -4749,7 +4760,9 @@ def _hebrew_spelled_remainder_after(
 _HEBREW_PERCENT_TAIL_AFTER_PATTERN = re.compile(
     ""
     + _WRAP_SPACE_FRAGMENT
-    + "+\u05d5[\u05be-]?(?:(?P<tail>"
+    + "+\u05d5(?:[\u05be-]"
+    + _WRAP_SPACE_FRAGMENT
+    + "*)?(?:(?P<tail>"
     + "|".join(
         re.escape(w)
         for w in sorted(_HEBREW_MIXED_FRACTION_VALUES, key=len, reverse=True)
@@ -7364,7 +7377,7 @@ _EUROPEAN_MONEY_AMOUNT_PATTERN = re.compile(
 # is no sign; a sign no letter precedes still negates ("-3%").
 # A bidirectional formatting mark inside a numeric token ("−\u200f.5%",
 # "3\u200f%") is nothing to the reader.
-_BIDI_MARKS_FRAGMENT = r"[\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c]"
+_BIDI_MARKS_FRAGMENT = BIDI_MARKS_FRAGMENT
 # A comma-grouped number keeps its groups and its decimal part ("1,234.5",
 # "1,234,567"), read whole before the plainer shapes, so no suffix of it
 # is a number of its own.
@@ -9860,11 +9873,19 @@ def _source_evidence_fragment_is_body_bound(
     evidence_text: str,
     source_text: str,
 ) -> bool:
-    normalized_evidence = _collapse_source_sentence_text(evidence_text).casefold()
-    normalized_source = _collapse_source_sentence_text(source_text).casefold()
-    return bool(
-        normalized_evidence
-        and _bounded_source_evidence_match(normalized_evidence, normalized_source)
+    # Whitespace collapses as the proof check collapses it: every paragraph
+    # gap kept, so an excerpt quotes a blank line as a blank line.
+    normalized_evidence = collapse_evidence_whitespace(evidence_text).casefold()
+    normalized_source = collapse_evidence_whitespace(source_text).casefold()
+    if not normalized_evidence:
+        return False
+    if _bounded_source_evidence_match(normalized_evidence, normalized_source):
+        return True
+    # The proof check reads "ל־ 1⁄2" and "ל־1⁄2" as one text; numeric evidence
+    # is bound the same way, across wrap space and never a paragraph gap.
+    return "\u05be" in source_text and _bounded_source_evidence_match(
+        collapse_evidence_whitespace(bind_maqaf_space(evidence_text)).casefold(),
+        collapse_evidence_whitespace(bind_maqaf_space(source_text)).casefold(),
     )
 
 
@@ -9898,7 +9919,10 @@ def _rule_verified_source_excerpt_pairs_by_path(
         ]
         if not resolved_text:
             continue
-        normalized_source = _collapse_source_sentence_text(resolved_text).lower()
+        normalized_source = collapse_evidence_whitespace(resolved_text).lower()
+        maqaf_source = collapse_evidence_whitespace(
+            bind_maqaf_space(resolved_text)
+        ).lower()
         selected_excerpts = [excerpt for excerpt in excerpts if excerpt]
         if not selected_excerpts:
             table = source.get("table")
@@ -9910,8 +9934,12 @@ def _rule_verified_source_excerpt_pairs_by_path(
             by_path.setdefault(path, []).append((None, resolved_text))
             continue
         for excerpt in selected_excerpts:
-            normalized_excerpt = _collapse_source_sentence_text(excerpt).lower()
-            if normalized_excerpt and normalized_excerpt in normalized_source:
+            normalized_excerpt = collapse_evidence_whitespace(excerpt).lower()
+            if normalized_excerpt and (
+                normalized_excerpt in normalized_source
+                or collapse_evidence_whitespace(bind_maqaf_space(excerpt)).lower()
+                in maqaf_source
+            ):
                 by_path.setdefault(path, []).append((excerpt, resolved_text))
     return {path: tuple(pairs) for path, pairs in by_path.items()}
 
@@ -10840,9 +10868,11 @@ def _call_body_contains_any(
 def _extract_legacy_grounding_values(text: str) -> set[float]:
     """Extract numeric values from embedded statute text."""
     implied_cents_matches = _iter_form_implied_cents_matches(text)
-    original_text = _FORM_IMPLIED_CENTS_PATTERN.sub(
-        lambda match: " " * len(match.group(0)),
-        text,
+    original_text = _bind_hebrew_source_text(
+        _FORM_IMPLIED_CENTS_PATTERN.sub(
+            lambda match: " " * len(match.group(0)),
+            text,
+        )
     )
     two_line_table_occurrences = _extract_two_line_table_value_occurrences(text)
     text = _clean_source_text_for_numeric_extraction(original_text)
@@ -11488,8 +11518,14 @@ def _iter_direct_percentage_rate_matches(
         tail = _HEBREW_PERCENT_TAIL_AFTER_PATTERN.match(text, match.end())
         if tail is not None and not _HEBREW_UNIT_AFTER_PATTERN.match(text, tail.end()):
             continue
-        if _HEBREW_PRINTED_REMAINDER_JOIN_BEFORE_PATTERN.search(
-            text, max(0, match.start("number") - 6), match.start("number")
+        # The join is read before the wrap space, whatever its width, as
+        # the continuation check reads it: "ו־" eight spaces before "250"
+        # joins as "ו־250" does.
+        if _search_before(
+            _HEBREW_PRINTED_REMAINDER_JOIN_BEFORE_PATTERN,
+            text,
+            match.start("number"),
+            6,
         ):
             if tokens is None:
                 tokens = _HebrewWordTokens(text)
@@ -12534,11 +12570,67 @@ _HEBREW_PREFIX_STACK_FRAGMENT = (
 _HEBREW_PREFIX_MAQAF_BEFORE_WORD_PATTERN = re.compile(
     "(?<![\u0590-\u05ff])" + _HEBREW_PREFIX_STACK_FRAGMENT + "\u05be(?=[\u0590-\u05ff])"
 )
+# A maqaf before the stack ("ו־כ-שלושה") is no letter: a chained prefix's
+# hyphen is a maqaf as a first prefix's is.
 _HEBREW_PREFIX_HYPHEN_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])"
+    "(?<![\u0590-\u05bd\u05bf-\u05ff])"
     + _HEBREW_PREFIX_STACK_FRAGMENT
     + "-(?=[\u0590-\u05ff\\d\u00bc-\u00be\u2150-\u215e])"
 )
+# A Hebrew word -- a prefix stack or a word of a compound -- its maqaf, then
+# wrap space -- spaces or one line wrap, never a blank line -- before the
+# word or the number it binds ("ו־ שלושה", "ו־\nשלושה", "ל־ 1⁄2", "מ־ 301,201",
+# "שלושה־ רבעים"): a typesetting artifact the readers must not see as a
+# boundary, since "עשרים ו־ שלושה" is twenty-three, not twenty and three. A
+# paragraph gap after the maqaf stays a boundary. The pattern is the proof
+# validator's, so evidence matching binds exactly what the readers bind.
+_HEBREW_MAQAF_WRAP_SPACE_PATTERN = HEBREW_MAQAF_WRAP_SPACE_PATTERN
+
+
+def _hebrew_close_maqaf_wrap_space(
+    match: "re.Match[str]",
+) -> list[tuple[str, int | None]]:
+    """Move the wrap space after a maqaf ahead of the word, or the chain: "ו־ שלושה" becomes " ו־שלושה", "מאה־ ו־ כ־ שלושה" "   מאה־ו־כ־שלושה"."""
+    cluster_start, maqaf_start = match.start(1), match.start(2)
+    cluster = [
+        (character, cluster_start + index)
+        for index, character in enumerate(match.group(1))
+        if not character.isspace()
+    ]
+    spaces = len(match.group(3)) + len(match.group(1)) - len(cluster)
+    return [(" ", None)] * spaces + cluster + [(match.group(2), maqaf_start)]
+
+
+_CARRIAGE_RETURN_PATTERN = re.compile("\r\n?")
+
+
+def _normalize_line_end(match: "re.Match[str]") -> str:
+    """A CRLF becomes a space and a newline, keeping its width; a bare CR the newline it is."""
+    return " \n" if match.group(0) == "\r\n" else "\n"
+
+
+def _bind_hebrew_source_text_tracked(tracked: _TrackedText) -> _TrackedText:
+    """Read line ends and the wrap space after a maqaf as the cleaner reads them.
+
+    The readers that run on the raw text -- the direct-percentage and money
+    matchers, the structural reference passes -- see a bare carriage return
+    as the line end it is and a prefix's maqaf bound to the token after it
+    across wrap space, as every reader of the cleaned text does, so no
+    spelling of the space after a maqaf changes what a text states, and a
+    hyphen typed for that maqaf is the maqaf first. Each character keeps
+    its offset.
+    """
+    tracked = tracked.sub(_CARRIAGE_RETURN_PATTERN, _normalize_line_end)
+    # A hyphen typed for a prefix's maqaf becomes the maqaf before the close,
+    # in the cleaner's order, so a chain closes the same under either.
+    tracked = tracked.rewrite(_HEBREW_PREFIX_HYPHEN_PATTERN, "\\1\u05be")
+    return tracked.rewrite_mapped(
+        _HEBREW_MAQAF_WRAP_SPACE_PATTERN, _hebrew_close_maqaf_wrap_space
+    )
+
+
+def _bind_hebrew_source_text(text: str) -> str:
+    return _bind_hebrew_source_text_tracked(_TrackedText.identity(text)).text
 
 
 def _hebrew_attach_prefix_cluster(
@@ -12612,9 +12704,7 @@ def _clean_source_text_for_numeric_extraction_tracked(
     # so the line-level cleaners see the same lines as the author. The
     # escaped literals a JSON-embedded source carries ("\\r\\n", "\\t") become
     # their character right-aligned in their slot.
-    tracked = tracked.sub(
-        re.compile("\r\n?"), lambda m: " \n" if m.group(0) == "\r\n" else "\n"
-    )
+    tracked = tracked.sub(_CARRIAGE_RETURN_PATTERN, _normalize_line_end)
     tracked = tracked.sub(
         re.compile(r"\\r\\n|\\n|\\r"), lambda m: " " * (len(m.group(0)) - 1) + "\n"
     )
@@ -12701,6 +12791,12 @@ def _clean_source_text_for_numeric_extraction_tracked(
     # are one text to every pattern. A hyphen between two words of two or
     # more letters is a range or a compound and is left as it is.
     tracked = tracked.rewrite(_HEBREW_PREFIX_HYPHEN_PATTERN, "\\1\u05be")
+    # The space a source sets after a prefix's maqaf ("ו־ שלושה", "ל־ 1⁄2")
+    # moves ahead of the prefix, each character keeping its offset, so the
+    # spaced and the bound spellings are one text to every reader below.
+    tracked = tracked.rewrite_mapped(
+        _HEBREW_MAQAF_WRAP_SPACE_PATTERN, _hebrew_close_maqaf_wrap_space
+    )
     # A maqaf after a prefix stack before a Hebrew letter ("ו־עד",
     # "ו־המתינה", "ה־שיעורים", "וכש־המתינה") binds the prefix to the word the
     # way attachment does: the source means "ועד" whichever way it set the
@@ -13070,9 +13166,11 @@ def _extract_two_line_table_value_occurrences(text: str) -> list[float]:
 def _extract_legacy_inventory_values(text: str) -> list[float]:
     """Extract substantive numeric occurrences from source text, preserving repeats."""
     implied_cents_matches = _iter_form_implied_cents_matches(text)
-    raw_text = _FORM_IMPLIED_CENTS_PATTERN.sub(
-        lambda match: " " * len(match.group(0)),
-        text,
+    raw_text = _bind_hebrew_source_text(
+        _FORM_IMPLIED_CENTS_PATTERN.sub(
+            lambda match: " " * len(match.group(0)),
+            text,
+        )
     )
     two_line_table_occurrences = _extract_two_line_table_value_occurrences(text)
     cleaned = _clean_source_text_for_numeric_extraction(raw_text)
@@ -13746,9 +13844,11 @@ def _fallback_numeric_occurrence(text: str, value: float) -> NumericOccurrence:
 
 def _legacy_surface_numeric_occurrences(text: str) -> list[NumericOccurrence]:
     """Return exact-span surface candidates used to type legacy numeric values."""
-    raw_text = _FORM_IMPLIED_CENTS_PATTERN.sub(
-        lambda match: " " * len(match.group(0)),
-        text,
+    raw_text = _bind_hebrew_source_text(
+        _FORM_IMPLIED_CENTS_PATTERN.sub(
+            lambda match: " " * len(match.group(0)),
+            text,
+        )
     )
     cleaned = _clean_source_text_for_numeric_extraction(raw_text)
     _, cleaned = _extract_collapsed_schedule_row_occurrences(cleaned)
@@ -14023,15 +14123,27 @@ class _LegacyNumericCollector:
     structural_component_spans: tuple[tuple[int, int], ...] = field(init=False)
     structural_component_span_starts: tuple[int, ...] = field(init=False)
     structural_component_prefix_max_ends: tuple[int, ...] = field(init=False)
+    context_text: str = field(init=False)
     context_boundaries: _NumericContextBoundaries = field(init=False)
     money_spans: tuple[tuple[int, int], ...] = field(init=False)
 
     def __post_init__(self) -> None:
+        # Context is classified on the text with its line ends and the wrap
+        # space after a prefix's maqaf as the cleaner reads them -- the same
+        # width, so every span is a span in the source -- so a schedule
+        # ordinal after "ה־ " is the reference it is after "ה־", and a rate
+        # or currency marker across a spaced maqaf is seen. The raw slice of
+        # an occurrence stays the source's own.
+        self.context_text = (
+            self.source
+            if self.profile == "da-DK"
+            else _bind_hebrew_source_text(self.source)
+        )
         self.rate_table_cell_spans = (
             ()
             if self.profile == "da-DK"
             else _pipe_table_rate_cell_spans(
-                self.source,
+                self.context_text,
                 profile=self.profile,
             )
         )
@@ -14039,9 +14151,11 @@ class _LegacyNumericCollector:
             self.rate_table_cell_span_starts,
             self.rate_table_cell_prefix_max_ends,
         ) = _span_containment_index(self.rate_table_cell_spans)
-        self.temporal_component_spans = _temporal_numeric_component_spans(self.source)
+        self.temporal_component_spans = _temporal_numeric_component_spans(
+            self.context_text
+        )
         self.structural_component_spans = _structural_numeric_component_spans(
-            self.source,
+            self.context_text,
             profile=self.profile,
         )
         (
@@ -14055,23 +14169,25 @@ class _LegacyNumericCollector:
         )
         money_spans = {
             span
-            for span, _value in _iter_raw_european_money_value_matches(self.source)
+            for span, _value in _iter_raw_european_money_value_matches(
+                self.context_text
+            )
             if self.profile != "da-DK"
             or _currency_marker_before_number(
-                self.source,
+                self.context_text,
                 span[0],
                 profile=self.profile,
                 boundaries=self.context_boundaries,
             )
             or _currency_marker_after_number(
-                self.source,
+                self.context_text,
                 span[1],
                 profile=self.profile,
                 boundaries=self.context_boundaries,
             )
         }
         shared_rate_spans: set[tuple[int, int]] = set()
-        for match in _TEMPORAL_YEAR_RANGE_PATTERN.finditer(self.source):
+        for match in _TEMPORAL_YEAR_RANGE_PATTERN.finditer(self.context_text):
             endpoint_spans = (match.span("start"), match.span("end"))
             has_money_context = (
                 any(
@@ -14081,7 +14197,7 @@ class _LegacyNumericCollector:
                 )
                 or bool(
                     _currency_marker_before_number(
-                        self.source,
+                        self.context_text,
                         match.start(),
                         profile=self.profile,
                         boundaries=self.context_boundaries,
@@ -14089,7 +14205,7 @@ class _LegacyNumericCollector:
                 )
                 or bool(
                     _currency_marker_after_number(
-                        self.source,
+                        self.context_text,
                         match.end(),
                         profile=self.profile,
                         boundaries=self.context_boundaries,
@@ -14099,7 +14215,7 @@ class _LegacyNumericCollector:
             if has_money_context:
                 money_spans.update(endpoint_spans)
             if _local_rate_context_after_number(
-                self.source,
+                self.context_text,
                 match.end(),
                 profile=self.profile,
                 boundaries=self.context_boundaries,
@@ -14135,7 +14251,7 @@ class _LegacyNumericCollector:
         has_rate_context = (
             force_rate_context
             or _local_rate_context_after_number(
-                self.source,
+                self.context_text,
                 end,
                 profile=self.profile,
                 boundaries=self.context_boundaries,
@@ -14153,7 +14269,7 @@ class _LegacyNumericCollector:
             )
             or bool(
                 _currency_marker_before_number(
-                    self.source,
+                    self.context_text,
                     start,
                     profile=self.profile,
                     boundaries=self.context_boundaries,
@@ -14161,7 +14277,7 @@ class _LegacyNumericCollector:
             )
             or bool(
                 _currency_marker_after_number(
-                    self.source,
+                    self.context_text,
                     end,
                     profile=self.profile,
                     boundaries=self.context_boundaries,
@@ -15547,15 +15663,27 @@ def _tokenize_numeric_occurrences_from_text(
     collector = _LegacyNumericCollector(text)
     source_view = _NumericTextView.identity(text)
     implied_cents_matches = _iter_form_implied_cents_matches(text)
-    raw_text = _FORM_IMPLIED_CENTS_PATTERN.sub(
-        lambda match: " " * len(match.group(0)),
-        text,
+    raw_tracked = _bind_hebrew_source_text_tracked(
+        _TrackedText.identity(text).sub(
+            _FORM_IMPLIED_CENTS_PATTERN,
+            lambda match: " " * len(match.group(0)),
+        )
     )
-    raw_view = _NumericTextView.aligned(text, raw_text)
+    raw_text = raw_tracked.text
+    raw_view = _NumericTextView.tracked(text, raw_tracked)
     two_line_table_matches = _iter_two_line_table_value_occurrences(text)
-    # raw_text is text with implied-cents runs blanked in place, so offsets
-    # carried through the cleaning of raw_text are offsets into text.
+    # raw_text is text with implied-cents runs blanked in place and its line
+    # ends and maqaf wrap space read as the cleaner reads them, each
+    # character carrying its offset into text; offsets carried through the
+    # cleaning of raw_text are offsets into raw_text, composed here.
     cleaned_tracked = _clean_source_text_for_numeric_extraction_tracked(raw_text)
+    cleaned_tracked = _TrackedText(
+        cleaned_tracked.text,
+        [
+            None if offset is None else raw_tracked.offsets[offset]
+            for offset in cleaned_tracked.offsets
+        ],
+    )
     cleaned_before_schedule = cleaned_tracked.text
     cleaned_before_schedule_view = _NumericTextView.tracked(text, cleaned_tracked)
     schedule_matches, cleaned = _iter_collapsed_schedule_row_occurrences(
