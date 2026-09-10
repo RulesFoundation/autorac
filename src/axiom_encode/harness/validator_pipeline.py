@@ -4255,7 +4255,7 @@ _HEBREW_SHARED_SCALE_WORD_PATTERN = re.compile(
 # beside another ("הקנס הוא 500 או 3 מיליון"), which nothing in the text
 # tells apart. Bounded and explicit ranges remain.
 _HEBREW_SHARED_SCALE_JOIN_BEFORE_PATTERN = re.compile(
-    "(?:(?<![\u0590-\u05ff])(?P<join>לבין|ועד|עד|או|ל|\u05d5)(?:[\u05be-]\\s*|\\s+)"
+    "(?:(?<![\u0590-\u05ff])(?P<join>לבין|ובין|ועד|עד|או|ל|\u05d5)(?:[\u05be-]\\s*|\\s+)"
     "|(?P<comma>,\\s*))$"
 )
 # A noun that numbers the lower endpoint rather than counting it: "תוספת 2
@@ -5930,7 +5930,7 @@ _HEBREW_LIST_TAIL_PATTERN = re.compile(
 # whitespace; any other newline, a blank line included, ends the clause, so
 # table rows and numbered paragraphs stay apart.
 _HEBREW_SOFT_WRAP_BEFORE_PATTERN = re.compile(
-    "(?:,|\u05d5[\u05be-]|(?<![\u0590-\u05ff])(?:או|עד|ועד|לבין|"
+    "(?:,|\u05d5[\u05be-]|(?<![\u0590-\u05ff])(?:או|עד|ועד|לבין|ובין|"
     "הם|הן|יהיו|תהיינה|הינם|הינן|של|כדלקמן:?|הבאים:?|הבאות:?)|:)[ \\t\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]*$"
 )
 
@@ -8323,11 +8323,11 @@ _HEBREW_STRUCTURAL_COORDINATED_ENDPOINT = (
     + _HEBREW_STRUCTURAL_SPELLED_ENDPOINT
     + ")"
 )
-# A conjunction: "או", "עד", "ועד", "לבין", a dash, a vav before a printed
-# number, or the whitespace before a vav-bound word the endpoint grammar
-# left unread.
+# A conjunction: "או", "עד", "ועד", "לבין", "ובין", a dash, a vav before a
+# printed number, or the whitespace before a vav-bound word the endpoint
+# grammar left unread.
 _HEBREW_STRUCTURAL_CONJUNCTION = (
-    "(?:\\s*(?:או|עד|ועד|לבין)\\s+|\\s*\u05d5[\u05be-]?\\s*(?=\\d)|\\s*[-\u2013]\\s*"
+    "(?:\\s*(?:או|עד|ועד|לבין|ובין)\\s+|\\s*\u05d5[\u05be-]?\\s*(?=\\d)|\\s*[-\u2013]\\s*"
     "|\\s+(?=\u05d5[\u05be-]?[\u0590-\u05ff]))"
 )
 # One or more endpoints after a conjunction, then the unit ("1 או 2 או 3
@@ -12626,9 +12626,12 @@ def _clean_source_text_for_numeric_extraction_tracked(
     # lookbehind never fires: the first is misread as the trailing "120" and
     # the second is dropped outright. Detach it the way the currency glyphs
     # above are detached; an ASCII hyphen in the same position already parses
-    # correctly. The lookahead fires only before a digit, so a maqaf between
-    # two Hebrew words is left untouched.
-    tracked = tracked.sub(re.compile("\u05be(?=[\\d\u00bc-\u00be\u2150-\u215e])"), " ")
+    # correctly. The lookahead fires only before a digit, a fraction glyph or
+    # a decimal point that digits follow ("ב־.5"), so a maqaf between two
+    # Hebrew words is left untouched.
+    tracked = tracked.sub(
+        re.compile("\u05be(?=[\\d\u00bc-\u00be\u2150-\u215e]|\\.\\d)"), " "
+    )
     cleaned_lines: list[_TrackedText] = []
     preserve_split_schedule_value = False
     for tracked_line in tracked.lines():

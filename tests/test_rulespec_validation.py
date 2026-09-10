@@ -22330,6 +22330,62 @@ def test_a_bounded_range_joins_with_ubein_and_a_leading_decimal_counts():
         ), (text, issue)
 
 
+def test_ubein_joins_a_shared_scale_range_and_a_maqaf_detaches_before_a_decimal():
+    # Review round 184 on #1585: "בין … ובין …" joins a shared-scale range
+    # as "לבין" does, printed or spelled, over a money scale or a scaled
+    # percent, and across a line wrap after the join; and the cleaner
+    # detaches a maqaf before a decimal point that digits follow ("ב־.5")
+    # as it does before a digit, the occurrence keeping its source span.
+    import math
+
+    for text, expected in (
+        ("הסכום יהיה בין 5 ובין 7 מיליון שקלים", [5_000_000.0, 7_000_000.0]),
+        ("הסכום יהיה בין חמישה ובין שבעה מיליון שקלים", [5_000_000.0, 7_000_000.0]),
+        ("הסכומים הם בין 5 ובין\n7 מיליון שקלים", [5_000_000.0, 7_000_000.0]),
+        ("שיעור המס יהיה בין 5 ובין 7 אלפים אחוזים", [50.0, 70.0]),
+        ("הקצבה תוכפל ב־.5", [0.5]),
+        ("הסכום הוא מ־.5 שקלים", [0.5]),
+        ("הקצבה תוכפל ב־.5 ותחולק", [0.5]),
+        ("הקצבה תוכפל ב-.5", [0.5]),
+        ("הקצבה תוכפל ב־0.5", [0.5]),
+        ("השיעור הוא ל־.5%", [0.005]),
+        ("הסכום הוא ל־3.5 שקלים", [3.5]),
+    ):
+        values = sorted(_hebrew_recall(text))
+        assert len(values) == len(expected) and all(
+            math.isclose(value, want, rel_tol=1e-9)
+            for value, want in zip(values, expected, strict=True)
+        ), (text, values)
+        found = extract_numbers_from_text(text)
+        assert all(
+            any(math.isclose(value, want, rel_tol=1e-9) for value in found)
+            for want in expected
+        ), (text, found)
+    for text, grounded, ungrounded in (
+        ("הסכום יהיה בין 5 ובין 7 מיליון שקלים", "5000000", "5"),
+        ("שיעור המס יהיה בין 5 ובין 7 אלפים אחוזים", "50", "5"),
+        ("הקצבה תוכפל ב־.5", "0.5", "0.05"),
+        ("הסכום הוא מ־.5 שקלים", "0.5", "5"),
+    ):
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+    text = "הקצבה תוכפל ב־.5 ותחולק ב־.25; " * 3
+    occurrences = extract_typed_numeric_inventory_occurrences_from_text(text)
+    assert [occurrence.value for occurrence in occurrences] == [0.5, 0.25] * 3
+    assert len({occurrence.span for occurrence in occurrences}) == 6
+    for occurrence in occurrences:
+        assert text[occurrence.start : occurrence.end] in (".5", ".25"), occurrence
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
