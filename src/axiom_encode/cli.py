@@ -50206,7 +50206,14 @@ def _read_corpus_citation_path_from_rulespec(path: Path) -> str | None:
     return None
 
 
-def _enforce_no_apply_collision(*, source_file: Path, target_file: Path) -> None:
+def _enforce_no_apply_collision(
+    *,
+    source_file: Path,
+    target_file: Path,
+    authorized_replacement: bool = False,
+    relative_output: Path | None = None,
+    rules_repo_path: Path | None = None,
+) -> None:
     """Refuse to overwrite an existing RuleSpec that encodes a different corpus citation.
 
     Sibling encodes that resolve to the same output path are the original
@@ -50225,6 +50232,19 @@ def _enforce_no_apply_collision(*, source_file: Path, target_file: Path) -> None
     if not incoming or not existing:
         return
     if incoming == existing:
+        return
+    if (
+        authorized_replacement
+        and relative_output is not None
+        and rules_repo_path is not None
+        and target_file == Path(rules_repo_path) / relative_output
+        and _relative_output_to_child_corpus_citation_path(
+            relative_output,
+            rules_repo_path=rules_repo_path,
+        )
+        == incoming
+        and incoming.rpartition("/")[0] == existing
+    ):
         return
     raise RuntimeError(
         "Refusing to overwrite "
@@ -54275,6 +54295,9 @@ def _apply_generated_encoding_result(
     _enforce_no_apply_collision(
         source_file=output_file,
         target_file=content_root / relative_output,
+        authorized_replacement=_result_replacement_overlay_scope(result),
+        relative_output=relative_output,
+        rules_repo_path=content_root,
     )
     planned, wrote_empty_companion_test = _planned_apply_file_bytes(
         output_file,

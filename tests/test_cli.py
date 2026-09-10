@@ -77,6 +77,7 @@ from axiom_encode.cli import (
     _DeferredOutputReviewContract,
     _discover_rulespec_test_files,
     _effective_runner_specs,
+    _enforce_no_apply_collision,
     _ensure_no_unmanifested_preexisting_rulespec_changes,
     _ensure_rulespec_import,
     _eval_suite_json_sha256,
@@ -50473,4 +50474,62 @@ def test_resolve_required_import_rulespec_paths_is_bounded(tmp_path: Path):
             policy_repo_path=checkout / "us-ri",
             source_citation_path="us-ri/statute/44-30-2.6",
             target_relative_output=Path("policies/income_tax/pipeline.yaml"),
+        )
+
+
+def _write_collision_rulespec(path: Path, citation: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "format: rulespec/v1\n"
+        "module:\n"
+        "  source_verification:\n"
+        f"    corpus_citation_path: {citation}\n"
+        "rules: []\n",
+        encoding="utf-8",
+    )
+
+
+def test_apply_collision_allows_authorized_canonical_direct_child(tmp_path: Path):
+    content_root = tmp_path / "rulespec-us" / "us"
+    target = content_root / "statutes/7/2017/a.yaml"
+    candidate = tmp_path / "generated/a.yaml"
+    _write_collision_rulespec(target, "us/statute/7/2017")
+    _write_collision_rulespec(candidate, "us/statute/7/2017/a")
+
+    _enforce_no_apply_collision(
+        source_file=candidate,
+        target_file=target,
+        authorized_replacement=True,
+        relative_output=Path("statutes/7/2017/a.yaml"),
+        rules_repo_path=content_root,
+    )
+
+
+@pytest.mark.parametrize(
+    ("authorized_replacement", "relative_output", "existing"),
+    [
+        (False, Path("statutes/7/2017/a.yaml"), "us/statute/7/2017"),
+        (True, Path("statutes/7/2017/b.yaml"), "us/statute/7/2017"),
+        (True, Path("statutes/7/2017/a.yaml"), "us/statute/7"),
+    ],
+)
+def test_apply_collision_rejects_unauthorized_noncanonical_or_nondirect_refinement(
+    tmp_path: Path,
+    authorized_replacement: bool,
+    relative_output: Path,
+    existing: str,
+):
+    content_root = tmp_path / "rulespec-us" / "us"
+    target = content_root / "statutes/7/2017/a.yaml"
+    candidate = tmp_path / "generated/a.yaml"
+    _write_collision_rulespec(target, existing)
+    _write_collision_rulespec(candidate, "us/statute/7/2017/a")
+
+    with pytest.raises(RuntimeError, match="Refusing to overwrite"):
+        _enforce_no_apply_collision(
+            source_file=candidate,
+            target_file=target,
+            authorized_replacement=authorized_replacement,
+            relative_output=relative_output,
+            rules_repo_path=content_root,
         )
