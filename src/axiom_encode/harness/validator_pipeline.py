@@ -12549,6 +12549,31 @@ _HEBREW_PREFIX_HYPHEN_PATTERN = re.compile(
     + _HEBREW_PREFIX_STACK_FRAGMENT
     + "-(?=[\u0590-\u05ff\\d\u00bc-\u00be\u2150-\u215e])"
 )
+# A prefix stack, its maqaf, then horizontal space before the word or the
+# number it binds ("ו־ שלושה", "ל־ 1⁄2", "מ־ 301,201"): a typesetting artifact
+# the readers must not see as a boundary, since "עשרים ו־ שלושה" is
+# twenty-three, not twenty and three.
+_HEBREW_PREFIX_MAQAF_SPACE_PATTERN = re.compile(
+    "(?<![\u0590-\u05ff])"
+    + _HEBREW_PREFIX_STACK_FRAGMENT
+    + "(\u05be)([ \\t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+)"
+    "(?=[\u0590-\u05ff\\d.\u00bc-\u00be\u2150-\u215e])"
+)
+
+
+def _hebrew_close_prefix_maqaf_space(
+    match: "re.Match[str]",
+) -> list[tuple[str, int | None]]:
+    """Move the space after a prefix's maqaf ahead of the prefix: "ו־ שלושה" becomes " ו־שלושה"."""
+    stack_start, maqaf_start = match.start(1), match.start(2)
+    return (
+        [(" ", None)] * len(match.group(3))
+        + [
+            (character, stack_start + index)
+            for index, character in enumerate(match.group(1))
+        ]
+        + [(match.group(2), maqaf_start)]
+    )
 
 
 def _hebrew_attach_prefix_cluster(
@@ -12711,6 +12736,12 @@ def _clean_source_text_for_numeric_extraction_tracked(
     # are one text to every pattern. A hyphen between two words of two or
     # more letters is a range or a compound and is left as it is.
     tracked = tracked.rewrite(_HEBREW_PREFIX_HYPHEN_PATTERN, "\\1\u05be")
+    # The space a source sets after a prefix's maqaf ("ו־ שלושה", "ל־ 1⁄2")
+    # moves ahead of the prefix, each character keeping its offset, so the
+    # spaced and the bound spellings are one text to every reader below.
+    tracked = tracked.rewrite_mapped(
+        _HEBREW_PREFIX_MAQAF_SPACE_PATTERN, _hebrew_close_prefix_maqaf_space
+    )
     # A maqaf after a prefix stack before a Hebrew letter ("ו־עד",
     # "ו־המתינה", "ה־שיעורים", "וכש־המתינה") binds the prefix to the word the
     # way attachment does: the source means "ועד" whichever way it set the

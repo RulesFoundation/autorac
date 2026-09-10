@@ -22738,6 +22738,64 @@ def test_numeric_evidence_binds_across_a_space_after_a_maqaf():
         ).passed, excerpt
 
 
+def test_a_space_after_a_prefix_maqaf_is_not_a_boundary_to_numeric_extraction():
+    # Gate round 2 on #1615: a source or an excerpt that sets a space after a
+    # prefix's maqaf ("עשרים ו־ שלושה אחוזים") spells the bound compound
+    # ("עשרים ו־שלושה"): twenty-three percent, never twenty and three. Both
+    # spellings ground 0.23 and reject 0.03, whichever side carries the
+    # space, and the occurrence keeps its source span.
+    import math
+
+    for text in (
+        "השיעור הוא עשרים ו־שלושה אחוזים.",
+        "השיעור הוא עשרים ו־ שלושה אחוזים.",
+    ):
+        (value,) = extract_numbers_from_text(text)
+        assert math.isclose(value, 0.23, rel_tol=1e-9), text
+        (value,) = _hebrew_recall(text)
+        assert math.isclose(value, 0.23, rel_tol=1e-9), text
+    for text, expected in (
+        ("העובד זכאי ל־ 1⁄2 נקודת זיכוי", 0.5),
+        ("סכום של מ־ 301,201 שקלים", 301201.0),
+    ):
+        (value,) = _hebrew_recall(text)
+        assert math.isclose(value, expected, rel_tol=1e-9), text
+    text = "השיעור הוא עשרים ו־ שלושה אחוזים."
+    (occurrence,) = extract_typed_numeric_inventory_occurrences_from_text(text)
+    assert text[occurrence.start : occurrence.end] == "עשרים ו־ שלושה אחוזים"
+    for source, excerpt in (
+        ("השיעור הוא עשרים ו־שלושה אחוזים.", "השיעור הוא עשרים ו־ שלושה אחוזים."),
+        ("השיעור הוא עשרים ו־ שלושה אחוזים.", "השיעור הוא עשרים ו־שלושה אחוזים."),
+    ):
+        for formula, issues in (("0.23", 0), ("0.03", 1)):
+            content = textwrap.dedent(
+                f"""
+                format: rulespec/v1
+                rules:
+                  - name: rate
+                    kind: parameter
+                    dtype: Decimal
+                    metadata:
+                      proof:
+                        atoms:
+                          - path: versions[0].formula
+                            kind: rate
+                            source:
+                              corpus_citation_path: il/statute/example/rate
+                              excerpt: {excerpt}
+                    versions:
+                      - effective_from: '2026-01-01'
+                        formula: {formula}
+                """
+            ).strip()
+            found = find_ungrounded_numeric_issues_scoped(
+                content,
+                module_source_text="",
+                proof_source_texts={"il/statute/example/rate": source},
+            )
+            assert len(found) == issues, (source, excerpt, formula, found)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
