@@ -15200,9 +15200,7 @@ rules:
         assert "preserved-cross-run-rule" in retry_candidates[0].rulespec
         assert "rejected-attempt-1" in retry_candidates[1].rulespec
         assert "preserved-cross-run-rule" not in retry_candidates[1].rulespec
-        assert (
-            mock_run.call_args_list[0].kwargs["accept_valid_retry_candidate"] is True
-        )
+        assert mock_run.call_args_list[0].kwargs["accept_valid_retry_candidate"] is True
         assert (
             mock_run.call_args_list[1].kwargs["accept_valid_retry_candidate"] is False
         )
