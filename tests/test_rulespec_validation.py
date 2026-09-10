@@ -22012,6 +22012,61 @@ def test_a_counted_fraction_endpoint_keeps_its_scale_word_and_shares_its_fractio
         ), (text, issue)
 
 
+def test_a_range_endpoint_is_a_fraction_a_counted_unit_or_a_mixed_number():
+    # Review round 178 on #1585: before a bare endpoint shares the fraction
+    # word of the counted fraction after it, the endpoints are classified.
+    # A fraction of its own ("חצי", "רבע", "שלושה רבעים") is complete and
+    # shares nothing; a mixed number's tail ("3 ושלושה רבעים") is the
+    # number's own and no unit to share; a partitive after the counted
+    # fraction ("עשיריות של האחוז") does not hide the unit; and a mixed
+    # count of a fraction word ("2 וחצי עשיריות") is complete.
+    import math
+
+    for text, expected in (
+        ("שיעור המס יהיה בין חצי לשלושה רבעים האחוז", [0.005, 0.0075]),
+        ("שיעור המס יהיה בין רבע לשלושה רבעים האחוז", [0.0025, 0.0075]),
+        ("שיעור המס יהיה בין מחצית לשלוש עשיריות האחוז", [0.003, 0.005]),
+        ("השיעורים הם חצי, 2 או 3 עשיריות האחוז", [0.002, 0.003, 0.005]),
+        ("שיעור המס יהיה בין 2 ל־3 ושלושה רבעים אחוזים", [0.02, 0.0375]),
+        ("שיעור המס יהיה בין שניים לשלושה ושלושה רבעים אחוזים", [0.02, 0.0375]),
+        ("שיעור המס יהיה בין 2 ל־3 וחצי אחוזים", [0.02, 0.035]),
+        ("שיעור המס יהיה בין 2 ל־3 ושלושה רבעים עשיריות האחוז", [0.002, 0.00375]),
+        ("שיעור המס יהיה בין שתיים לשלוש עשיריות של האחוז", [0.002, 0.003]),
+        ("שיעור המס יהיה בין שתיים לשלוש עשיריות מן האחוז", [0.002, 0.003]),
+        ("שיעור המס יהיה בין 2 עשיריות לשלוש עשיריות של האחוז", [0.002, 0.003]),
+        ("שיעור המס יהיה בין 2 וחצי ל־3 עשיריות האחוז", [0.0025, 0.003]),
+        ("שיעור המס יהיה בין 2 וחצי עשיריות ל־3 עשיריות האחוז", [0.0025, 0.003]),
+        ("שיעור המס יהיה בין שניים וחצי לשלוש עשיריות האחוז", [0.0025, 0.003]),
+    ):
+        values = sorted(_hebrew_recall(text))
+        assert len(values) == len(expected) and all(
+            math.isclose(value, want, rel_tol=1e-9)
+            for value, want in zip(values, expected, strict=True)
+        ), (text, values)
+        found = extract_numbers_from_text(text)
+        assert all(
+            any(math.isclose(value, want, rel_tol=1e-9) for value in found)
+            for want in expected
+        ), (text, found)
+    for text, grounded, ungrounded in (
+        ("שיעור המס יהיה בין חצי לשלושה רבעים האחוז", "0.005", "0.00125"),
+        ("שיעור המס יהיה בין 2 ל־3 ושלושה רבעים אחוזים", "0.02", "0.005"),
+        ("שיעור המס יהיה בין שתיים לשלוש עשיריות של האחוז", "0.002", "0.02"),
+        ("שיעור המס יהיה בין 2 וחצי עשיריות ל־3 עשיריות האחוז", "0.0025", "0.00025"),
+    ):
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
