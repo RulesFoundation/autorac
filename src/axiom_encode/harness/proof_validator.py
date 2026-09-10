@@ -553,7 +553,14 @@ def _validate_source_proof_atom(
 # never a CR and an LF that make a blank line. The numeric readers share
 # these fragments, so the two read whitespace alike.
 LINE_END_FRAGMENT = "(?:\\r\\n|\\r(?!\\n)|\\n)"
-HORIZONTAL_SPACE_FRAGMENT = "[ \\t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]"
+# Every whitespace character is horizontal space, a line end or a paragraph
+# separator -- the information separators U+001C-U+001F, whitespace to every
+# reader's \s, are horizontal space -- so the collapse below and the bindings
+# partition whitespace alike, and no character is a space to one and a
+# boundary to the other.
+HORIZONTAL_SPACE_FRAGMENT = (
+    "[ \\t\\x1c-\\x1f\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]"
+)
 # Whitespace a bound token may run across: spaces of any width and a single
 # line wrap, never a blank line or a paragraph separator.
 WRAP_SPACE_FRAGMENT = (
@@ -572,12 +579,14 @@ WRAP_SPACE_FRAGMENT = (
 # word or number after it; a source that sets wrap space after the maqaf
 # ("ל־ 1⁄2", "ו־\nשלושה", "שלושה־ רבעים") and one that does not quote the
 # same text. A blank line or a paragraph separator after the maqaf is a
-# boundary the binding does not cross, and a maqaf after a digit binds
-# nothing. This one pattern is the binding evidence matching applies and the
+# boundary the binding does not cross. The word begins at a word boundary,
+# so a maqaf inside an identifier ("121א־2", section 121a-2) or after a
+# digit binds nothing. This one pattern is the binding evidence matching
+# applies and the
 # binding the numeric cleaner applies, so the two never accept different
 # texts: group 1 is the word, 2 the maqaf, 3 the wrap space.
 HEBREW_MAQAF_WRAP_SPACE_PATTERN = re.compile(
-    "(?<![\u0590-\u05ff])([\u05d0-\u05ea]+(?:\u05be[\u05d0-\u05ea]+)*)(\u05be)("
+    "(?<![\u0590-\u05ff\\w])([\u05d0-\u05ea]+(?:\u05be[\u05d0-\u05ea]+)*)(\u05be)("
     + WRAP_SPACE_FRAGMENT
     + "+)(?=[\u0590-\u05ff\\d.\u00bc-\u00be\u2150-\u215e])"
 )
