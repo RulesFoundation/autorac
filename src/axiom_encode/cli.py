@@ -29783,6 +29783,11 @@ def _run_encode_attempt(
         repair_candidate_tests_only=(
             getattr(args, "repair_candidate_tests_only", False) is True
         ),
+        accept_valid_retry_candidate=(
+            initial_retry_candidate is not None
+            and not prior_attempts
+            and getattr(args, "repair_candidate_tests_only", False) is not True
+        ),
         required_deferred_output_contracts=(
             deferred_output_review_contract.required_deferred_outputs
             if deferred_output_review_contract is not None

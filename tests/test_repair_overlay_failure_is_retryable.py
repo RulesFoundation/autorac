@@ -21,6 +21,7 @@ from unittest.mock import patch
 import pytest
 
 from axiom_encode.harness.evals import (
+    EvalArtifactMetrics,
     EvalPromptResponse,
     EvalWorkspace,
     ValidationRetryCandidate,
@@ -32,6 +33,20 @@ from axiom_encode.harness.evals import (
 from tests.release_object_fixtures import bind_test_corpus_release
 
 _OVERLAY_ERROR = "repair overlay RuleSpec must be valid UTF-8 YAML"
+
+
+def _metrics(*, passed: bool) -> EvalArtifactMetrics:
+    issue = [] if passed else ["retained candidate is still invalid"]
+    return EvalArtifactMetrics(
+        compile_pass=passed,
+        compile_issues=issue,
+        ci_pass=passed,
+        ci_issues=issue,
+        embedded_source_present=True,
+        grounded_numeric_count=0,
+        ungrounded_numeric_count=0,
+        grounding=[],
+    )
 
 
 def _make_workspace(root: Path) -> EvalWorkspace:
@@ -91,6 +106,119 @@ def _bind_corpus(tmp_path: Path):
         "overlay-retry-test-release",
         [("us-ca", "regulation", "test-version")],
     )
+
+
+def test_valid_retained_candidate_skips_model_and_is_not_rewritten(tmp_path, capsys):
+    output_root = tmp_path / "out"
+    workspace = _make_workspace(output_root / "_eval_workspaces" / "workspace")
+    policy_path = tmp_path / "policy"
+    policy_path.mkdir()
+    rules_path = tmp_path / "rules"
+    rules_path.mkdir()
+    corpus_release = _bind_corpus(tmp_path)
+    source_unit = resolve_corpus_source_unit(
+        "us-ca/regulation/mpp/63-503", corpus_release
+    )
+    candidate = ValidationRetryCandidate(
+        rulespec="format: rulespec/v1\nmodule: {summary: retained}\nrules: []\n",
+        tests="[]\n",
+    )
+
+    with (
+        patch(
+            "axiom_encode.harness.evals.prepare_eval_workspace",
+            return_value=workspace,
+        ),
+        patch(
+            "axiom_encode.harness.evals._run_prompt_eval",
+            side_effect=AssertionError("model must not run"),
+        ) as model_call,
+        patch("axiom_encode.harness.evals._hydrate_eval_root"),
+        patch(
+            "axiom_encode.harness.evals._evaluate_generated_artifact_with_repairs",
+            return_value=_metrics(passed=True),
+        ) as evaluate,
+    ):
+        result = _run_single_eval(
+            citation="us-ca/regulation/mpp/63-503",
+            runner=parse_runner_spec("codex:gpt-5.5"),
+            output_root=output_root,
+            policy_path=policy_path,
+            runtime_axiom_rules_path=rules_path,
+            corpus_release=corpus_release,
+            mode="cold",
+            extra_context_paths=[],
+            source_unit=source_unit,
+            validation_retry_candidate=candidate,
+            accept_valid_retry_candidate=True,
+        )
+
+    assert result.success is True
+    assert result.input_tokens == result.output_tokens == 0
+    assert Path(result.output_file).read_text() == candidate.rulespec
+    assert Path(result.output_file).with_suffix(".test.yaml").read_text() == "[]\n"
+    assert result.trace_sha256 is not None
+    model_call.assert_not_called()
+    evaluate.assert_called_once()
+    assert evaluate.call_args.kwargs["allow_artifact_repairs"] is False
+    assert "retained_candidate_preflight=accepted" in capsys.readouterr().out
+
+
+def test_invalid_retained_candidate_falls_through_to_model(tmp_path, capsys):
+    output_root = tmp_path / "out"
+    workspace = _make_workspace(output_root / "_eval_workspaces" / "workspace")
+    policy_path = tmp_path / "policy"
+    policy_path.mkdir()
+    rules_path = tmp_path / "rules"
+    rules_path.mkdir()
+    corpus_release = _bind_corpus(tmp_path)
+    source_unit = resolve_corpus_source_unit(
+        "us-ca/regulation/mpp/63-503", corpus_release
+    )
+    candidate = ValidationRetryCandidate(
+        rulespec="format: rulespec/v1\nmodule: {summary: invalid}\nrules: []\n",
+        tests="[]\n",
+    )
+    generated = "format: rulespec/v1\nmodule: {summary: repaired}\nrules: []\n"
+    response = EvalPromptResponse(text=generated, duration_ms=1)
+
+    with (
+        patch(
+            "axiom_encode.harness.evals.prepare_eval_workspace",
+            return_value=workspace,
+        ),
+        patch(
+            "axiom_encode.harness.evals._run_prompt_eval",
+            return_value=response,
+        ) as model_call,
+        patch("axiom_encode.harness.evals._hydrate_eval_root"),
+        patch(
+            "axiom_encode.harness.evals._evaluate_generated_artifact_with_repairs",
+            side_effect=(_metrics(passed=False), _metrics(passed=True)),
+        ) as evaluate,
+    ):
+        result = _run_single_eval(
+            citation="us-ca/regulation/mpp/63-503",
+            runner=parse_runner_spec("codex:gpt-5.5"),
+            output_root=output_root,
+            policy_path=policy_path,
+            runtime_axiom_rules_path=rules_path,
+            corpus_release=corpus_release,
+            mode="cold",
+            extra_context_paths=[],
+            source_unit=source_unit,
+            validation_retry_candidate=candidate,
+            accept_valid_retry_candidate=True,
+        )
+
+    assert result.success is True
+    assert Path(result.output_file).read_text() != candidate.rulespec
+    assert "summary: repaired" in Path(result.output_file).read_text()
+    model_call.assert_called_once()
+    assert evaluate.call_count == 2
+    assert evaluate.call_args_list[0].kwargs["allow_artifact_repairs"] is False
+    assert evaluate.call_args_list[1].kwargs["allow_artifact_repairs"] is True
+    assert "retained_candidate_preflight=rejected" in capsys.readouterr().out
 
 
 def test_unreadable_overlay_candidate_does_not_abort_the_eval(tmp_path, capsys):
