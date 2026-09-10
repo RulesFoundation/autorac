@@ -22874,6 +22874,17 @@ def test_an_excerpt_quotes_a_paragraph_gap_as_a_paragraph_gap():
     assert collapse_evidence_whitespace("A  B\nC") == "A B C"
     assert collapse_evidence_whitespace("A \n\n C") == "A\n\nC"
     assert collapse_evidence_whitespace("A\u2029C") == "A\n\nC"
+    # Gate round 5: a line ends in "\r\n", "\r" or "\n", as the cleaner reads
+    # it, so a bare carriage return wraps and two line ends in a row -- in
+    # any mix -- are a blank line, in the collapse and in the maqaf binding.
+    from axiom_encode.harness.proof_validator import bind_maqaf_space
+
+    assert collapse_evidence_whitespace("A\rB\r\nC") == "A B C"
+    for gap in ("\r\r", "\n\r", "\r\n\r", "\r\r\n", "\r\n\r\n", "\n\x1c\n"):
+        assert collapse_evidence_whitespace(f"A{gap}C") == "A\n\nC", repr(gap)
+        assert bind_maqaf_space(f"ו־{gap}שלושה") == f"ו־{gap}שלושה", repr(gap)
+    assert bind_maqaf_space("ו־\rשלושה") == "ו־שלושה"
+    assert bind_maqaf_space("ו־ \r\n שלושה") == "ו־שלושה"
 
     def scoped(source, excerpt, formula):
         content = tw.dedent(
@@ -22904,7 +22915,16 @@ def test_an_excerpt_quotes_a_paragraph_gap_as_a_paragraph_gap():
             content, source_texts={"il/statute/example/rate": source}
         ).passed
 
-    for gap in ("\n\n", "\n \n", "\u2029"):
+    for gap in (
+        "\n\n",
+        "\n \n",
+        "\u2029",
+        "\r\r",
+        "\n\r",
+        "\r\n\r",
+        "\r\r\n",
+        "\r\n\r\n",
+    ):
         source = f"השיעור הוא עשרים ו־{gap}שלושה אחוזים."
         assert sorted(_hebrew_recall(source)) == [0.03, 20.0], repr(gap)
         for excerpt in (
@@ -22918,6 +22938,48 @@ def test_an_excerpt_quotes_a_paragraph_gap_as_a_paragraph_gap():
         assert (issues, passed) == ([], True), (repr(gap), issues)
         issues, passed = scoped(source, source, "0.23")
         assert passed and len(issues) == 1, (repr(gap), issues)
+    # A bare carriage return after the maqaf is one line wrap: the source
+    # reads twenty-three, and the spaced and the bound excerpts quote it.
+    for wrap in ("\r", "\r\n", " \r "):
+        source = f"השיעור הוא עשרים ו־{wrap}שלושה אחוזים."
+        assert sorted(_hebrew_recall(source)) == [0.23], repr(wrap)
+        for excerpt in (
+            "השיעור הוא עשרים ו־ שלושה אחוזים.",
+            "השיעור הוא עשרים ו־שלושה אחוזים.",
+        ):
+            issues, passed = scoped(source, excerpt, "0.23")
+            assert (issues, passed) == ([], True), (repr(wrap), excerpt, issues)
+
+
+def test_evidence_whitespace_collapses_in_linear_time():
+    # Gate round 5 on #1615: the paragraph-gap pattern scanned and backtracked
+    # from every position of a whitespace run that no paragraph gap followed
+    # (16,000 internal spaces took 1.6 s; 32,000 took 6.2 s). Each run is
+    # read once: a long run, a run that one line wrap opens, and a maqaf
+    # before a long run all collapse in a linear pass.
+    import time
+
+    from axiom_encode.harness.proof_validator import (
+        bind_maqaf_space,
+        collapse_evidence_whitespace,
+    )
+
+    for width in (16_000, 64_000):
+        for text, expected in (
+            ("A" + " " * width + "B", "A B"),
+            ("A\n" + " " * width + "B", "A B"),
+            ("A" + " \n" * width + "B", "A\n\nB"),
+            ("A" + (" " * 100 + "\n") * (width // 100) + "B", "A\n\nB"),
+        ):
+            started = time.perf_counter()
+            assert collapse_evidence_whitespace(text) == expected
+            assert time.perf_counter() - started < 0.5, (width, len(text))
+        started = time.perf_counter()
+        assert bind_maqaf_space("ו־" + " " * width + "\n\nשלושה") == (
+            "ו־" + " " * width + "\n\nשלושה"
+        )
+        assert bind_maqaf_space("ו־" + " " * width + "\nשלושה") == "ו־שלושה"
+        assert time.perf_counter() - started < 0.5, width
 
 
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():

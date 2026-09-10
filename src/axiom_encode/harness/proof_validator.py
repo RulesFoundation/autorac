@@ -552,8 +552,23 @@ def _validate_source_proof_atom(
 # that does not ("ל־1⁄2", "ו־שלושה") quote the same text. A blank line or a
 # paragraph separator after the maqaf is a boundary the binding does not
 # cross, so the two are bound before any run of whitespace is collapsed.
+# A line ends in "\r\n", "\r" or "\n" (a Windows, a classic Mac or a Unix
+# source, or one that mixes them), as the numeric cleaner reads it, so a bare
+# carriage return is a line wrap and two line ends in a row are a blank line.
+_LINE_BREAK_FRAGMENT = "(?:\\r\\n|\\r|\\n)"
+_HORIZONTAL_EVIDENCE_SPACE_FRAGMENT = (
+    "[ \\t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]"
+)
 _MAQAF_WRAP_SPACE_PATTERN = re.compile(
-    "\u05be(?:[ \\t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]|\\r?\\n(?![ \\t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]*\\r?\\n))+"
+    "\u05be(?:"
+    + _HORIZONTAL_EVIDENCE_SPACE_FRAGMENT
+    + "|"
+    + _LINE_BREAK_FRAGMENT
+    + "(?!"
+    + _HORIZONTAL_EVIDENCE_SPACE_FRAGMENT
+    + "*"
+    + _LINE_BREAK_FRAGMENT
+    + "))+"
     "(?=[\u0590-\u05ff\\d.\u00bc-\u00be\u2150-\u215e])"
 )
 
@@ -566,10 +581,22 @@ def bind_maqaf_space(text: str) -> str:
 # A paragraph gap -- a blank line or a paragraph separator -- is a boundary
 # an excerpt must quote as one: "ו־ שלושה" does not quote "ו־\n\nשלושה", whose
 # twenty and three are two numbers, and no run of spaces or a single line
-# wrap stands in for it.
-_EVIDENCE_PARAGRAPH_GAP_PATTERN = re.compile(
-    "[^\\S\\r\\n]*(?:[\u2028\u2029\x0b\x0c\x85]|\\r?\\n[^\\S\\r\\n]*\\r?\\n)\\s*"
-)
+# wrap stands in for it. Each run of whitespace is read once, in one pass,
+# and becomes a blank line when it holds a paragraph separator or a second
+# line end, and a space otherwise.
+_WHITESPACE_RUN_PATTERN = re.compile(r"\s+")
+_LINE_BREAK_PATTERN = re.compile(_LINE_BREAK_FRAGMENT)
+_PARAGRAPH_SEPARATOR_PATTERN = re.compile("[\u2028\u2029\x0b\x0c\x85]")
+
+
+def _collapse_whitespace_run(match: re.Match[str]) -> str:
+    run = match.group(0)
+    if _PARAGRAPH_SEPARATOR_PATTERN.search(run):
+        return "\n\n"
+    first = _LINE_BREAK_PATTERN.search(run)
+    if first is not None and _LINE_BREAK_PATTERN.search(run, first.end()):
+        return "\n\n"
+    return " "
 
 
 def collapse_evidence_whitespace(text: str) -> str:
@@ -578,9 +605,7 @@ def collapse_evidence_whitespace(text: str) -> str:
     A paragraph gap becomes one blank line and any other run of whitespace
     one space, so "A B" matches "A\nB" and never "A\n\nB".
     """
-    marked = _EVIDENCE_PARAGRAPH_GAP_PATTERN.sub("\x00", text)
-    collapsed = re.sub(r"\s+", " ", marked)
-    return re.sub(r" ?\x00 ?", "\n\n", collapsed).strip()
+    return _WHITESPACE_RUN_PATTERN.sub(_collapse_whitespace_run, text).strip()
 
 
 def _source_contains_proof_evidence(
