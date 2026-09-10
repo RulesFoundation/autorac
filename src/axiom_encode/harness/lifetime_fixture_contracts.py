@@ -77,12 +77,17 @@ def validate_lifetime_test_contract(contract: Mapping[str, Any]) -> None:
     case = {key: value for key, value in contract.items() if key != "required_output"}
     case["output"] = contract["required_output"]
     request = build_lifetime_request(case, case["period"])
-    _period(case["period"])
+    output_start, _ = _period(case["period"])
+    calculation = "calculation_period" in request
+    if calculation:
+        _period(request["calculation_period"])
     _normalized_string(request["entity"], "entity")
     previous_end = None
     period_identity = None
     for period, batch in zip(request["periods"], request["batches"], strict=True):
         start, end = _period(period)
+        if calculation and end >= output_start:
+            raise ValueError("lifetime observations must end before calculation starts")
         identity = (period["period_kind"], period.get("name"))
         if period_identity is not None and identity != period_identity:
             raise ValueError(

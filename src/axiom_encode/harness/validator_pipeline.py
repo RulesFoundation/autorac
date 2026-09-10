@@ -31382,12 +31382,26 @@ def find_test_input_assignment_issues(
             for batch_index, (period, inputs) in enumerate(
                 _lifetime_test_batch_inputs(test_case), start=1
             ):
+                # V2 binds formula dependencies at calculation.start while facts
+                # remain separate observations. Malformed dates stay conservative
+                # here and are rejected by the lifetime transport/runtime.
+                lifetime = test_case.get("lifetime")
+                period_bounds = _test_case_period_bounds(period)
+                if isinstance(lifetime, dict) and "calculation_period" in lifetime:
+                    calculation_bounds = _test_case_period_bounds(
+                        lifetime["calculation_period"]
+                    )
+                    period_bounds = (
+                        (calculation_bounds[0], calculation_bounds[0])
+                        if calculation_bounds is not None
+                        else None
+                    )
                 required_inputs = _required_inputs_for_test_outputs(
                     test_case.get("output"),
                     symbol_inputs=symbol_inputs,
                     symbol_dependencies=symbol_dependencies,
                     symbol_versions=symbol_versions,
-                    period_bounds=_test_case_period_bounds(period),
+                    period_bounds=period_bounds,
                 )
                 missing = sorted(
                     (required_inputs & globally_local_inputs)

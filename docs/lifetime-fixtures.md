@@ -3,7 +3,9 @@
 The encoder can execute a multi-period companion case through an actual Axiom
 Rust CLI implementing `run-lifetime --artifact`. This is an opt-in fixture shape;
 ordinary scalar cases keep their existing behavior. The engine must support
-`axiom-rules-engine/lifetime-request/v1`, response v1 and compiled artifact v2.
+`axiom-rules-engine/lifetime-request/v1`, response v1 and compiled artifact v2
+for ordinary lifetime cases. Explicit calculation-period cases require request
+and response v2 support.
 An older CLI fails validation rather than falling back to scalar evaluation.
 Production generation must still use the reviewed, pinned engine and protected
 encoder workflow. This feature does not update a repository's toolchain pins.
@@ -77,12 +79,38 @@ exactly. Booleans, integers, dates, text and judgments preserve their types.
 Inputs and results are validated by the real Rust runtime and the typed response
 contract. No Python policy calculation or floating-point tolerance is involved.
 
-The output period must equal the last supplied observation period. This interface
-does not add a separate legal determination date, insert missing years, infer
+Without `lifetime.calculation_period`, the output period must equal the last
+supplied observation period. This v1 interface does not add a separate legal
+determination date, insert missing years, infer
 relations or reorder entities. The current engine refuses unsupported plans and
 periods before the compiled rules' commencement. Ordinary helpers without a
 lifetime reduction belong in scalar cases. Inputs used outside a reduction must
 remain invariant across periods, as required by the engine.
+
+To evaluate completed history under law selected at a later date, add
+`calculation_period` inside `lifetime` and set the top-level `period` to the same
+explicit mapping. This selects request v2; it never retries through v1. For the
+synthetic example above, both may be set to
+`{period_kind: month, start: '2026-01-01', end: '2026-01-31'}` while leaving the
+2020 and 2021 observations and batches unchanged.
+
+Every observation must end before calculation starts. The real engine selects
+formula and complete parameter-table versions at `calculation_period.start`,
+using inclusive source bounds. Historical date expressions within reductions
+retain observation dates; a missing table key never borrows an older version.
+The adapter checks the v2 response's calculation/reference/output dates and
+selected-version identities, indices and ranges before comparing typed results.
+It does not evaluate formulas or choose legal versions. An older runtime, missing
+version, incomplete history, malformed provenance or schema downgrade fails.
+Exact required fixture contracts also preserve the calculation date through
+generation and final admission.
+
+V2 is fixed-law completed-history execution, not knowledge-time or mixed-law
+selection. It does not supply missing observations, statutory eligibility,
+relations, or partial-year rules. The legal source still determines the correct
+calculation date and any input invariance requirements. Run
+`tests/test_calculation_lifetime_engine_integration.py` against a v2-capable
+binary to verify the transport and source-version boundaries with synthetic facts.
 
 The scalar PolicyEngine oracle adapter cannot evaluate lifetime fixtures. It
 records unsupported coverage without projecting the history into a scalar case.

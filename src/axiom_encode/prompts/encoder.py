@@ -942,10 +942,17 @@ LIFETIME_FIXTURE_PROTOCOL = """Lifetime formula and companion-test protocol:
 - A companion case that asserts a lifetime reduction uses top-level `name`,
   optional `description`, `period`, `output`, and `lifetime`. The `lifetime`
   mapping contains `entity`, optional `arithmetic: decimal`, `periods`, and
-  `batches`. Do not add scalar `input`, `tables`, or `oracle_inputs` to this case.
+  `batches`. A v2-capable pinned engine also accepts an explicit
+  `calculation_period` mapping. Do not add scalar `input`, `tables`, or
+  `oracle_inputs` to this case.
 - Supply 1 to 512 explicit period mappings in strictly ascending order, each
   with `period_kind`, quoted ISO `start` and `end`, and `name` when custom.
-  The top-level output `period` must equal the final supplied lifetime period.
+  Without `calculation_period`, the top-level output `period` must equal the
+  final supplied lifetime period (v1). With `calculation_period`, output
+  `period` must equal it and every observation must end strictly before it
+  starts (v2). The engine selects formula and whole parameter-table versions
+  at calculation start; date expressions within reductions keep observation
+  dates. Missing versions or table keys fail, with no older-table fallback.
   Do not append a period, sort observations, or invent zero years to repair a
   case. Represent a legally required zero year explicitly with its own facts.
 - Supply one batch per period. Each batch has `row_count`, `entity_ids` (unique
@@ -961,7 +968,9 @@ LIFETIME_FIXTURE_PROTOCOL = """Lifetime formula and companion-test protocol:
 - Lifetime outputs must transitively contain an over-periods reduction. Assert
   ordinary per-period helpers in separate scalar cases. An outside-reduction
   input (including a person's computation-year count) must be invariant across
-  the supplied periods; reference-period parameters use the final period.
+  the supplied periods; reference-period parameters use the final period in
+  v1 or calculation start in v2. V2 does not imply knowledge-time or mixed-law
+  selection. Do not change legal version bounds to fit observation dates.
 - These lifetime cases are executed through the actual engine's `run-lifetime`
   command. The scalar PolicyEngine oracle adapter cannot represent them and
   reports unsupported coverage; do not flatten histories into scalar scenarios.

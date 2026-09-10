@@ -14,6 +14,8 @@ from typing import Any, Mapping
 
 REQUEST_SCHEMA = "axiom-rules-engine/lifetime-request/v1"
 RESPONSE_SCHEMA = "axiom-rules-engine/lifetime-response/v1"
+CALCULATION_REQUEST_SCHEMA = "axiom-rules-engine/lifetime-request/v2"
+CALCULATION_RESPONSE_SCHEMA = "axiom-rules-engine/lifetime-response/v2"
 MAX_REQUEST_BYTES = 16 * 1024 * 1024
 
 
@@ -37,7 +39,7 @@ def build_lifetime_request(case: dict, period: dict) -> dict:
     )
     lifetime = _keys(
         case["lifetime"],
-        {"entity", "arithmetic", "periods", "batches"},
+        {"entity", "arithmetic", "periods", "batches", "calculation_period"},
         {"entity", "periods", "batches"},
         "lifetime",
     )
@@ -50,7 +52,15 @@ def build_lifetime_request(case: dict, period: dict) -> dict:
         raise ValueError("lifetime.periods must contain 1 to 512 periods")
     if not isinstance(batches, list) or len(batches) != len(periods):
         raise ValueError("lifetime requires one batch per period")
-    if periods[-1] != period:
+    calculation = "calculation_period" in lifetime
+    if calculation:
+        if not isinstance(lifetime["calculation_period"], dict):
+            raise ValueError("lifetime.calculation_period must be an explicit mapping")
+        if lifetime["calculation_period"] != period:
+            raise ValueError(
+                "lifetime calculation period must equal the test output period"
+            )
+    elif periods[-1] != period:
         raise ValueError("lifetime final period must equal the test output period")
     row_count = None
     entity_ids = None
@@ -90,7 +100,7 @@ def build_lifetime_request(case: dict, period: dict) -> dict:
         if any(type(value) not in (str, int, bool) for value in values):
             raise ValueError("lifetime expected decimals must be quoted strings")
     return {
-        "schema": REQUEST_SCHEMA,
+        "schema": CALCULATION_REQUEST_SCHEMA if calculation else REQUEST_SCHEMA,
         **lifetime,
         "arithmetic": "decimal",
         "outputs": list(outputs),
@@ -146,11 +156,75 @@ def _typed_value(value: Any, kind: str) -> Any:
     return value
 
 
+def _validate_selected_versions(request: dict, response: dict) -> None:
+    """Check version provenance shape and output identity, without selecting law."""
+    selected = response["selected_versions"]
+    if not isinstance(selected, list) or not selected:
+        raise ValueError("lifetime selected_versions must be a nonempty list")
+    calculation_date = _typed_value(request["calculation_period"]["start"], "date")
+    identities = set()
+    derived_ids = {}
+    for item in selected:
+        if not isinstance(item, dict):
+            raise ValueError("lifetime selected version must be a mapping")
+        kind = item.get("kind")
+        if kind not in ("derived", "unversioned_derived", "parameter"):
+            raise ValueError("lifetime selected version has unsupported kind")
+        fields = {"kind", "name", "id"}
+        if kind != "unversioned_derived":
+            fields |= {"version_index", "effective_from", "effective_to"}
+        _keys(item, fields, fields, "lifetime selected version")
+        name, identity = item["name"], item["id"]
+        if (
+            not isinstance(name, str)
+            or not name
+            or (
+                identity is not None and (not isinstance(identity, str) or not identity)
+            )
+        ):
+            raise ValueError("lifetime selected version has invalid identity")
+        key = ("parameter" if kind == "parameter" else "derived", name)
+        if key in identities:
+            raise ValueError("lifetime selected version identity is duplicated")
+        identities.add(key)
+        if kind != "parameter" and identity is not None:
+            if identity in derived_ids:
+                raise ValueError("lifetime selected derived ID is duplicated")
+            derived_ids[identity] = name
+        if kind != "unversioned_derived":
+            if type(item["version_index"]) is not int or item["version_index"] < 0:
+                raise ValueError(
+                    "lifetime selected version index must be nonnegative integer"
+                )
+            start = _typed_value(item["effective_from"], "date")
+            end = item["effective_to"]
+            if end is not None:
+                end = _typed_value(end, "date")
+            if start > calculation_date or (end is not None and end < calculation_date):
+                raise ValueError(
+                    "lifetime selected version does not cover calculation date"
+                )
+    for reference, output in response["outputs"].items():
+        if not isinstance(output, dict) or derived_ids.get(reference) != output.get(
+            "name"
+        ):
+            raise ValueError("lifetime selected versions do not identify each output")
+
+
 def compare_lifetime_response(
     request: dict, expected: dict, response: Any
 ) -> list[str]:
     """Reject malformed/misaligned results before comparing exact typed columns."""
-    if not isinstance(response, dict) or response.get("schema") != RESPONSE_SCHEMA:
+    schemas = {
+        REQUEST_SCHEMA: RESPONSE_SCHEMA,
+        CALCULATION_REQUEST_SCHEMA: CALCULATION_RESPONSE_SCHEMA,
+    }
+    response_schema = schemas.get(request.get("schema"))
+    if (
+        response_schema is None
+        or not isinstance(response, dict)
+        or response.get("schema") != response_schema
+    ):
         raise ValueError("invalid lifetime response schema")
     fields = {
         "schema",
@@ -165,6 +239,9 @@ def compare_lifetime_response(
         "output_period",
         "outputs",
     }
+    calculation = request["schema"] == CALCULATION_REQUEST_SCHEMA
+    if calculation:
+        fields |= {"calculation_period", "selected_versions"}
     _keys(response, fields, fields, "lifetime response")
     if (
         not isinstance(response["engine_version"], str)
@@ -174,14 +251,17 @@ def compare_lifetime_response(
     ):
         raise ValueError("lifetime response has unsupported version metadata")
     batch = request["batches"][-1]
-    for field, wanted in {
+    expected_metadata = {
         "arithmetic": "decimal",
         "entity": request["entity"],
         "entity_ids": batch["entity_ids"],
         "periods": request["periods"],
-        "reference_period": request["periods"][-1],
+        "reference_period": request["output_period"],
         "output_period": request["output_period"],
-    }.items():
+    }
+    if calculation:
+        expected_metadata["calculation_period"] = request["calculation_period"]
+    for field, wanted in expected_metadata.items():
         if response.get(field) != wanted:
             raise ValueError(f"lifetime response {field} does not match the request")
     if (
@@ -192,6 +272,8 @@ def compare_lifetime_response(
     outputs = response.get("outputs")
     if not isinstance(outputs, dict) or set(outputs) != set(expected):
         raise ValueError("lifetime response must contain exactly the requested outputs")
+    if calculation:
+        _validate_selected_versions(request, response)
     issues = []
     for reference, expected_value in expected.items():
         fields = {"id", "name", "dtype", "unit", "column"}

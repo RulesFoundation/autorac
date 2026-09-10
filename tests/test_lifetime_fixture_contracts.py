@@ -77,7 +77,17 @@ def issues(tmp_path, contract, candidate):
     )
 
 
-def test_lifetime_contract_survives_cli_prompt_and_final_admission(tmp_path, history):
+@pytest.mark.parametrize("calculation", [False, True])
+def test_lifetime_contract_survives_cli_prompt_and_final_admission(
+    tmp_path, history, calculation
+):
+    if calculation:
+        history["period"] = {
+            "period_kind": "month",
+            "start": "2026-01-01",
+            "end": "2026-01-31",
+        }
+        history["lifetime"]["calculation_period"] = copy.deepcopy(history["period"])
     parsed = _parse_deferred_output_review_contract_json(raw_contract([history]))
     typed = parsed.required_test_cases[0]
     assert typed.as_mapping() == history
@@ -91,6 +101,27 @@ def test_lifetime_contract_survives_cli_prompt_and_final_admission(tmp_path, his
     exported = typed.as_mapping()
     exported["lifetime"]["batches"][0]["inputs"][INPUT]["values"][0] = "999"
     assert typed.as_mapping() == history
+
+
+def test_final_admission_preserves_explicit_calculation_date(tmp_path, history):
+    history["period"] = {
+        "period_kind": "month",
+        "start": "2026-01-01",
+        "end": "2026-01-31",
+    }
+    history["lifetime"]["calculation_period"] = copy.deepcopy(history["period"])
+    parsed = _parse_deferred_output_review_contract_json(raw_contract([history]))
+    changed = as_case(history)
+    changed["period"] = {
+        "period_kind": "month",
+        "start": "2027-01-01",
+        "end": "2027-01-31",
+    }
+    changed["lifetime"]["calculation_period"] = copy.deepcopy(changed["period"])
+    assert issues(tmp_path, parsed, changed)
+    assert not _preserves_companion_test_cases(
+        "[]", yaml.safe_dump([changed]), [history]
+    )
 
 
 @pytest.mark.parametrize(
