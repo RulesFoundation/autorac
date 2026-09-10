@@ -7365,10 +7365,11 @@ _EUROPEAN_MONEY_AMOUNT_PATTERN = re.compile(
 # A bidirectional formatting mark inside a numeric token ("−\u200f.5%",
 # "3\u200f%") is nothing to the reader.
 _BIDI_MARKS_FRAGMENT = r"[\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c]"
-# A comma-grouped number keeps its decimal part ("1,234.5"), read whole
-# before the plainer shapes, so no suffix of it is a number of its own.
+# A comma-grouped number keeps its groups and its decimal part ("1,234.5",
+# "1,234,567"), read whole before the plainer shapes, so no suffix of it
+# is a number of its own.
 _PERCENTAGE_RAW_NUMBER_UNSIGNED = (
-    r"\d{1,3}(?:,\d{3})+\.\d+"
+    r"\d{1,3}(?:,\d{3})+(?:\.\d+)?"
     r"|(?:\d{1,3}(?:[.\u00a0\u202f ]\d{3})+|\d+)(?:\s*[,.]\d{1,4})?|\d+\.\d+|(?<!\d)\.\d+"
 )
 _BIDI_MARKS_PATTERN = re.compile(_BIDI_MARKS_FRAGMENT)
@@ -11500,12 +11501,14 @@ def _iter_direct_percentage_rate_matches(
         # "−3.5%"), and a formatting mark inside the token is nothing; the
         # span keeps them both.
         raw = _BIDI_MARKS_PATTERN.sub("", match.group("number")).replace("\u2212", "-")
-        # A comma-grouped number with a decimal part ("1,234.5") is grouped
-        # thousands and a decimal, in any script; a comma-grouped number
-        # without one is so in Hebrew text ("1,234%" is 1,234 percent),
-        # where the comma never marks a decimal.
+        # A comma-grouped number with a decimal part ("1,234.5") or more
+        # than one group ("1,234,567") is grouped thousands in any script;
+        # one group without a decimal part is so in Hebrew text ("1,234%"
+        # is 1,234 percent), where the comma never marks a decimal.
         grouped = _GROUPED_THOUSANDS_DECIMAL_PATTERN.fullmatch(raw)
-        if grouped is not None and (grouped.group("decimal") or hebrew_text):
+        if grouped is not None and (
+            grouped.group("decimal") or hebrew_text or raw.count(",") > 1
+        ):
             values.append((match.span("number"), float(raw.replace(",", "")) / 100))
             continue
         for value in _iter_percentage_numeric_phrase_values(raw):
@@ -12548,6 +12551,36 @@ def _hebrew_attach_prefix_cluster(
     ]
 
 
+# A sign, then formatting marks, then a number ("−\u200f.5"); and a number
+# or a fraction glyph, then formatting marks, then a percent sign ("½\u200f%").
+_HEBREW_SIGN_MARKS_BEFORE_NUMBER_PATTERN = re.compile(
+    "(?P<sign>[-\u2212])(?P<marks>[\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c]+)"
+    "(?=\\d|\\.\\d)"
+)
+_HEBREW_MARKS_BEFORE_PERCENT_SIGN_PATTERN = re.compile(
+    "(?<=[\\d\u00bc-\u00be\u2150-\u215e])"
+    "(?P<marks>[\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c]+)(?P<unit>%)"
+)
+
+
+def _hebrew_move_sign_across_marks(
+    match: "re.Match[str]",
+) -> list[tuple[str, int | None]]:
+    """Move a sign across the marks after it: "−\u200f.5" becomes " −.5"."""
+    return [(" ", None)] * len(match.group("marks")) + [
+        (match.group("sign"), match.start("sign"))
+    ]
+
+
+def _hebrew_move_percent_across_marks(
+    match: "re.Match[str]",
+) -> list[tuple[str, int | None]]:
+    """Move a percent sign across the marks before it: "½\u200f%" becomes "½% "."""
+    return [(match.group("unit"), match.start("unit"))] + [(" ", None)] * len(
+        match.group("marks")
+    )
+
+
 def _clean_source_text_for_numeric_extraction(
     text: str,
     *,
@@ -12598,20 +12631,33 @@ def _clean_source_text_for_numeric_extraction_tracked(
     # right-to-left mark a Hebrew source sets before a number) carries no
     # content and hides the digit run from the boundary the matchers need:
     # it becomes the space it stands for, one character for one.
+    # A mark inside a numeric token carries no content and no boundary. A
+    # mark between a sign and its number ("−\u200f.5%", "−\u200f.5 אחוזים")
+    # and one between a number or a fraction glyph and its percent sign
+    # ("−.5\u200f%", "½\u200f%") would split the token if it became a
+    # space, so the sign or the percent sign moves across the mark first,
+    # each keeping its own offset, and the mark's slot becomes the space
+    # outside the token. A mark after a last digit before a space
+    # ("3\u200f אחוזים") and a mark before a digit become the space they
+    # stand for below, so two digit runs never merge.
+    tracked = tracked.rewrite_mapped(
+        _HEBREW_SIGN_MARKS_BEFORE_NUMBER_PATTERN, _hebrew_move_sign_across_marks
+    )
+    tracked = tracked.rewrite_mapped(
+        _HEBREW_MARKS_BEFORE_PERCENT_SIGN_PATTERN, _hebrew_move_percent_across_marks
+    )
     # A leading decimal ("\u200f.5", "₪.5") is a number as a digit run is.
     tracked = tracked.sub(
         re.compile("[\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c](?=\\d|\\.\\d)"),
         " ",
     )
-    # A mark inside a numeric token -- between a sign and its number
-    # ("−\u200f.5%") or after the number's last digit ("−.5\u200f%",
-    # "3\u200f אחוזים") -- carries no content and no boundary: it is
-    # dropped, so the sign and the unit stay the number's. A mark before a
-    # digit became a space above, so two digit runs never merge.
+    # A mark after a number's last digit or fraction glyph, before the space
+    # that follows it ("3\u200f אחוזים"), becomes that space too, so the
+    # noun after it is the number's.
     tracked = tracked.sub(
         re.compile(
-            "(?<=[-\u2212])[\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c]+(?=\\d|\\.\\d)"
-            "|(?<=\\d)[\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c]+(?!\\d)"
+            "(?<=[\\d\u00bc-\u00be\u2150-\u215e])"
+            "[\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c]+(?=\\s|$)"
         ),
         _blank_match,
     )
@@ -16089,8 +16135,10 @@ def _tokenize_numeric_occurrences_from_text(
                     requires_rate_context=True,
                 )
 
+    # A comma after a digit is a group separator, not a boundary: "234,567"
+    # is no number of its own inside "1,234,567%".
     for match in re.finditer(
-        r"(?:^|(?<=[\s(\[,+\-−*/\"'`“”‘’]))"
+        r"(?:^|(?<=[\s(\[+\-−*/\"'`“”‘’])|(?<=(?<!\d),))"
         r"(-?(?:\d{1,3}(?:[.\u00a0\u202f ]\d{3})+|\d+),\d{1,4})"
         r"\s*(?:%|\bp\.?\s*c\.?\b|\b(?:percent|per\s*cent(?:um)?)\b)",
         cleaned,

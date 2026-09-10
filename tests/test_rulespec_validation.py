@@ -22587,6 +22587,71 @@ def test_marks_inside_a_number_a_fraction_before_a_scaled_endpoint_and_a_grouped
     ]
 
 
+def test_a_mark_is_dropped_before_it_is_spaced_and_a_grouped_whole_is_read_whole():
+    # Review round 187 on #1585: the cleaner drops a mark inside a numeric
+    # token before it spaces a mark before a digit, so a signed spelled
+    # percentage keeps its sign, and it drops a mark after a fraction glyph
+    # as after a digit; and the direct percentage reader reads a
+    # comma-grouped whole with more than one group as grouped thousands in
+    # any script.
+    import math
+
+    for text, expected in (
+        ("השיעור הוא −\u200f.5 אחוזים", [-0.005]),
+        ("השיעור הוא −\u200f3 אחוזים", [-0.03]),
+        ("השיעור הוא ½\u200f%", [0.005]),
+        ("השיעור הוא 2½\u200f%", [0.025]),
+        ("השיעור הוא −\u200f.5%", [-0.005]),
+        ("הסכום הוא 500\u200f600 שקלים", [500.0, 600.0]),
+        ("השיעור הוא 1,234,567%", [12345.67]),
+        ("השיעור הוא −1,234,567%", [-12345.67]),
+        ("The rate is 1,234,567%", [12345.67]),
+        ("השיעור הוא 1,234,567 אחוזים", [12345.67]),
+        ("השיעור הוא 1,234.5%", [12.345]),
+        ("השיעור הוא 1,234%", [12.34]),
+    ):
+        values = sorted(_hebrew_recall(text))
+        assert len(values) == len(expected) and all(
+            math.isclose(value, want, rel_tol=1e-9)
+            for value, want in zip(values, expected, strict=True)
+        ), (text, values)
+        found = extract_numbers_from_text(text)
+        assert all(
+            any(math.isclose(value, want, rel_tol=1e-9) for value in found)
+            for want in expected
+        ), (text, found)
+    for text, grounded, ungrounded in (
+        ("השיעור הוא −\u200f.5 אחוזים", "-0.005", "0.005"),
+        ("השיעור הוא ½\u200f%", "0.005", "0.05"),
+        ("השיעור הוא 1,234,567%", "12345.67", "2.34567"),
+        ("השיעור הוא −1,234,567%", "-12345.67", "234.567"),
+    ):
+        content = _danish_numeric_rulespec(
+            grounded, citation_path="il/statute/example/1"
+        )
+        assert find_ungrounded_numeric_issues(content, source_text=text) == [], text
+        content = _danish_numeric_rulespec(
+            ungrounded, citation_path="il/statute/example/1"
+        )
+        (issue,) = find_ungrounded_numeric_issues(content, source_text=text)
+        assert issue.startswith(
+            f"Ungrounded generated numeric literal: {ungrounded} "
+        ), (text, issue)
+    text = "השיעור הוא −\u200f.5 אחוזים ואז ½\u200f% ואז 1,234,567%"
+    occurrences = sorted(
+        extract_typed_numeric_inventory_occurrences_from_text(text),
+        key=lambda occurrence: occurrence.start,
+    )
+    assert [occurrence.value for occurrence in occurrences] == [-0.005, 0.005, 12345.67]
+    # A percent phrase's span covers its noun and a glyph rate's its sign; a
+    # moved sign or percent sign keeps the mark it crossed inside the span.
+    assert [text[o.start : o.end] for o in occurrences] == [
+        "−\u200f.5 אחוזים",
+        "½\u200f%",
+        "1,234,567",
+    ]
+
+
 def test_the_percentage_pass_scans_thousands_of_phrases_in_linear_time():
     import time
 
